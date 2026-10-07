@@ -1,5 +1,5 @@
 /**
- * Every example on /design-system mounts without throwing. The examples render
+ * Every example and motion demo on /design-system mounts without throwing. The examples render
  * the real components, so a renamed prop or a changed data shape that breaks
  * one fails here instead of leaving a broken page behind.
  * scripts/check-design-system.mjs makes sure every component has examples;
@@ -9,6 +9,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { motionGroups } from "@/app/(dashboard)/design-system/motion";
 import { componentDocs } from "@/app/(dashboard)/design-system/registry";
 
 // FibukiMascot draws an image; next/image needs Next's runtime config.
@@ -31,6 +32,23 @@ describe("design-system examples", () => {
         const { container } = render(
           <TooltipProvider>
             <Example />
+          </TooltipProvider>
+        );
+        spy.mockRestore();
+        expect(container.childNodes.length).toBeGreaterThan(0);
+        expect(errors).toEqual([]);
+      });
+    }
+  }
+
+  for (const group of motionGroups) {
+    for (const { name, Demo } of group.entries) {
+      it(`Motion: ${name}`, () => {
+        const errors: unknown[] = [];
+        const spy = vi.spyOn(console, "error").mockImplementation((...args) => errors.push(args));
+        const { container } = render(
+          <TooltipProvider>
+            <Demo />
           </TooltipProvider>
         );
         spy.mockRestore();
