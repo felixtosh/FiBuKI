@@ -10,7 +10,7 @@ import {
   Gift,
 } from "lucide-react";
 import type { ComponentType } from "react";
-import { TelegramLogo } from "@/components/ui/telegram-logo";
+import { TelegramIcon } from "@/components/ui/telegram-icon";
 import { COMMUNITY_SETTINGS_PATH } from "@/lib/config/community";
 import type { PlanFeatureKey } from "@/types/billing";
 
@@ -32,5 +32,5 @@ export const settingsNavItems: SettingsNavItem[] = [
   { href: "/settings/integrations", label: "Integrations", icon: Link2, feature: "aiMatching" },
   { href: "/settings/import-export", label: "Import / Export", icon: Download },
   { href: "/settings/referral", label: "Refer a Friend", icon: Gift },
-  { href: COMMUNITY_SETTINGS_PATH, label: "Support & Community", icon: TelegramLogo },
+  { href: COMMUNITY_SETTINGS_PATH, label: "Support & Community", icon: TelegramIcon },
 ];

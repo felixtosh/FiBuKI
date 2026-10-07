@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { TelegramLogo } from "@/components/ui/telegram-logo";
+import { TelegramIcon } from "@/components/ui/telegram-icon";
 import { TELEGRAM_ANNOUNCEMENTS_URL } from "@/lib/config/community";
 
 export function LandingFooter() {
@@ -27,7 +27,7 @@ export function LandingFooter() {
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 hover:text-foreground transition-colors"
           >
-            <TelegramLogo className="h-4 w-4" />
+            <TelegramIcon className="h-4 w-4" />
             {t("telegram")}
           </a>
           <Link

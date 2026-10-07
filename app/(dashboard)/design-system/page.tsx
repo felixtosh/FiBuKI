@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -107,6 +109,15 @@ export default function DesignSystemPage() {
               ) : null
             )}
           </div>
+          <div className="border-t p-3">
+            <Link
+              href="/design-system/motion-lab"
+              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Sparkles className="h-4 w-4" />
+              Motion lab
+            </Link>
+          </div>
         </nav>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -143,6 +154,9 @@ export default function DesignSystemPage() {
             </Section>
 
             <Section id="motion" title="Motion" intro="Every animation the app actually runs, with its real classes and curve.">
+              <Button asChild size="sm" variant="outline">
+                <Link href="/design-system/motion-lab">Open the motion lab: tune how list rows arrive, change and leave</Link>
+              </Button>
               {motionGroups.map((group) => (
                 <div key={group.title} className="space-y-3">
                   <div>
