@@ -384,6 +384,16 @@ callables do not already allow.
 
 **Claude Code Hook**: `.claude/hooks/check-cloud-function-pattern.sh` warns if local scoring is detected.
 
+### Every change is in the item's activity log (#752)
+
+A write that changes what the User sees on a Transaction or a File (a value set or
+cleared, suggestions whose top choice changes, a connection made or taken apart)
+appends one entry to the item's `automationHistory`, built with `activityEntry()` /
+`logActivity()` from `functions/src/utils/activity.ts`. The actor says who: `manual`
+(the User), `auto` (the matcher, a trigger, a sweep), `ai` (an LLM, the chat agent, an
+MCP client). A run that changes nothing writes nothing. Derived bookkeeping
+(`documentationState`, the `isComplete` sync) is not logged.
+
 ### Transaction Deletion NOT Allowed
 
 **CRITICAL**: Individual transactions cannot be deleted through the UI or MCP.

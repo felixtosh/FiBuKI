@@ -24,6 +24,7 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { HttpsError } from "../utils/createCallable";
 import { deriveActivityLevel } from "../utils/activityLevel";
+import { activityEntry } from "../utils/activity";
 import {
   cancelFileWorkersForTransaction,
   cancelPrecisionSearchForTransaction,
@@ -528,6 +529,21 @@ async function planConnects(
           fileData: file.data,
           partnerId: (t.data.partnerId as string | undefined) || (file.data.partnerId as string | undefined) || null,
         });
+        // The log (#752): the person now stands behind the automatic match.
+        t.activity.push(activityEntry({
+          type: "connection_confirmed",
+          actor: rules.actor,
+          fileId,
+          fileName: (file.data.fileName as string | undefined) ?? null,
+          summary: `Automatic connection to File "${file.data.fileName || fileId}" confirmed`,
+        }, now));
+        file.activity.push(activityEntry({
+          type: "connection_confirmed",
+          actor: rules.actor,
+          transactionId,
+          transactionName: (t.data.name as string | undefined) ?? null,
+          summary: `Automatic connection to Transaction "${t.data.name || transactionId}" confirmed`,
+        }, now));
       }
       outcomes.push({
         fileId,
@@ -616,6 +632,21 @@ async function planConnects(
         );
         applyRevert(staleTx, revert, rematch);
         staleTx.remove("fileIds", staleFileId);
+        // The log (#752): an automatic connection taken apart to make room.
+        staleTx.activity.push(activityEntry({
+          type: "file_disconnected",
+          actor: rules.actor === "manual" ? "ai" : rules.actor,
+          fileId: staleFileId,
+          fileName: (staleFile?.data.fileName as string | undefined) ?? null,
+          summary: `Automatic connection to File "${staleFile?.data.fileName || staleFileId}" replaced by a better match`,
+        }, now));
+        staleFile?.activity.push(activityEntry({
+          type: "transaction_disconnected",
+          actor: rules.actor === "manual" ? "ai" : rules.actor,
+          transactionId: staleTxId,
+          transactionName: (staleTx.data.name as string | undefined) ?? null,
+          summary: `Automatic connection to Transaction "${staleTx.data.name || staleTxId}" replaced by a better match`,
+        }, now));
         if (staleTxId !== transactionId && remaining.length === 0 && !staleTx.data.noReceiptCategoryId) {
           staleTx.set({ isComplete: false });
         }
@@ -713,6 +744,14 @@ async function planConnects(
       confidence,
       summary: connectSummary(origin, file.data.fileName || fileId, confidence, pair.sourceInfo),
     });
+    file.activity.push(activityEntry({
+      type: "transaction_connected",
+      actor: rules.actor,
+      transactionId,
+      transactionName: (t.data.name as string | undefined) ?? null,
+      confidence,
+      summary: `Connected to Transaction "${t.data.name || transactionId}"${origin === "auto" || origin === "ai" ? (confidence != null ? ` automatically (${confidence}%)` : " automatically") : ""}`,
+    }, now));
 
     connected.push({
       fileId,
@@ -861,6 +900,8 @@ async function followReceiptLinks(db: Db, userId: string, connected: ConnectedPa
 export interface UnlinkRequest {
   fileId: string;
   transactionId: string;
+  /** Who unlinks, for the activity log (#752): the User, or the agent on their behalf. */
+  actor?: "manual" | "ai";
   /** Record a Rejection with the Unlink, so automation does not propose the pair again. */
   reject?: boolean;
 }
@@ -877,7 +918,7 @@ export interface UnlinkResult {
  * Files that remain, and lowers the learned file source pattern's use.
  */
 export async function unlinkFile(db: Db, userId: string, request: UnlinkRequest): Promise<UnlinkResult> {
-  const { fileId, transactionId, reject = false } = request;
+  const { fileId, transactionId, reject = false, actor = "manual" } = request;
   if (!fileId || !transactionId) {
     throw new HttpsError("invalid-argument", "fileId and transactionId are required");
   }
@@ -925,14 +966,21 @@ export async function unlinkFile(db: Db, userId: string, request: UnlinkRequest)
         type: "file_disconnected",
         ranAt: now,
         status: "completed",
-        actor: "manual",
-        level: "decision",
+        actor,
+        level: actor === "manual" ? "decision" : "outcome",
         fileId,
         fileName,
-        summary: `File "${fileName || fileId}" disconnected`,
+        summary: `File "${fileName || fileId}" disconnected${reject ? " and rejected" : ""}`,
       },
       ...revert.transactionActivity
     );
+    file.activity.push(activityEntry({
+      type: "transaction_disconnected",
+      actor,
+      transactionId,
+      transactionName: (t.data.name as string | undefined) ?? null,
+      summary: `Disconnected from Transaction "${t.data.name || transactionId}"${reject ? " and rejected" : ""}`,
+    }, now));
     if (remaining.length === 0 && !t.data.noReceiptCategoryId) t.set({ isComplete: false });
     if (reject) {
       const ids = Array.isArray(t.data.rejectedFileIds) ? t.data.rejectedFileIds : [];
@@ -996,7 +1044,8 @@ export async function detachFile(
   db: Db,
   userId: string,
   fileId: string,
-  fileData: Data
+  fileData: Data,
+  how: { actor: "manual" | "auto" | "ai"; summary: string } = { actor: "manual", summary: "File deleted" }
 ): Promise<{ removedConnections: number; detachedTransactions: DetachedTransaction[] }> {
   const records = await db
     .collection(CONNECTIONS)
@@ -1036,11 +1085,16 @@ export async function detachFile(
         remainingFileIds: remaining,
       });
       rematch.push(revert.rematchTransactionId);
+      const disconnected = activityEntry({
+        type: "file_disconnected",
+        actor: how.actor,
+        fileId,
+        fileName: (fileData.fileName as string | undefined) ?? null,
+        summary: `File "${fileData.fileName || fileId}" disconnected: ${how.summary.charAt(0).toLowerCase()}${how.summary.slice(1)}`,
+      }, now);
       batch.update(txSnap.ref, {
         ...revert.transaction,
-        ...(revert.transactionActivity.length > 0
-          ? { automationHistory: FieldValue.arrayUnion(...revert.transactionActivity) }
-          : {}),
+        automationHistory: FieldValue.arrayUnion(disconnected, ...revert.transactionActivity),
         fileIds: FieldValue.arrayRemove(fileId),
         isComplete,
         updatedAt: now,
@@ -1110,9 +1164,22 @@ export async function detachTransactions(
       : [];
     for (const snap of fileSnaps) {
       if (!snap.exists || snap.data()?.userId !== userId) continue;
+      const gone = [...byFile.get(snap.id)!];
+      const names = gone.map((id) => group.find((t) => t.id === id)?.data.name || id);
       batch.update(snap.ref, {
-        transactionIds: FieldValue.arrayRemove(...byFile.get(snap.id)!),
+        transactionIds: FieldValue.arrayRemove(...gone),
         updatedAt: now,
+        automationHistory: FieldValue.arrayUnion(
+          ...names.map((name, i) =>
+            activityEntry({
+              type: "transaction_disconnected",
+              actor: "manual",
+              transactionId: gone[i],
+              transactionName: name,
+              summary: `Transaction "${name}" deleted with its bank account or import`,
+            }, now)
+          )
+        ),
       });
       filesUpdated++;
     }

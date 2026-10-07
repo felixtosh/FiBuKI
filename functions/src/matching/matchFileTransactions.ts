@@ -49,6 +49,8 @@ import { rescoreFileSuggestions } from "./rescoreFileSuggestions";
 import { AutomationMeta } from "../automation/types";
 import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
+import { transactionSuggestionsActivity } from "./suggestionActivity";
+import { logActivity } from "../utils/activity";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -278,13 +280,16 @@ export async function runTransactionMatching(
   fileData: FirebaseFirestore.DocumentData,
   options: TransactionMatchingOptions = {}
 ): Promise<void> {
-  const markComplete = (suggestions: StoredSuggestion[]) =>
-    db.collection("files").doc(fileId).update({
+  const markComplete = (suggestions: StoredSuggestion[]) => {
+    const logged = transactionSuggestionsActivity(fileData.transactionSuggestions, suggestions, "Transaction matching");
+    return db.collection("files").doc(fileId).update({
       transactionMatchComplete: true,
       transactionMatchedAt: Timestamp.now(),
       transactionSuggestions: suggestions,
       updatedAt: Timestamp.now(),
+      ...(logged ? logActivity(logged) : {}),
     });
+  };
 
   // A deleted File is left as it is: nothing to mark.
   const before = ineligibleReasonOf(fileData, false);

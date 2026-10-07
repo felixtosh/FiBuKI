@@ -1065,5 +1065,53 @@
         "rejected": "rejected {ids}"
       }
     }
+  },
+  "activity": {
+    "title": "Activity log",
+    "empty": "No activity yet",
+    "more": "{n} more",
+    "actors": {
+      "manual": "You",
+      "suggestion": "Suggestion",
+      "auto": "Auto",
+      "ai": "AI"
+    },
+    "time": {
+      "justNow": "just now",
+      "minutes": "{n}m ago",
+      "hours": "{n}h ago",
+      "days": "{n}d ago"
+    },
+    "types": {
+      "partner_assigned": "Partner assigned",
+      "partner_removed": "Partner removed",
+      "partner_suggested": "Partner suggested",
+      "file_connected": "File connected",
+      "file_disconnected": "File disconnected",
+      "transaction_connected": "Transaction connected",
+      "transaction_disconnected": "Transaction disconnected",
+      "transaction_suggested": "Transaction suggested",
+      "connection_confirmed": "Connection confirmed",
+      "category_assigned": "Category assigned",
+      "category_removed": "Category removed",
+      "category_matched": "Category auto-matched",
+      "receipt_search": "Receipt search",
+      "file_matching": "File matching",
+      "partner_matching": "Partner matching",
+      "company_check": "Company check",
+      "file_created": "File added",
+      "file_deleted": "File deleted",
+      "file_restored": "File restored",
+      "extracted": "Document read",
+      "extraction_failed": "Reading failed",
+      "marked_not_invoice": "Not an invoice",
+      "facts_corrected": "Data corrected",
+      "facts_derived": "Data derived",
+      "copy_marked": "Copy recorded",
+      "copy_suggested": "Copy suggested",
+      "receipt_linked": "Receipt linked",
+      "receipt_unlinked": "Receipt link removed",
+      "correction_linked": "Correction linked"
+    }
   }
 }

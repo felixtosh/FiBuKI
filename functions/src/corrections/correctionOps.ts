@@ -22,6 +22,7 @@ import { toDateSafe } from "../utils/toDateSafe";
 import { classifyCorrectionDocument } from "./classifyCorrectionDocument";
 import { matchCorrectionLink, type LinkMatchCandidate } from "./linkMatcher";
 import type { CorrectionLinkSetBy } from "./resolveCorrections";
+import { activityEntry, logActivity } from "../utils/activity";
 
 type Db = FirebaseFirestore.Firestore;
 type Data = FirebaseFirestore.DocumentData;
@@ -128,11 +129,21 @@ export async function runCorrectionCheck(db: Db, fileId: string, fileData: Data)
 
   const now = Timestamp.now();
   if (result.kind === "link") {
+    const originalName = ((await db.collection("files").doc(result.fileId).get()).data()?.fileName as string | undefined) ?? result.fileId;
     await ref.update({
       ...classification,
       correctionLink: { fileId: result.fileId, setBy: "auto", setAt: now },
       correctionSuggestions: [],
       updatedAt: now,
+      ...(link?.fileId === result.fileId
+        ? {}
+        : logActivity(activityEntry({
+            type: "correction_linked",
+            actor: "auto",
+            fileId: result.fileId,
+            fileName: originalName,
+            summary: `Linked as a correction of "${originalName}"`,
+          }, now))),
     });
     return { kind: "linked", originalFileId: result.fileId };
   }

@@ -48,6 +48,8 @@ import {
   persistSweepSummary,
   type PlannedFileWrite,
 } from "./invoiceDirectionSweepReport";
+import { factChangeActivity } from "../fileFacts/applyFactChange";
+import { logActivity } from "../utils/activity";
 
 const db = getFirestore();
 
@@ -510,10 +512,12 @@ async function planFileSweep(
       if (outcome.refused) throw new Error(outcome.message);
     }
 
+    // The log (#752), the same line the applier writes for this origin.
+    const logged = factChangeActivity(change, outcome.update, undefined);
     planned.push({
       ref: fileDoc.ref,
       fileId: fileDoc.id,
-      updates: outcome.update,
+      updates: logged ? { ...outcome.update, ...logActivity(logged) } : outcome.update,
       direction,
       affectedTransactionIds: outcome.followUps.flatMap((followUp) =>
         followUp.kind === "sync-documentation-state" ? followUp.transactionIds : []

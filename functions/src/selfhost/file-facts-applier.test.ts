@@ -177,6 +177,8 @@ describe("the two Hand Correction doors", () => {
       extractionCorrectedAt: _at,
       // Names the door it came in by, so it is the one field that differs.
       lastFactChange: _door,
+      // So does the log line (#752): the panel is the User, the MCP tool is AI.
+      automationHistory: _log,
       extractionCorrectedFields,
       ...rest
     } = file;

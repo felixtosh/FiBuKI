@@ -1271,7 +1271,7 @@ export async function deleteFile(userId: string, args: Record<string, unknown>) 
   }
 
   const { performDeleteFile } = await import("../files/deleteFile");
-  const result = await performDeleteFile(db, userId, fileId, fileData);
+  const result = await performDeleteFile(db, userId, fileId, fileData, { actor: "ai", summary: "Deleted by the assistant" });
 
   const summarize = (t: (typeof result.detachedTransactions)[number]) => ({
     transactionId: t.transactionId,
@@ -1608,7 +1608,7 @@ export async function markFileAsNotInvoice(userId: string, args: Record<string, 
     );
   }
 
-  await markFileNotInvoice(db, fileId, userId, args.reason as string | undefined);
+  await markFileNotInvoice(db, fileId, userId, args.reason as string | undefined, "ai");
 
   console.log(`[markFileAsNotInvoice] Marked file ${fileId} as not invoice`, {
     userId,

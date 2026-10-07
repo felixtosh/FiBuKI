@@ -24,6 +24,7 @@ import { buildUnmarkNotInvoiceUpdates, queueExtractionAfterUnmark, unmarkRefusal
 import { rematchRevertedTransactions } from "../matching/partnerProvenance";
 import { planCopyMove } from "../fileConnections/writer";
 import { pairedForCopyCheck } from "../receiptPairs/pairMatcher";
+import { activityEntry, logActivity } from "../utils/activity";
 
 type Data = FirebaseFirestore.DocumentData;
 type Db = FirebaseFirestore.Firestore;
@@ -315,6 +316,15 @@ async function applyCopy(
 
   const originalUpdate: Record<string, unknown> = { ...CLEARED_COPY_MARK, copySuggestion: null, updatedAt: now };
   if (recordedBy === "user") originalUpdate.notCopyOfFileIds = FieldValue.arrayRemove(copy.id);
+  // The log (#752), on both Files.
+  const markActor = recordedBy === "user" ? "manual" : "auto";
+  Object.assign(originalUpdate, logActivity(activityEntry({
+    type: "copy_marked",
+    actor: markActor,
+    fileId: copy.id,
+    fileName: displayName(copy),
+    summary: `"${displayName(copy)}" recorded as a Copy of this File`,
+  }, now)));
   tx.update(original.ref, originalUpdate);
 
   const copyUpdate: Record<string, unknown> = {
@@ -331,6 +341,13 @@ async function applyCopy(
   };
   // A person marking the pair revokes an earlier "not a Copy" ruling.
   if (recordedBy === "user") copyUpdate.notCopyOfFileIds = FieldValue.arrayRemove(original.id);
+  Object.assign(copyUpdate, logActivity(activityEntry({
+    type: "copy_marked",
+    actor: markActor,
+    fileId: original.id,
+    fileName: displayName(original),
+    summary: `Recorded as a Copy of "${displayName(original)}"; its connections moved there`,
+  }, now)));
   tx.update(copy.ref, copyUpdate);
 
   return { moved: move.moved, dropped: move.dropped, rematch: move.rematch };
@@ -679,9 +696,20 @@ export async function suggestCopy(
   originalFileId: string,
   reason: CopySuggestionReason
 ): Promise<void> {
-  await db.collection("files").doc(copyFileId).update({
+  const ref = db.collection("files").doc(copyFileId);
+  const already = ((await ref.get()).data()?.copySuggestion as { originalFileId?: string } | null)?.originalFileId === originalFileId;
+  const originalName = (await db.collection("files").doc(originalFileId).get()).data()?.fileName ?? originalFileId;
+  await ref.update({
     copySuggestion: { originalFileId, reason, suggestedAt: Timestamp.now() },
     updatedAt: Timestamp.now(),
+    // The log (#752): once per suggested original, not on every re-check.
+    ...(already ? {} : logActivity(activityEntry({
+      type: "copy_suggested",
+      actor: "auto",
+      fileId: originalFileId,
+      fileName: originalName,
+      summary: `Looks like a Copy of "${originalName}"`,
+    }))),
   });
 }
 
