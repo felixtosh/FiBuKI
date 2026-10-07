@@ -673,6 +673,7 @@ function ResizableDataTableInner<TData extends { id: string }>(
                   className={combinedClassName}
                   dataAttributes={dataAttributes}
                   rowStateKey={getRowStateKey?.(original)}
+                  columns={columns}
                 />
               );
             })

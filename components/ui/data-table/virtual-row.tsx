@@ -103,9 +103,17 @@ function VirtualRowInner<TData extends { id: string }>({
 export const VirtualRow = memo(
   VirtualRowInner,
   (prevProps, nextProps) => {
-    // Check if TanStack Row object changed (happens when columns or data change)
-    // This ensures cells re-render when column closures update (e.g., partner maps populate)
+    // A new TanStack Row object means the data changed.
     if (prevProps.row !== nextProps.row) {
+      return false;
+    }
+
+    // New column definitions mean the cells' closures changed, e.g. the
+    // Partner and File lookups populated after the rows first rendered.
+    // TanStack keeps the same Row object across a column change (its row
+    // model is memoised on the data alone), so the row check above does not
+    // catch it, and the rows kept rendering empty lookups until clicked.
+    if (prevProps.columns !== nextProps.columns) {
       return false;
     }
 
