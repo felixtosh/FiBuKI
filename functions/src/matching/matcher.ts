@@ -1,7 +1,7 @@
 /**
  * The one matcher (#613): which File/Transaction pairs are possible, what
  * each pair is scored with, and its Confidence, for every surface and in both
- * directions.
+ * directions. (Replay control run, 2026-10-07: this comment is the only change.)
  *
  * Every surface that proposes, ranks or auto-connects a pair calls this
  * module: the upload trigger and "refresh matches", both connect windows, the
