@@ -502,6 +502,33 @@ async function planConnects(
     const existing = pairRecords(fileId, transactionId);
     const listed = file.ids("transactionIds").includes(transactionId) && t.ids("fileIds").includes(fileId);
     if (existing.length > 0 && listed) {
+      // A person connecting a pair the matcher or the AI already connected
+      // makes it theirs: the record takes this origin's label (keeping the old
+      // one in `confirmedFrom`), and the Partner learns from it as from any
+      // connect a person makes. Automation finding a connected pair changes
+      // nothing.
+      const automatedRecords = existing.filter((d) => AUTOMATED_TYPES.has(d.data().connectionType));
+      if (rules.learning === "directed" && automatedRecords.length === existing.length) {
+        for (const rec of automatedRecords) {
+          sets.push({
+            ref: rec.ref,
+            data: {
+              ...rec.data(),
+              origin,
+              connectionType: rules.connectionType,
+              confirmedFrom: rec.data().connectionType,
+              confirmedAt: now,
+            },
+          });
+        }
+        connected.push({
+          fileId,
+          transactionId,
+          pair,
+          fileData: file.data,
+          partnerId: (t.data.partnerId as string | undefined) || (file.data.partnerId as string | undefined) || null,
+        });
+      }
       outcomes.push({
         fileId,
         transactionId,

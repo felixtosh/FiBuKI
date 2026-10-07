@@ -19,6 +19,7 @@ import cardDoc from "@/components/ui/card.examples";
 import checkboxDoc from "@/components/ui/checkbox.examples";
 import choiceFilterDoc from "@/components/ui/choice-filter.examples";
 import collapsibleDoc from "@/components/ui/collapsible.examples";
+import confirmMarkDoc from "@/components/ui/confirm-mark.examples";
 import connectButtonDoc from "@/components/ui/connect-button.examples";
 import connectResultRowDoc from "@/components/ui/connect-result-row.examples";
 import contentOverlayDoc from "@/components/ui/content-overlay.examples";
@@ -114,7 +115,7 @@ export const componentGroups: ComponentGroup[] = [
     id: "connect",
     title: "Connecting Files and Transactions",
     intro: "Specialised: the connect flow and its match display.",
-    docs: [amountMatchDisplayDoc, connectButtonDoc, connectResultRowDoc, contentOverlayDoc],
+    docs: [amountMatchDisplayDoc, connectButtonDoc, connectResultRowDoc, confirmMarkDoc, contentOverlayDoc],
   },
 ];
 

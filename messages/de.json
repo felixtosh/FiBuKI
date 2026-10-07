@@ -217,7 +217,14 @@
     "german": "Deutsch",
     "english": "English",
     "back": "Zurück",
-    "openChat": "Chat öffnen"
+    "openChat": "Chat öffnen",
+    "confirmMatch": {
+      "partnerConfirmed": "Von dir zugeordnet. FiBuKI lernt daraus.",
+      "partnerConfirm": "Diesen Partner bestätigen. FiBuKI lernt aus dem, was du bestätigst.",
+      "partnerAi": "Von KI zugeordnet",
+      "connectionConfirmed": "Von dir verbunden. FiBuKI lernt daraus.",
+      "connectionConfirm": "Diese Verbindung bestätigen. FiBuKI lernt aus dem, was du bestätigst."
+    }
   },
   "billingCycle": {
     "title": "Abrechnungszyklus",

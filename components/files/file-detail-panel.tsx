@@ -302,6 +302,12 @@ function FileDetailPanelInner({
     [onCreatePartner, handleAssignPartner]
   );
 
+  /** Confirm the automatic or AI Partner: the same Partner, now the User's own, so the matcher learns from it. */
+  const handleConfirmPartner = useCallback(async () => {
+    if (!file.partnerId || !file.partnerType) return;
+    await handleAssignPartner(file.partnerId, file.partnerType, "manual", file.partnerMatchConfidence ?? 100);
+  }, [file.partnerId, file.partnerType, file.partnerMatchConfidence, handleAssignPartner]);
+
   const handleSelectExistingPartner = useCallback(
     async (partnerId: string, partnerType: "user" | "global") => {
       await handleAssignPartner(partnerId, partnerType, "manual", 100);
@@ -639,6 +645,8 @@ function FileDetailPanelInner({
                     partnerType={file.partnerType ?? undefined}
                     onClick={handleNavigateToPartner}
                     onRemove={handleRemovePartner}
+                    onConfirm={handleConfirmPartner}
+                    confirming={isAssigningPartner}
                   />
                 ) : (
                   <Button

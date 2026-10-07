@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { format } from "date-fns";
-import { X, Loader2, ChevronRight, Check, AlertTriangle, Search, Sparkles, Info } from "lucide-react";
+import { X, Loader2, Check, AlertTriangle, Search, Sparkles, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
 import { Transaction } from "@/types/transaction";
@@ -22,6 +22,8 @@ import { useEcbConverter } from "@/lib/currency";
 // What the Outstanding line shows, from the matcher's own derivation (#615).
 import { outstandingLineState } from "@/lib/matching/outstanding-line";
 import { useFiles } from "@/hooks/use-files";
+import { useConnectionConfirmations, useConfirmConnection, type ConnectionConfirmation } from "@/hooks/use-connection-confirmations";
+import { ConfirmMark } from "@/components/ui/confirm-mark";
 import Link from "next/link";
 import {
   getTransactionMatchConfidenceColor,
@@ -153,10 +155,15 @@ interface TransactionRowProps {
   fileCurrency: string;
   onRemove?: () => void;
   disabled?: boolean;
+  /** Whether the User made or confirmed this Connection; absent while unknown. */
+  confirmation?: ConnectionConfirmation;
+  onConfirm?: () => void;
+  confirming?: boolean;
 }
 
-function TransactionRow({ transaction, fileCurrency, onRemove, disabled }: TransactionRowProps) {
+function TransactionRow({ transaction, fileCurrency, onRemove, disabled, confirmation, onConfirm, confirming }: TransactionRowProps) {
   const convert = useEcbConverter();
+  const tConfirm = useTranslations("common.confirmMatch");
   const txDate = toDateSafe(transaction.date);
   const hasCurrencyMismatch = transaction.currency !== fileCurrency;
 
@@ -201,6 +208,17 @@ function TransactionRow({ transaction, fileCurrency, onRemove, disabled }: Trans
             formatAmount(transaction.amount, transaction.currency)
           )}
         </span>
+        {confirmation || confirming ? (
+          <ConfirmMark
+            confirmed={confirmation === "confirmed"}
+            onConfirm={onConfirm}
+            pending={confirming}
+            disabled={disabled}
+            revealOnHover
+            confirmedLabel={tConfirm("connectionConfirmed")}
+            confirmLabel={tConfirm("connectionConfirm")}
+          />
+        ) : null}
         {onRemove && (
           <button
             type="button"
@@ -215,7 +233,6 @@ function TransactionRow({ transaction, fileCurrency, onRemove, disabled }: Trans
             <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
           </button>
         )}
-        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
     </Link>
   );
@@ -314,6 +331,8 @@ export function FileConnectionsList({
   // The shared list every Files screen already holds: what else sits on each
   // connected Transaction, for the Outstanding line (#615).
   const { files: allFiles } = useFiles();
+  const confirmations = useConnectionConfirmations("fileId", file.id);
+  const { confirm, pendingPair } = useConfirmConnection();
 
   // Track previous file ID to detect actual file changes vs. data updates
   const prevFileIdRef = useRef<string | null>(null);
@@ -446,6 +465,9 @@ export function FileConnectionsList({
                 fileCurrency={currency}
                 onRemove={onDisconnect ? () => handleDisconnect(tx.id) : undefined}
                 disabled={disconnecting === tx.id}
+                confirmation={confirmations.get(tx.id)}
+                onConfirm={() => confirm(file.id, tx.id)}
+                confirming={pendingPair === `${file.id}:${tx.id}`}
               />
             ))}
             {/* Add button after transactions */}

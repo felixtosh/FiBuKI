@@ -217,7 +217,14 @@
     "german": "Deutsch",
     "english": "English",
     "back": "Back",
-    "openChat": "Open chat"
+    "openChat": "Open chat",
+    "confirmMatch": {
+      "partnerConfirmed": "Assigned by you. FiBuKI learns from it.",
+      "partnerConfirm": "Confirm this Partner. FiBuKI learns from what you confirm.",
+      "partnerAi": "Assigned by AI",
+      "connectionConfirmed": "Connected by you. FiBuKI learns from it.",
+      "connectionConfirm": "Confirm this connection. FiBuKI learns from what you confirm."
+    }
   },
   "billingCycle": {
     "title": "Billing Cycle",

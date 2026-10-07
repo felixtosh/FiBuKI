@@ -420,6 +420,52 @@ describe("an accepted suggestion", () => {
   });
 });
 
+describe("a person connecting a pair automation already connected", () => {
+  it("makes the record theirs: the manual label, the old one kept", async () => {
+    await seedPair();
+    expect((await connect("auto")).status).toBe("connected");
+    expect((await records("f-1", "t-1"))[0].data().connectionType).toBe("auto_matched");
+
+    const outcome = await call<{ alreadyConnected: boolean }>(connectFileToTransactionCallable, {
+      fileId: "f-1",
+      transactionId: "t-1",
+      connectionType: "manual",
+    });
+    expect(outcome.alreadyConnected).toBe(true);
+
+    const all = await records("f-1", "t-1");
+    expect(all).toHaveLength(1);
+    expect(all[0].data()).toMatchObject({ origin: "manual", connectionType: "manual", confirmedFrom: "auto_matched" });
+    expect(all[0].data().confirmedAt).toBeDefined();
+    expect(await data("files", "f-1")).toMatchObject({ transactionIds: ["t-1"] });
+    expect(await data("transactions", "t-1")).toMatchObject({ fileIds: ["f-1"] });
+  });
+
+  it("an accepted suggestion of the pair does the same, with its own label", async () => {
+    await seedPair();
+    await connect("ai");
+    await connect("suggestion");
+    expect((await records("f-1", "t-1"))[0].data()).toMatchObject({
+      connectionType: "suggestion_accepted",
+      confirmedFrom: "ai_matched",
+    });
+  });
+
+  it("automation finding the pair, or a person's pair connected again, changes nothing", async () => {
+    await seedPair();
+    await connect("auto");
+    await connect("auto");
+    await connect("ai");
+    expect((await records("f-1", "t-1"))[0].data()).toMatchObject({ connectionType: "auto_matched" });
+    expect((await records("f-1", "t-1"))[0].data().confirmedFrom).toBeUndefined();
+
+    await connect("manual");
+    const confirmedAt = (await records("f-1", "t-1"))[0].data().confirmedAt;
+    await connect("manual");
+    expect((await records("f-1", "t-1"))[0].data().confirmedAt).toEqual(confirmedAt);
+  });
+});
+
 describe("a list of pairs", () => {
   it("connects 500 pairs in one call", async () => {
     const pairs = [];
