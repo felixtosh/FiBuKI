@@ -44,8 +44,13 @@ export interface UpdateOptions {
 
 const MAX_STAGGERED = 20;
 
+/**
+ * No motion when the user asks for less, or where the Web Animations API is
+ * missing (jsdom in the component tests; every real browser has it).
+ */
 function prefersReducedMotion() {
-  return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (typeof Element === "undefined" || typeof Element.prototype.animate !== "function") return true;
+  return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 }
 
 /** Lifts a row's cells above its effect layers while an effect runs, then puts them back. */
