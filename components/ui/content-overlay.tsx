@@ -62,7 +62,7 @@ export function ContentOverlay({
       {/* Backdrop */}
       {showBackdrop && (
         <div
-          className="absolute inset-0 bg-black/60 animate-in fade-in-0 duration-200"
+          className="absolute inset-0 bg-black/60 animate-in fade-in-0 duration-200 ease-slide"
           onClick={onClose}
         />
       )}
@@ -70,7 +70,7 @@ export function ContentOverlay({
       {/* Overlay container */}
       <div
         className={cn(
-          "relative bg-background rounded-lg shadow-2xl flex flex-col max-w-[95%] max-h-[95%] min-w-[480px] w-full h-full overflow-hidden animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 duration-200",
+          "ease-slide relative bg-background rounded-lg shadow-2xl flex flex-col max-w-[95%] max-h-[95%] min-w-[480px] w-full h-full overflow-hidden animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 duration-200",
           className
         )}
       >
