@@ -22,6 +22,7 @@ import {
   BankPaymentCandidate,
 } from "./reconciliationScoring";
 import { addDays } from "../utils/storedDay";
+import { activityEntry, logActivity } from "../utils/activity";
 
 const db = getFirestore();
 
@@ -214,6 +215,13 @@ export async function tryReconcileTransaction(
         reconciledByBankTxId: bankTxId,
         reconciliationGroupId: groupRef.id,
         updatedAt: now,
+        ...logActivity(activityEntry({
+          type: "reconciled",
+          actor: "auto",
+          transactionId: bankTxId,
+          confidence: match.confidence,
+          summary: `Reconciled with the card statement payment on the bank account (${Math.round(match.confidence)}%)`,
+        })),
       });
     }
 
@@ -221,6 +229,12 @@ export async function tryReconcileTransaction(
     batch.update(db.collection("transactions").doc(bankTxId), {
       reconciliationMatchComplete: true,
       updatedAt: now,
+      ...logActivity(activityEntry({
+        type: "reconciled",
+        actor: "auto",
+        confidence: match.confidence,
+        summary: `${match.cardTransactions.length} card charges${cardSourceName ? ` from ${cardSourceName}` : ""} reconciled with this payment (${Math.round(match.confidence)}%)`,
+      })),
     });
 
     console.log(
@@ -243,6 +257,12 @@ export async function tryReconcileTransaction(
       reconciliationSuggestions: FieldValue.arrayUnion(suggestion),
       reconciliationMatchComplete: true,
       updatedAt: now,
+      automationHistory: FieldValue.arrayUnion(activityEntry({
+        type: "reconciliation_suggested",
+        actor: "auto",
+        confidence: match.confidence,
+        summary: `${match.cardTransactions.length} card charges${cardSourceName ? ` from ${cardSourceName}` : ""} suggested for this payment (${Math.round(match.confidence)}%)`,
+      })),
     });
   }
 

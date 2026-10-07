@@ -16,6 +16,10 @@ import { createFileRecord } from "../files/createFileRecord";
 import { performDeleteFile } from "../files/deleteFile";
 import { connectFiles, unlinkFile } from "../fileConnections/writer";
 import { transactionSuggestionsActivity } from "../matching/suggestionActivity";
+import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
+import { bulkUpdateTransactionsCallable } from "../transactions/bulkUpdateTransactions";
+import { assignPartnerToFile, removePartnerFromFile } from "../files/filePartner";
+import { mergeUserPartnersInternal } from "../partners/mergeUserPartners";
 
 const db = getFirestore();
 const ME = "activity-me";
@@ -147,5 +151,61 @@ describe("File Connections, on both sides", () => {
     const disconnected = (await log("transactions", "t1")).find((e) => e.type === "file_disconnected");
     expect(disconnected).toMatchObject({ actor: "auto" });
     expect(disconnected?.summary).toContain("removed from the synced folder");
+  });
+});
+
+describe("Transactions: categories, the agent, bulk edits (#752 part 2)", () => {
+  beforeEach(async () => {
+    await seedTx("t1");
+    await db.collection("noReceiptCategories").doc("c1").set({ userId: ME, name: "Bank fees", templateId: "bank-fees", isActive: true, matchedPartnerIds: [], transactionCount: 0 });
+  });
+
+  it("a category assigned through the shared writer names who did it", async () => {
+    await assignNoReceiptCategoryToTransaction(db, ME, { transactionId: "t1", categoryId: "c1", matchedBy: "manual", actor: "ai" });
+    expect((await log("transactions", "t1"))[0]).toMatchObject({ type: "category_assigned", actor: "ai", summary: 'Category "Bank fees" assigned' });
+  });
+
+  it("the agent's connect is logged as AI, not as the User", async () => {
+    await seedFile("f1");
+    await connectFiles(db, ME, [{ fileId: "f1", transactionId: "t1" }], { origin: "agent" });
+    expect((await log("transactions", "t1"))[0]).toMatchObject({ type: "file_connected", actor: "ai" });
+  });
+
+  it("a bulk edit from the agent logs each row as AI", async () => {
+    await (bulkUpdateTransactionsCallable as unknown as { run: (r: unknown) => Promise<unknown> }).run({
+      data: { ids: ["t1"], data: { noReceiptCategoryId: "c1", noReceiptCategoryMatchedBy: "manual" }, actor: "ai" },
+      auth: { uid: ME, token: {} },
+    });
+    expect((await log("transactions", "t1"))[0]).toMatchObject({ type: "category_assigned", actor: "ai" });
+  });
+});
+
+describe("Partners on Files, and merges (#752 part 2)", () => {
+  beforeEach(async () => {
+    await db.collection("partners").doc("p1").set({ userId: ME, name: "Hetzner Online GmbH", aliases: [], ibans: [] });
+    await db.collection("partners").doc("p2").set({ userId: ME, name: "Hetzner Online", aliases: [], ibans: [] });
+    await seedFile("f1");
+  });
+
+  it("assigning, confirming and removing a File's Partner are logged", async () => {
+    await assignPartnerToFile(db, ME, { fileId: "f1", partnerId: "p1", partnerType: "user", matchedBy: "auto", confidence: 92 });
+    await assignPartnerToFile(db, ME, { fileId: "f1", partnerId: "p1", partnerType: "user", matchedBy: "manual" });
+    await removePartnerFromFile(db, ME, "f1", "ai");
+    const entries = await log("files", "f1");
+    expect(entries.map((e) => [e.type, e.actor])).toEqual([
+      ["partner_assigned", "auto"],
+      ["partner_assigned", "manual"],
+      ["partner_removed", "ai"],
+    ]);
+    expect(entries[1].summary).toContain("confirmed");
+  });
+
+  it("a merge logs the new Partner on every item that moved", async () => {
+    await seedTx("t1", { partnerId: "p2", partnerType: "user", partnerMatchedBy: "manual" });
+    await db.collection("files").doc("f1").update({ partnerId: "p2", partnerType: "user" });
+    await mergeUserPartnersInternal(db, ME, { survivorId: "p1", loserIds: ["p2"] });
+    for (const [collection, id] of [["transactions", "t1"], ["files", "f1"]] as const) {
+      expect((await log(collection, id)).at(-1)).toMatchObject({ type: "partner_assigned", actor: "manual", forPartnerId: "p1" });
+    }
   });
 });

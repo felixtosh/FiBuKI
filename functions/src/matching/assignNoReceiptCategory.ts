@@ -11,6 +11,7 @@
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { activityEntry, logActivity, type ActivityActor } from "../utils/activity";
 
 export type NoReceiptCategoryMatchedBy = "manual" | "suggestion" | "auto";
 
@@ -19,6 +20,8 @@ export interface AssignNoReceiptCategoryParams {
   categoryId: string;
   matchedBy: NoReceiptCategoryMatchedBy;
   confidence?: number | null;
+  /** Who assigned it, for the activity log (#752). Defaults from `matchedBy`; the agent passes `ai`. */
+  actor?: ActivityActor;
 }
 
 export interface AssignNoReceiptCategoryResult {
@@ -41,7 +44,7 @@ export async function assignNoReceiptCategoryToTransaction(
   userId: string,
   params: AssignNoReceiptCategoryParams
 ): Promise<AssignNoReceiptCategoryResult> {
-  const { transactionId, categoryId, matchedBy, confidence } = params;
+  const { transactionId, categoryId, matchedBy, confidence, actor } = params;
 
   const txRef = db.collection("transactions").doc(transactionId);
   const categoryRef = db.collection("noReceiptCategories").doc(categoryId);
@@ -67,6 +70,13 @@ export async function assignNoReceiptCategoryToTransaction(
     noReceiptCategoryConfidence: confidence ?? (matchedBy === "manual" ? 100 : null),
     isComplete: true,
     updatedAt: now,
+    ...logActivity(activityEntry({
+      type: "category_assigned",
+      actor: actor ?? (matchedBy === "auto" ? "auto" : matchedBy === "suggestion" ? "suggestion" : "manual"),
+      categoryName: (categoryData.name as string | undefined) ?? categoryId,
+      confidence: confidence ?? null,
+      summary: `Category "${categoryData.name ?? categoryId}" assigned`,
+    }, now)),
   });
 
   const partnerId: string | undefined = txData.partnerId;

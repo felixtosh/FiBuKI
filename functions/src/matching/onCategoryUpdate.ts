@@ -8,6 +8,7 @@ import {
   TransactionData,
 } from "../utils/category-matcher";
 import { AutomationMeta } from "../automation/types";
+import { categoryMatchActivity } from "./categoryActivity";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -201,6 +202,8 @@ export const onCategoryUpdate = onDocumentUpdated(
             suggestionsUpdated++;
           }
 
+          const logged = categoryMatchActivity(txData, updates, categories, "a changed category");
+          if (logged) updates.automationHistory = FieldValue.arrayUnion(logged);
           batch.update(txDoc.ref, updates);
           batchCount++;
 

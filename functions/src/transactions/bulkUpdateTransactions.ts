@@ -5,10 +5,13 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { assertWritableFields, BULK_WRITABLE_FIELDS } from "./writableFields";
+import { activityEntry, type ActivityActor } from "../utils/activity";
 
 interface BulkUpdateTransactionsRequest {
   /** Transaction IDs to update */
   ids: string[];
+  /** Who edits, for the activity log (#752): the chat agent sends `ai`. Anything else is the User. */
+  actor?: "manual" | "ai";
   /** Fields to update on all transactions */
   data: {
     description?: string | null;
@@ -128,6 +131,10 @@ export const bulkUpdateTransactionsCallable = createCallable<
     }
     updateData.updatedAt = FieldValue.serverTimestamp();
 
+    // The log (#752): the same lines on every row, built once.
+    const editActivity = await bulkEditActivity(ctx.db, data, request.actor === "ai" ? "ai" : "manual");
+    if (editActivity.length > 0) updateData.automationHistory = FieldValue.arrayUnion(...editActivity);
+
     // Process in batches
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
       const batchIds = ids.slice(i, i + BATCH_SIZE);
@@ -205,3 +212,45 @@ export const bulkUpdateTransactionsCallable = createCallable<
     return result;
   }
 );
+
+/** Fields a person recognises, by stored name. */
+const EDIT_LABELS: Record<string, string> = {
+  description: "description",
+  isComplete: "completion",
+};
+
+/**
+ * The log lines for one bulk edit (#752): a Partner or category set or
+ * cleared gets its own line, any other field one "edited" line.
+ */
+async function bulkEditActivity(
+  db: FirebaseFirestore.Firestore,
+  data: BulkUpdateTransactionsRequest["data"],
+  actor: ActivityActor
+): Promise<Array<Record<string, unknown>>> {
+  const entries: Array<Record<string, unknown>> = [];
+  if (data.partnerId !== undefined) {
+    if (data.partnerId) {
+      const collection = data.partnerType === "global" ? "globalPartners" : "partners";
+      const name = ((await db.collection(collection).doc(data.partnerId).get()).data()?.name as string | undefined) ?? data.partnerId;
+      entries.push(activityEntry({ type: "partner_assigned", actor, partnerName: name, forPartnerId: data.partnerId, summary: `Partner "${name}" assigned` }));
+    } else {
+      entries.push(activityEntry({ type: "partner_removed", actor, summary: "Partner removed" }));
+    }
+  }
+  if (data.noReceiptCategoryId !== undefined) {
+    if (data.noReceiptCategoryId) {
+      const name = ((await db.collection("noReceiptCategories").doc(data.noReceiptCategoryId).get()).data()?.name as string | undefined) ?? data.noReceiptCategoryId;
+      entries.push(activityEntry({ type: "category_assigned", actor, categoryName: name, summary: `Category "${name}" assigned` }));
+    } else {
+      entries.push(activityEntry({ type: "category_removed", actor, summary: "Category removed" }));
+    }
+  }
+  const other = Object.keys(data)
+    .filter((key) => (data as Record<string, unknown>)[key] !== undefined && key in EDIT_LABELS)
+    .map((key) => EDIT_LABELS[key]);
+  if (other.length > 0) {
+    entries.push(activityEntry({ type: "transaction_edited", actor, summary: `Edited: ${other.join(", ")}` }));
+  }
+  return entries;
+}

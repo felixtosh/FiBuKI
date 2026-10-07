@@ -18,6 +18,7 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { updateFileInternal } from "./updateFile";
+import { activityEntry, logActivity, type ActivityActor } from "../utils/activity";
 
 type Db = FirebaseFirestore.Firestore;
 
@@ -29,6 +30,8 @@ type Db = FirebaseFirestore.Firestore;
 export type FilePartnerMatchedBy = "manual" | "suggestion" | "auto" | "ai";
 
 export interface AssignPartnerToFileInput {
+  /** Who assigned it, for the activity log (#752). Defaults from `matchedBy`; the tool surface passes `ai`. */
+  actor?: ActivityActor;
   fileId: string;
   partnerId: string;
   partnerType: "user" | "global";
@@ -110,7 +113,7 @@ export async function assignPartnerToFile(
   userId: string,
   input: AssignPartnerToFileInput
 ): Promise<AssignPartnerToFileResult> {
-  const { fileId, partnerId, partnerType, matchedBy, confidence } = input;
+  const { fileId, partnerId, partnerType, matchedBy, confidence, actor } = input;
   const fileDoc = await loadOwnFile(db, userId, fileId);
   const partnerDoc = await loadUsablePartner(db, userId, partnerId, partnerType);
 
@@ -123,6 +126,18 @@ export async function assignPartnerToFile(
       ...(confidence !== undefined ? { partnerMatchConfidence: confidence } : {}),
     },
   });
+
+  // The log (#752). A re-assign of the same Partner as the User's own is a confirm.
+  const name = (partnerDoc.data()!.name as string | undefined) ?? partnerId;
+  const confirm = fileDoc.data()!.partnerId === partnerId;
+  await fileDoc.ref.update(logActivity(activityEntry({
+    type: "partner_assigned",
+    actor: actor ?? (matchedBy === "ai" ? "ai" : matchedBy === "auto" ? "auto" : matchedBy === "suggestion" ? "suggestion" : "manual"),
+    partnerName: name,
+    forPartnerId: partnerId,
+    confidence: confidence ?? null,
+    summary: confirm ? `Partner "${name}" confirmed` : `Partner "${name}" assigned`,
+  })));
 
   if ((matchedBy === "manual" || matchedBy === "suggestion") && partnerType === "user") {
     const removals = (partnerDoc.data()!.manualFileRemovals || []) as Array<{ fileId?: string }>;
@@ -157,7 +172,9 @@ export async function assignPartnerToFile(
 export async function removePartnerFromFile(
   db: Db,
   userId: string,
-  fileId: string
+  fileId: string,
+  /** Who removed it, for the activity log (#752); the tool surface passes `ai`. */
+  actor: ActivityActor = "manual"
 ): Promise<RemovePartnerFromFileResult> {
   const fileDoc = await loadOwnFile(db, userId, fileId);
   const fileData = fileDoc.data()!;
@@ -173,6 +190,14 @@ export async function removePartnerFromFile(
       partnerMatchConfidence: null,
     },
   });
+  if (previousPartnerId) {
+    await fileDoc.ref.update(logActivity(activityEntry({
+      type: "partner_removed",
+      actor,
+      forPartnerId: previousPartnerId,
+      summary: matchedBy === "auto" || matchedBy === "suggestion" ? "Automatic Partner removed; the matcher learns it was wrong" : "Partner removed",
+    })));
+  }
 
   let recordedAsFalsePositive = false;
   if (previousPartnerId && (matchedBy === "auto" || matchedBy === "suggestion")) {

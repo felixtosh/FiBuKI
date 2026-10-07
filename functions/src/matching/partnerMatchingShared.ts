@@ -7,6 +7,7 @@ import {
 } from "../utils/partner-matcher";
 import { createLocalPartnerFromGlobal } from "./createLocalPartnerFromGlobal";
 import { CLEAR_TX_PROVENANCE } from "./partnerProvenance";
+import { activityEntry } from "../utils/activity";
 
 const db = getFirestore();
 const MAX_BATCH_SIZE = 500;
@@ -310,6 +311,20 @@ export async function processPartnerMatchesForTransactions(
 
       updates.partnerSuggestions = nextSuggestions;
       withSuggestions++;
+
+      // The log (#752): only a new best suggestion, not every re-run.
+      const previousTop = Array.isArray(txData.partnerSuggestions) ? txData.partnerSuggestions[0]?.partnerId : undefined;
+      if (topMatch.partnerId !== previousTop) {
+        const suggestedName = partnerContext.partnerNameMap.get(topMatch.partnerId) || null;
+        updates.automationHistory = FieldValue.arrayUnion(activityEntry({
+          type: "partner_suggested",
+          actor: "auto",
+          forPartnerId: topMatch.partnerId,
+          partnerName: suggestedName,
+          confidence: topMatch.confidence,
+          summary: `Partner "${suggestedName || topMatch.partnerId}" suggested (${Math.round(topMatch.confidence)}%)`,
+        }));
+      }
 
       if (collectAgenticFallback) {
         noAutoMatchTransactions.push({
