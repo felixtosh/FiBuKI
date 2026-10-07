@@ -722,7 +722,8 @@ _Avoid (de)_: Export bare, Übergabe
 
 **Mail Integration**:
 A mailbox the user connected so invoices arrive on their own — one per mailbox, holding
-its credentials and sync state.
+its credentials and search status (when the receipt search last searched it, the Files it
+created there, its last error).
 _Deutsch_: Postfach
 _Avoid_: email account, inbox, connection
 _Avoid (de)_: E-Mail-Konto, Posteingang
@@ -736,7 +737,9 @@ _Avoid (de)_: Anbieter bare, Dienst
 
 **Sync**:
 One run that pulls new messages from a Mail Integration and turns qualifying attachments
-into Files.
+into Files. FiBuKI does not sync mailboxes (#103): the receipt search reads every Mail
+Integration per open Transaction instead, whatever its Mail Provider (#746). The word
+survives for Folder Integrations.
 _Deutsch_: Synchronisierung (the act: synchronisieren — Gmail's own word)
 _Avoid_: fetch, poll, import (an **Import** is the bank side)
 _Avoid (de)_: Abruf, Import, Laden

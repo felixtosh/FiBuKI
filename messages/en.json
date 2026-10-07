@@ -721,6 +721,16 @@
         "step1Detail": "In Claude open Settings, then Connectors, and add a custom connector.",
         "step2": "Paste the server URL"
       }
+    },
+    "receiptSearch": {
+      "title": "Receipt search",
+      "explanation": "FiBuKI searches this mailbox for the receipts your open transactions are missing: after an import, when a transaction gets its partner, and when a partner's invoice is due. Nothing else is read or downloaded.",
+      "lastSearched": "Last searched",
+      "notSearchedYet": "Not searched yet",
+      "filesCreated": "Files created",
+      "lastError": "Last error",
+      "noError": "None",
+      "errorAt": "{when}: {message}"
     }
   },
   "auth": {

@@ -17,16 +17,13 @@
  */
 
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import { defineSecret } from "firebase-functions/params";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { INVOICE_KEYWORDS, SYNCABLE_MAIL_PROVIDERS } from "../mail/constants";
+import { INVOICE_KEYWORDS } from "../mail/constants";
 import type { MailMessage, MailProvider } from "../mail/provider";
+import { isSearchableMailIntegration } from "../mail/searchable";
+import { MAIL_PROVIDER_SECRETS, mailProviderForIntegration } from "../mail/searchMailboxes";
 import { isPassiveMode } from "../utils/checkAutomationMode";
 import { toDateSafe } from "../utils/toDateSafe";
-
-const googleClientId = defineSecret("GOOGLE_CLIENT_ID");
-const googleClientSecret = defineSecret("GOOGLE_CLIENT_SECRET");
-const tokenEncryptionKey = defineSecret("GMAIL_TOKEN_ENCRYPTION_KEY");
 
 /** Headers read per mailbox per scan. Bounds a busy inbox. */
 export const HEADER_SCAN_MAX_MESSAGES = 200;
@@ -94,21 +91,6 @@ const KEYWORD_PATTERN = new RegExp(
 /** Whether a subject reads like an invoice or receipt. */
 export function hasInvoiceKeyword(subject: string): boolean {
   return KEYWORD_PATTERN.test(subject);
-}
-
-async function defaultProviderFor(
-  integrationId: string,
-  integration: FirebaseFirestore.DocumentData
-): Promise<MailProvider> {
-  const db = getFirestore();
-  const tokenSnap = await db.collection("emailTokens").doc(integrationId).get();
-  if (!tokenSnap.exists) throw new Error(`no token document for integration ${integrationId}`);
-  const { resolveMailProvider } = await import("../gmail/gmailSyncQueue");
-  return resolveMailProvider(integration.provider, integration, tokenSnap.data()!, integrationId, {
-    clientId: googleClientId.value(),
-    clientSecret: googleClientSecret.value(),
-    encryptionKey: tokenEncryptionKey.value(),
-  });
 }
 
 async function defaultQueueSearch(args: { transactionId: string; userId: string; partnerId?: string }) {
@@ -250,7 +232,7 @@ export async function scanMailHeaders(deps: HeaderScanDeps = {}): Promise<Header
   const db = getFirestore();
   const resolved: Required<HeaderScanDeps> = {
     now: deps.now ?? new Date(),
-    providerFor: deps.providerFor ?? defaultProviderFor,
+    providerFor: deps.providerFor ?? mailProviderForIntegration,
     queueSearch: deps.queueSearch ?? defaultQueueSearch,
   };
   const report: HeaderScanReport = { mailboxes: 0, headers: 0, knownSenderHits: 0, keywordHits: 0, searches: 0, errors: 0 };
@@ -258,15 +240,12 @@ export async function scanMailHeaders(deps: HeaderScanDeps = {}): Promise<Header
   const perUser = new Map<string, number>();
   const passive = new Map<string, boolean>();
 
-  const integrations = await db
-    .collection("emailIntegrations")
-    .where("provider", "in", [...SYNCABLE_MAIL_PROVIDERS])
-    .where("isActive", "==", true)
-    .where("needsReauth", "==", false)
-    .get();
+  // The receipt search's own rule for which mailboxes it reads (#746).
+  const integrations = await db.collection("emailIntegrations").where("isActive", "==", true).get();
 
   for (const doc of integrations.docs) {
     const integration = doc.data();
+    if (!isSearchableMailIntegration(integration)) continue;
     const userId = integration.userId as string | undefined;
     if (!userId) continue;
     if (!passive.has(userId)) passive.set(userId, await isPassiveMode(userId));
@@ -296,7 +275,7 @@ export const scheduledMailHeaderScan = onSchedule(
     region: "europe-west1",
     memory: "512MiB",
     timeoutSeconds: 540,
-    secrets: [googleClientId, googleClientSecret, tokenEncryptionKey],
+    secrets: MAIL_PROVIDER_SECRETS,
   },
   async () => {
     await scanMailHeaders();

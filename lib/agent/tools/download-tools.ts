@@ -43,6 +43,7 @@ export const downloadGmailAttachmentTool = tool(
           body: JSON.stringify({
             messageId: attachment.messageId,
             attachmentId: attachment.attachmentId,
+            integrationId: attachment.integrationId,
             filename: attachment.filename,
             // No transactionId - let automation handle matching after extraction
             gmailMessageSubject: attachment.emailSubject,
@@ -134,13 +135,14 @@ export const downloadGmailAttachmentTool = tool(
   {
     name: "downloadGmailAttachment",
     description:
-      "Download Gmail attachments. In matching flows, run waitForFileExtraction for new file IDs and verify extracted data before connecting. messageId/attachmentId MUST be copied verbatim from a prior search result.",
+      "Download mail attachments (Gmail or IMAP). In matching flows, run waitForFileExtraction for new file IDs and verify extracted data before connecting. messageId/attachmentId MUST be copied verbatim from a prior search result.",
     schema: z.object({
       attachments: z
         .array(
           z.object({
-            messageId: z.string().describe("Gmail message ID — copy verbatim from a prior search result"),
-            attachmentId: z.string().describe("Gmail attachment ID — copy verbatim from a prior search result"),
+            messageId: z.string().describe("Message ID — copy verbatim from a prior search result"),
+            attachmentId: z.string().describe("Attachment ID — copy verbatim from a prior search result"),
+            integrationId: z.string().optional().describe("The result's integrationId — copy it from the same search result. Required for a mailbox that is not Gmail (IMAP)"),
             filename: z.string().describe("Attachment filename"),
             emailSubject: z.string().optional().describe("Email subject for context"),
             emailFrom: z.string().optional().describe("Email sender"),
@@ -157,7 +159,7 @@ export const downloadGmailAttachmentTool = tool(
 // ============================================================================
 
 export const convertEmailToPdfTool = tool(
-  async ({ messageId, emailSubject, emailFrom }, config) => {
+  async ({ messageId, integrationId, emailSubject, emailFrom }, config) => {
     const authHeader = config?.configurable?.authHeader;
     const workerType = config?.configurable?.workerType as string | undefined;
 
@@ -174,6 +176,7 @@ export const convertEmailToPdfTool = tool(
         },
         body: JSON.stringify({
           messageId,
+          integrationId,
           // No transactionId - let automation handle matching
           gmailMessageFrom: emailFrom,
         }),
@@ -228,7 +231,8 @@ export const convertEmailToPdfTool = tool(
     description:
       "Convert an email body to a PDF. Use when the email itself is the invoice, then run waitForFileExtraction(fileId) and verify before connecting. messageId MUST be copied verbatim from a prior search result.",
     schema: z.object({
-      messageId: z.string().describe("Gmail message ID — copy verbatim from a prior search result"),
+      messageId: z.string().describe("Message ID — copy verbatim from a prior search result"),
+      integrationId: z.string().optional().describe("The result's integrationId — copy it from the same search result. Required for a mailbox that is not Gmail (IMAP)"),
       emailSubject: z.string().optional().describe("Email subject for filename"),
       emailFrom: z.string().optional().describe("Email sender"),
     }),

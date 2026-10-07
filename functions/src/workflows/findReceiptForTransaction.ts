@@ -35,6 +35,8 @@ import {
   QueryGenerationPartner,
 } from "../precision-search/generateSearchQueries";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
+import type { MailSearchTerms } from "../mail/provider";
+import { searchedMailIntegrations } from "../mail/searchable";
 import { autoConnectHolds, filesForTransaction } from "../matching/matcher";
 import { SCORING_CONFIG, isOutstandingMatch } from "../matching/transactionScoring";
 
@@ -105,7 +107,13 @@ export interface FindReceiptResult {
 export interface SearchGmailArgs {
   userId: string;
   integrationIds: string[];
+  /** The suggestions ORed into one Gmail query. */
   query: string;
+  /**
+   * The same suggestions as provider-neutral terms (#746), one entry each:
+   * what a mailbox that cannot read a Gmail query (IMAP) is searched by.
+   */
+  terms?: MailSearchTerms[];
   dateFrom?: string;
   dateTo?: string;
   hasAttachments?: boolean;
@@ -285,16 +293,15 @@ export async function findReceiptForTransaction(
   let gmailAttachmentCount = 0;
   let gmailEmailCount = 0;
 
+  // Every Mail Integration the receipt search reads, Gmail and IMAP alike (#746)
   const integrationsSnap = await db
     .collection("emailIntegrations")
     .where("userId", "==", userId)
-    .where("provider", "==", "gmail")
-    .where("isActive", "==", true)
     .get();
 
-  const activeIntegrationIds = integrationsSnap.docs
-    .filter((d) => !d.data().needsReauth)
-    .map((d) => d.id);
+  const activeIntegrationIds = searchedMailIntegrations(
+    integrationsSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  ).map((integration) => integration.id);
 
   if (activeIntegrationIds.length > 0) {
     // Build smart search queries via the same generator the UI/agent uses,
@@ -380,6 +387,7 @@ export async function findReceiptForTransaction(
         userId,
         integrationIds: activeIntegrationIds,
         query,
+        terms: suggestions.filter((s) => s.query.length >= 2).map((s) => s.terms),
         dateFrom,
         dateTo,
         hasAttachments: false,

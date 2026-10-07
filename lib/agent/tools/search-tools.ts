@@ -21,6 +21,7 @@ import { readDismissedTransactionIds } from "../../../functions/src/matching/dis
 import { getFileAmountForValidation } from "../../../functions/src/tools/agentConnectChecks";
 // The chat's connect wraps its MCP twin (#665).
 import { connectFileToTransactionTool } from "./mcp-tools";
+import { NO_MAILBOX_CONNECTED, chatMailIntegrations } from "./mail-integrations";
 
 // Lazy-load admin DB to avoid initialization at build time
 let _db: ReturnType<typeof import("@/lib/firebase/admin").getAdminDb> | null = null;
@@ -741,19 +742,14 @@ export const searchGmailAttachmentsTool = tool(
       }
     }
 
-    // Get Gmail integrations
-    const integrationsSnapshot = await db
-      .collection("emailIntegrations")
-      .where("userId", "==", userId)
-      .where("provider", "==", "gmail")
-      .where("isActive", "==", true)
-      .get();
+    // Every Mail Integration the receipt search reads, Gmail and IMAP alike (#746)
+    const mailboxes = await chatMailIntegrations(db, userId);
 
-    if (integrationsSnapshot.empty) {
+    if (mailboxes.connected.length === 0) {
       return {
         searchType: "gmail_attachments",
         gmailNotConnected: true,
-        error: "Gmail is not connected. Connect Gmail to search email attachments.",
+        error: NO_MAILBOX_CONNECTED,
         candidates: [],
         queriesUsed: query ? [query] : [],
         totalFound: 0,
@@ -761,20 +757,8 @@ export const searchGmailAttachmentsTool = tool(
       };
     }
 
-    // Check for integrations needing reauth (isPaused is only for sync, not search)
-    const integrationsNeedingReauth = integrationsSnapshot.docs
-      .filter((doc) => {
-        const data = doc.data();
-        return data.needsReauth === true;
-      })
-      .map((doc) => {
-        const data = doc.data();
-        return {
-          integrationId: doc.id,
-          email: data.email,
-          needsReauth: true,
-        };
-      });
+    // Mailboxes waiting for new credentials are reported, not searched
+    const integrationsNeedingReauth = mailboxes.needingReauth;
 
     // Build search queries with variations (matching UI behavior)
     const searchQueriesSet = new Set<string>();
@@ -856,8 +840,7 @@ export const searchGmailAttachmentsTool = tool(
       isRejected?: boolean;
     }> = [];
 
-    for (const integrationDoc of integrationsSnapshot.docs) {
-      const integration = integrationDoc.data();
+    for (const integration of mailboxes.searched) {
       console.log("[searchGmailAttachments] Searching integration:", integration.email);
 
       for (const searchQuery of searchQueries) {
@@ -867,7 +850,7 @@ export const searchGmailAttachmentsTool = tool(
           const searchResponse = await callFirebaseFunction<SearchGmailRequest, SearchGmailResponse>(
             "searchGmailCallable",
             {
-              integrationId: integrationDoc.id,
+              integrationId: integration.id,
               query: searchQuery,
               ...(workerType === "receipt_search"
                 ? {
@@ -938,7 +921,7 @@ export const searchGmailAttachmentsTool = tool(
                 emailSnippet: message.snippet,
                 emailBodyText: message.bodyText ?? undefined,
                 emailDate: message.date,
-                integrationId: integrationDoc.id,
+                integrationId: integration.id,
                 _messageId: message.messageId,
                 _attachmentId: attachment.attachmentId,
                 _classification: classification,
@@ -959,7 +942,7 @@ export const searchGmailAttachmentsTool = tool(
                 emailSnippet: message.snippet,
                 emailBodyText: message.bodyText ?? undefined,
                 emailDate: message.date,
-                integrationId: integrationDoc.id,
+                integrationId: integration.id,
                 _messageId: message.messageId,
                 _classification: classification,
                 _sourceType: "gmail_email",
@@ -1048,7 +1031,7 @@ export const searchGmailAttachmentsTool = tool(
           }
         } catch (err) {
           console.error(
-            `[searchGmailAttachments] Error searching Gmail integration ${integrationDoc.id}:`,
+            `[searchGmailAttachments] Error searching integration ${integration.id}:`,
             err
           );
         }
@@ -1130,20 +1113,20 @@ export const searchGmailAttachmentsTool = tool(
       totalFound: offerableCandidates.length,
       dismissedForThisTransaction,
       alreadyDownloadedCount,
-      integrationCount: integrationsSnapshot.size,
+      integrationCount: mailboxes.connected.length,
       integrationsNeedingReauth: integrationsNeedingReauth.length > 0 ? integrationsNeedingReauth : undefined,
     };
   },
   {
     name: "searchGmailAttachments",
-    description: `Search Gmail for email attachments that might be receipts for a transaction.
+    description: `Search every connected mailbox (Gmail or IMAP) for email attachments that might be receipts for a transaction.
 
 Returns candidates with scores. Each candidate includes:
 - alreadyDownloaded: true if this attachment was previously downloaded
 - existingFileId: the file ID if already downloaded (can be connected directly)
 
 If a high-scoring candidate is alreadyDownloaded, use connectFileToTransaction with existingFileId.
-If not downloaded, use downloadGmailAttachment to download it first.`,
+If not downloaded, use downloadGmailAttachment to download it first, passing the candidate's integrationId.`,
     schema: z.object({
       transactionId: z.string().describe("The transaction ID to find attachments for"),
       query: z
@@ -1200,40 +1183,23 @@ export const searchGmailEmailsTool = tool(
       effectiveDateTo = defaultTo.toISOString();
     }
 
-    // Get Gmail integrations
-    const integrationsSnapshot = await db
-      .collection("emailIntegrations")
-      .where("userId", "==", userId)
-      .where("provider", "==", "gmail")
-      .where("isActive", "==", true)
-      .get();
+    // Every Mail Integration the receipt search reads, Gmail and IMAP alike (#746)
+    const mailboxes = await chatMailIntegrations(db, userId);
 
-    if (integrationsSnapshot.empty) {
+    if (mailboxes.connected.length === 0) {
       return {
         searchType: "gmail_emails",
         query: query || "",
         gmailNotConnected: true,
-        error: "Gmail is not connected. Connect Gmail to search emails.",
+        error: NO_MAILBOX_CONNECTED,
         emails: [],
         totalFound: 0,
         integrationCount: 0,
       };
     }
 
-    // Check for integrations needing reauth
-    const integrationsNeedingReauth = integrationsSnapshot.docs
-      .filter((doc) => {
-        const data = doc.data();
-        return data.needsReauth === true;
-      })
-      .map((doc) => {
-        const data = doc.data();
-        return {
-          integrationId: doc.id,
-          email: data.email,
-          needsReauth: true,
-        };
-      });
+    // Mailboxes waiting for new credentials are reported, not searched
+    const integrationsNeedingReauth = mailboxes.needingReauth;
 
     const allEmails: Array<{
       messageId: string;
@@ -1256,14 +1222,13 @@ export const searchGmailEmailsTool = tool(
       };
     }> = [];
 
-    for (const integrationDoc of integrationsSnapshot.docs) {
-      const integration = integrationDoc.data();
+    for (const integration of mailboxes.searched) {
 
       try {
         const searchResponse = await callFirebaseFunction<SearchGmailRequest, SearchGmailResponse>(
           "searchGmailCallable",
           {
-            integrationId: integrationDoc.id,
+            integrationId: integration.id,
             query,
             dateFrom: effectiveDateFrom,
             dateTo: effectiveDateTo,
@@ -1297,14 +1262,14 @@ export const searchGmailEmailsTool = tool(
             date: message.date,
             snippet: message.snippet,
             bodyText: message.bodyText,
-            integrationId: integrationDoc.id,
+            integrationId: integration.id,
             integrationEmail: integration.email,
             attachmentCount: message.attachments?.length || 0,
             classification,
           });
         }
       } catch (err) {
-        console.error(`[searchGmailEmails] Error searching integration ${integrationDoc.id}:`, err);
+        console.error(`[searchGmailEmails] Error searching integration ${integration.id}:`, err);
       }
     }
 
@@ -1427,7 +1392,7 @@ export const searchGmailEmailsTool = tool(
       query,
       emails: resultEmails,
       totalFound: dedupedEmails.length,
-      integrationCount: integrationsSnapshot.size,
+      integrationCount: mailboxes.connected.length,
       ...(needsEmailAnalysis
         ? {
             nextStep: "Run analyzeEmail on recommendedAnalyzeCandidates, then convertEmailToPdf if invoice-like.",
@@ -1449,7 +1414,7 @@ export const searchGmailEmailsTool = tool(
   {
     name: "searchGmailEmails",
     description:
-      "Search Gmail for emails matching a query. Returns emails with classification (mail invoice, invoice link, attachments). Use to find order confirmations, booking receipts, or emails with invoice download links.",
+      "Search every connected mailbox (Gmail or IMAP) for emails matching a query. Returns emails with classification (mail invoice, invoice link, attachments). Use to find order confirmations, booking receipts, or emails with invoice download links.",
     schema: z.object({
       query: z.string().describe("Gmail search query (e.g., 'Netflix receipt', 'from:amazon.de')"),
       transactionId: z.string().optional().describe("Transaction ID for context (optional)"),
@@ -1478,7 +1443,7 @@ interface AnalyzeEmailResponse {
 }
 
 export const analyzeEmailTool = tool(
-  async ({ messageId, transactionId }, config) => {
+  async ({ messageId, integrationId, transactionId }, config) => {
     const userId = config?.configurable?.userId;
     const authHeader = config?.configurable?.authHeader;
     const workerType = config?.configurable?.workerType as string | undefined;
@@ -1513,6 +1478,7 @@ export const analyzeEmailTool = tool(
       },
       body: JSON.stringify({
         messageId,
+        integrationId,
         transaction,
       }),
     });
@@ -1564,7 +1530,8 @@ export const analyzeEmailTool = tool(
     description:
       "Use AI to deeply analyze an email for invoice content. Determines if the email body IS an invoice, or if it contains links to download an invoice. Returns extracted URLs and confidence scores. messageId MUST be copied verbatim from a prior searchGmailEmails/searchGmailAttachments result — never invent or paraphrase it.",
     schema: z.object({
-      messageId: z.string().describe("Gmail message ID — must be copied verbatim from a prior searchGmailEmails result (e.g. '19e887bfc6749b98'). Do NOT invent placeholder IDs."),
+      messageId: z.string().describe("Message ID — must be copied verbatim from a prior searchGmailEmails result (e.g. '19e887bfc6749b98'). Do NOT invent placeholder IDs."),
+      integrationId: z.string().optional().describe("The result's integrationId — copy it from the same search result. Required for a mailbox that is not Gmail (IMAP)"),
       transactionId: z.string().optional().describe("Transaction ID for context (improves accuracy)"),
     }),
   }
@@ -1721,7 +1688,7 @@ export const findReceiptForTransactionTool = tool(
       case "needs_review":
         nextStep =
           "Show the top candidates to the user (or for the highest-scoring gmail_attachment, " +
-          "call downloadGmailAttachment with its messageId+attachmentId, then waitForFileExtraction, " +
+          "call downloadGmailAttachment with its messageId+attachmentId+integrationId, then waitForFileExtraction, " +
           "then connectFileToTransaction).";
         break;
       case "no_match":

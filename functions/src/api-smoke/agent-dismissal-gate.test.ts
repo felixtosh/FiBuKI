@@ -352,6 +352,8 @@ describe("searchGmailAttachments — an already-downloaded rejected file is not 
       userId,
       email: "stefan@example.com",
       provider: "gmail",
+      isActive: true,
+      needsReauth: false,
     });
 
     h.callFirebaseFunction.mockImplementation(async (name: string, payload: Doc) => {

@@ -14,7 +14,7 @@
 
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { getFirestore } from "firebase-admin/firestore";
-import { SYNCABLE_MAIL_PROVIDERS } from "../mail/constants";
+import { isSearchableMailIntegration } from "../mail/searchable";
 import { queueIncompleteTransactionSearch } from "../precision-search/queueIncompleteSearch";
 
 interface ImportRecord {
@@ -23,19 +23,10 @@ interface ImportRecord {
   importedCount: number;
 }
 
-/** Whether the user has a mailbox the search can use. */
+/** Whether the user has a mailbox the receipt search reads (#746). */
 async function hasConnectedMailbox(db: FirebaseFirestore.Firestore, userId: string): Promise<boolean> {
-  // Gmail and IMAP alike (see SYNCABLE_MAIL_PROVIDERS).
-  const snapshot = await db
-    .collection("emailIntegrations")
-    .where("userId", "==", userId)
-    .where("provider", "in", [...SYNCABLE_MAIL_PROVIDERS])
-    .where("isActive", "==", true)
-    .where("needsReauth", "==", false)
-    .where("initialSyncComplete", "==", true)
-    .limit(1)
-    .get();
-  return !snapshot.empty;
+  const snapshot = await db.collection("emailIntegrations").where("userId", "==", userId).get();
+  return snapshot.docs.some((doc) => isSearchableMailIntegration(doc.data()));
 }
 
 /** The trigger's body, exported so the self-host suite can drive it. */

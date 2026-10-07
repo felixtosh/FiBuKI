@@ -9,6 +9,7 @@
 
 import {
   MailAttachment,
+  MailBody,
   MailMessage,
   MailMessageRef,
   MailProvider,
@@ -16,7 +17,7 @@ import {
   MailSearchPage,
 } from "./provider";
 import { MailCredentials, MailProviderDescriptor } from "./registry";
-import { INVOICE_MIME_TYPES, MAX_EMAILS_PER_BATCH } from "./constants";
+import { MAX_EMAILS_PER_BATCH, isInvoiceAttachment } from "./constants";
 import { buildGmailQuery } from "./gmail-query";
 
 // ============================================================================
@@ -33,6 +34,7 @@ interface GmailMessage {
   id: string;
   threadId: string;
   internalDate: string;
+  snippet?: string;
   payload: {
     headers: Array<{ name: string; value: string }>;
     parts?: GmailPart[];
@@ -102,7 +104,7 @@ function extractAttachments(message: GmailMessage): MailAttachment[] {
       if (
         part.body?.attachmentId &&
         part.filename &&
-        INVOICE_MIME_TYPES.includes(part.mimeType)
+        isInvoiceAttachment(part.mimeType, part.filename)
       ) {
         attachments.push({
           attachmentId: part.body.attachmentId,
@@ -121,6 +123,31 @@ function extractAttachments(message: GmailMessage): MailAttachment[] {
 
   processPartsRecursively(message.payload.parts);
   return attachments;
+}
+
+function decodeBase64Url(data: string): string {
+  return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8");
+}
+
+/** The message's HTML and plain-text body; the last part of each kind wins. */
+function extractBody(message: GmailMessage): MailBody {
+  let html: string | null = null;
+  let text: string | null = null;
+  const take = (mimeType: string, data: string | undefined) => {
+    if (!data) return;
+    if (mimeType === "text/html") html = decodeBase64Url(data);
+    else if (mimeType === "text/plain") text = decodeBase64Url(data);
+  };
+
+  take(message.payload.mimeType, message.payload.body?.data);
+  const walk = (parts: GmailPart[] | undefined): void => {
+    for (const part of parts ?? []) {
+      take(part.mimeType, part.body?.data);
+      walk(part.parts);
+    }
+  };
+  walk(message.payload.parts);
+  return { html, text };
 }
 
 // ============================================================================
@@ -242,6 +269,12 @@ class GmailApiClient {
 
 export class GmailProvider implements MailProvider {
   private client: GmailApiClient;
+  /**
+   * The last message read in full. getMessage already fetches the whole
+   * payload, so a getBody for the same message right after it costs no second
+   * request.
+   */
+  private lastFull: GmailMessage | null = null;
 
   constructor(accessToken: string) {
     this.client = new GmailApiClient(accessToken);
@@ -267,6 +300,7 @@ export class GmailProvider implements MailProvider {
 
   async getMessage(ref: MailMessageRef): Promise<MailMessage> {
     const message = await this.client.getMessage(ref.id);
+    this.lastFull = message;
     return {
       id: message.id,
       messageId: extractHeader(message, "Message-ID"),
@@ -274,7 +308,14 @@ export class GmailProvider implements MailProvider {
       subject: extractHeader(message, "Subject") || "",
       date: new Date(parseInt(message.internalDate, 10)),
       attachments: extractAttachments(message),
+      ...(message.snippet ? { snippet: message.snippet } : {}),
     };
+  }
+
+  async getBody(ref: MailMessageRef): Promise<MailBody> {
+    const message =
+      this.lastFull?.id === ref.id ? this.lastFull : await this.client.getMessage(ref.id);
+    return extractBody(message);
   }
 
   async getHeaders(ref: MailMessageRef): Promise<MailMessage> {

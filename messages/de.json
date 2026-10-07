@@ -721,6 +721,16 @@
         "step1Detail": "Öffne in Claude Einstellungen, dann Connectors, und füge einen benutzerdefinierten Connector hinzu.",
         "step2": "Server-URL einfügen"
       }
+    },
+    "receiptSearch": {
+      "title": "Belegsuche",
+      "explanation": "FiBuKI durchsucht dieses Postfach nach den Belegen, die Ihren offenen Transaktionen fehlen: nach einem Import, sobald eine Transaktion ihren Partner bekommt, und wenn die Rechnung eines Partners fällig ist. Sonst wird nichts gelesen oder heruntergeladen.",
+      "lastSearched": "Zuletzt durchsucht",
+      "notSearchedYet": "Noch nicht durchsucht",
+      "filesCreated": "Erstellte Belege",
+      "lastError": "Letzter Fehler",
+      "noError": "Keiner",
+      "errorAt": "{when}: {message}"
     }
   },
   "auth": {

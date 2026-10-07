@@ -81,7 +81,7 @@ function isGmailReauthErrorMessage(message?: string): boolean {
 
 function buildReauthPauseMessage(errorMessage?: string): string {
   return errorMessage?.trim() ||
-    "Paused: Gmail reconnection required. This worker will resume automatically after reconnect.";
+    "Paused: a mailbox needs reconnection. This worker will resume automatically after reconnect.";
 }
 
 interface UseWorkerQueueOptions {

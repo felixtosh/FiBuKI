@@ -26,9 +26,9 @@ import {
 } from "../provider";
 import {
   INVOICE_KEYWORDS,
-  INVOICE_MIME_TYPES,
   MAX_EMAILS_PER_BATCH,
   MAX_IMAP_SCAN_MESSAGES,
+  isInvoiceAttachment,
 } from "../constants";
 
 /** Everything ImapProvider needs to reach one mailbox. */
@@ -108,7 +108,7 @@ function extractAttachments(root: MessageStructureObject | undefined): MailAttac
     const isAttachment =
       node.disposition?.toLowerCase() === "attachment" || Boolean(filename);
 
-    if (isAttachment && filename && INVOICE_MIME_TYPES.includes(type)) {
+    if (isAttachment && filename && isInvoiceAttachment(type, filename)) {
       out.push({
         // Non-multipart messages carry no part number; the whole body is "1".
         attachmentId: node.part || "1",

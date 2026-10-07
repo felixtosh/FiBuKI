@@ -14,6 +14,7 @@
 
 import { createCallable, HttpsError } from "../utils/createCallable";
 import {
+  isLikelyReceiptAttachment,
   searchGmailDirect,
   tryRefreshToken,
   type EmailTokenDocument,
@@ -28,6 +29,11 @@ import {
   type SearchGmailArgs,
 } from "./findReceiptForTransaction";
 import { dayOf } from "../utils/storedDay";
+import type { MailProvider } from "../mail/provider";
+import { mailProviderOf } from "../mail/searchable";
+import { namedSearchTerms } from "../mail/search-terms";
+import { mailProviderForIntegration, recordMailboxFailure } from "../mail/searchMailboxes";
+import { classifyEmail } from "../precision-search/shared-utils";
 
 // Secrets required for Gmail token refresh (mirrors searchGmailCallable)
 const googleClientId = defineSecret("GOOGLE_CLIENT_ID");
@@ -111,6 +117,12 @@ async function searchGmailForWorkflow(
     if (integration.userId !== args.userId) continue;
     if (integration.needsReauth) continue;
 
+    // Every mailbox but Gmail is read through its Mail Provider (#746).
+    if (mailProviderOf(integration) !== "gmail") {
+      collected.push(...(await searchMailboxForWorkflow(db, integrationId, integration, args)));
+      continue;
+    }
+
     const tokenSnap = await db.collection("emailTokens").doc(integrationId).get();
     if (!tokenSnap.exists) continue;
     let tokens = tokenSnap.data() as EmailTokenDocument;
@@ -163,6 +175,82 @@ async function searchGmailForWorkflow(
   }
 
   return { messages: collected };
+}
+
+/** Messages one Mail Provider search returns at most per suggestion. */
+const PROVIDER_RESULTS_PER_TERMS = 10;
+
+/**
+ * The workflow's search over a mailbox that cannot read a Gmail query: one
+ * provider search per suggestion's terms, the results merged. A refused login
+ * marks the mailbox as needing new credentials, as the search queue does.
+ */
+async function searchMailboxForWorkflow(
+  db: FirebaseFirestore.Firestore,
+  integrationId: string,
+  integration: FirebaseFirestore.DocumentData,
+  args: SearchGmailArgs
+): Promise<GmailSearchMessage[]> {
+  const provider = mailProviderOf(integration);
+  const dateTo = args.dateTo ? new Date(args.dateTo) : new Date();
+  const dateFrom = args.dateFrom
+    ? new Date(args.dateFrom)
+    : new Date(dateTo.getTime() - 365 * 24 * 60 * 60 * 1000);
+  const limit = Math.min(args.limit ?? 30, PROVIDER_RESULTS_PER_TERMS);
+  const found: GmailSearchMessage[] = [];
+  const seen = new Set<string>();
+
+  let mail: MailProvider | null = null;
+  try {
+    mail = await mailProviderForIntegration(integrationId, integration);
+    for (const raw of args.terms ?? []) {
+      const terms = namedSearchTerms(raw);
+      if (!terms) continue;
+      const page = await mail.search({
+        ...terms,
+        hasAttachment: args.hasAttachments === true,
+        dateFrom,
+        dateTo,
+        limit,
+      });
+      for (const ref of page.messages) {
+        if (seen.has(ref.id)) continue;
+        seen.add(ref.id);
+        const message = await mail.getMessage(ref);
+        const attachments = message.attachments.map((a) => ({
+          attachmentId: a.attachmentId,
+          filename: a.filename,
+          mimeType: a.mimeType,
+          size: a.size,
+          isLikelyReceipt: isLikelyReceiptAttachment(a.filename, a.mimeType),
+        }));
+        const classification = classifyEmail(message.subject, message.snippet ?? "", attachments, null);
+        found.push({
+          messageId: message.id,
+          // No threads outside Gmail; the message stands in for its own thread.
+          threadId: message.id,
+          subject: message.subject || "(No Subject)",
+          from: message.from,
+          date: message.date.toISOString(),
+          snippet: message.snippet ?? "",
+          bodyText: null,
+          integrationId,
+          attachments: attachments.map(({ attachmentId, filename, mimeType }) => ({ attachmentId, filename, mimeType })),
+          classification: {
+            hasPdfAttachment: classification.hasPdfAttachment,
+            possibleMailInvoice: classification.possibleMailInvoice,
+            possibleInvoiceLink: classification.possibleInvoiceLink,
+            confidence: classification.confidence,
+          },
+        });
+      }
+    }
+  } catch (err) {
+    await recordMailboxFailure(db, integrationId, provider, err);
+  } finally {
+    await mail?.close().catch(() => undefined);
+  }
+  return found;
 }
 
 function buildDateScopedQuery(query: string, dateFrom?: string, dateTo?: string): string {

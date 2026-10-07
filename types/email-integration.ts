@@ -101,6 +101,18 @@ export interface EmailIntegration {
    */
   lastSyncErrorCode?: ImapErrorCode | null;
 
+  // === Receipt search status (#746) ===
+  // Written by the receipt search, read by the mailbox page (ADR-0016).
+
+  /** When the receipt search last searched this mailbox. */
+  receiptSearchLastSearchedAt?: Timestamp | null;
+  /** Files the receipt search has created from this mailbox, a running count. */
+  receiptSearchFilesCreated?: number;
+  /** The search's last error here, in plain words; cleared by a search that went through. */
+  receiptSearchLastError?: string | null;
+  /** When that error happened. */
+  receiptSearchLastErrorAt?: Timestamp | null;
+
   /** When the header scan (#103) last read this mailbox; it reads on from here. */
   headerScanCursorAt?: Timestamp | null;
   /** Headers the last scan read. */

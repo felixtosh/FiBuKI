@@ -24,6 +24,7 @@ import {
 import { MAX_EMAILS_PER_BATCH } from "../mail/constants";
 import { buildGmailQuery } from "../mail/gmail-query";
 import { imapConfigFromIntegration } from "../mail/imap/config";
+import { termsFromQuery } from "../mail/search-terms";
 import { dayOf } from "../utils/storedDay";
 
 // Secrets for token refresh
@@ -493,6 +494,8 @@ async function searchViaProvider(
     limit: number;
     pageToken?: string;
     rawQuery?: string;
+    /** The raw query was read into `terms` rather than dropped. */
+    rawQueryLowered?: boolean;
     expandThreads?: boolean;
   }
 ): Promise<SearchGmailResponse> {
@@ -519,8 +522,9 @@ async function searchViaProvider(
     limitations.push({
       constraint: "rawQuery",
       handling: "unsupported",
-      detail:
-        "A raw Gmail query means nothing to this provider and was not applied; the neutral terms were.",
+      detail: params.rawQueryLowered
+        ? "A raw Gmail query was read as neutral terms; any Gmail-only operator in it was not applied."
+        : "A raw Gmail query means nothing to this provider and was not applied; the neutral terms were.",
     });
   }
   if (params.expandThreads) {
@@ -700,6 +704,13 @@ export const searchGmailCallable = onCall<
         ),
       });
 
+      // A caller that sends only a raw Gmail query (the chat assistant's mail
+      // tools, #746) gets it read as neutral terms, so an IMAP mailbox is
+      // searched for what was asked instead of everything in the window.
+      const namesTerms =
+        keywords !== undefined || anyOf !== undefined || from !== undefined || filenames !== undefined;
+      const lowered = query && !namesTerms ? termsFromQuery(query) : null;
+
       const response = await searchViaProvider(provider, {
         userId,
         // `?? []` on both lists, for the same reason the Gmail leg does it: an
@@ -707,18 +718,26 @@ export const searchGmailCallable = onCall<
         // invoice sweep a provider falls back to for the Sync worker. The two
         // legs have to lower one request the same way or the neutral terms are
         // not neutral.
-        terms: {
-          keywords: keywords ?? [],
-          anyOf,
-          from,
-          filenames: filenames ?? [],
-          hasAttachment: hasAttachments,
-        },
+        terms: lowered
+          ? {
+              ...lowered,
+              keywords: lowered.keywords ?? [],
+              filenames: lowered.filenames ?? [],
+              hasAttachment: lowered.hasAttachment ?? hasAttachments,
+            }
+          : {
+              keywords: keywords ?? [],
+              anyOf,
+              from,
+              filenames: filenames ?? [],
+              hasAttachment: hasAttachments,
+            },
         dateFrom: dateFrom ? new Date(dateFrom) : undefined,
         dateTo: dateTo ? new Date(dateTo) : undefined,
         limit,
         pageToken,
         rawQuery: query,
+        rawQueryLowered: Boolean(lowered),
         expandThreads,
       });
 

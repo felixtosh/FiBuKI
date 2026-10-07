@@ -4,6 +4,12 @@ import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/ge
 import { VertexAI } from "@google-cloud/vertexai";
 import { MODELS } from "@/functions/src/utils/models";
 import { GmailResolutionError, resolveGmailIntegration } from "@/lib/gmail/resolve-integration";
+import {
+  fetchProviderBody,
+  ownedIntegrationProvider,
+  providerErrorResponse,
+  readsThroughProviderFactory,
+} from "@/lib/mail/provider-attach";
 
 const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
 
@@ -58,6 +64,31 @@ export async function POST(request: NextRequest) {
         { error: "messageId is required" },
         { status: 400 }
       );
+    }
+
+    // Every mailbox but Gmail is read through the provider factory (#746),
+    // as the mail tab and Mail to PDF already do: the chat's mail search
+    // returns IMAP results, and analysing one must not fall back to Gmail.
+    const provider = await ownedIntegrationProvider(integrationId, userId);
+    if (integrationId && readsThroughProviderFactory(provider)) {
+      let content;
+      try {
+        content = await fetchProviderBody(request.headers.get("Authorization") || "", { integrationId, messageId });
+      } catch (err) {
+        const { status, body } = providerErrorResponse(err);
+        return NextResponse.json(body, { status });
+      }
+      const analysis = await analyzeEmailWithGemini(
+        { subject: content.subject, from: content.from, htmlBody: content.htmlBody, textBody: content.textBody },
+        transaction
+      );
+      return NextResponse.json({
+        messageId,
+        subject: content.subject,
+        from: content.from,
+        date: content.date,
+        ...analysis,
+      });
     }
 
     let ctx;
