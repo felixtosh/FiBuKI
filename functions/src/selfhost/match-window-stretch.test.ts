@@ -100,10 +100,10 @@ describe("a hand edit of a date re-scores the stored suggestions (#614)", () => 
     expect(await connections()).toEqual([]);
   });
 
-  it("an edit of the legacy Due Date row replaces them", async () => {
+  it("a write of the rows alone moves no date the scorer reads, so it leaves them (#641)", async () => {
     await seedFile("f-1");
     await edit("f-1", { extractedAdditionalFields: [{ label: "Zahlungstermin", value: isoPlus(45) }] });
-    expect(await suggested("f-1")).toEqual(["t-late"]);
+    expect(await suggested("f-1")).toEqual(["t-stale"]);
   });
 
   it("leaves them when the File has a manual File Connection", async () => {

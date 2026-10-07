@@ -382,20 +382,15 @@ describe("the date window reaches to the Due Date or Debit Date (#614)", () => {
     expect(await reaches(48)).toBe(false);
   });
 
-  it("stretches the same for a legacy keyless Zahlungstermin row", async () => {
-    await seedFile("f-1", {
-      extractedAdditionalFields: [{ label: "Zahlungstermin", value: isoPlus(45) }],
-    });
+  it("stretches to the stored Due Date, never to a row the File does not store as one (#641)", async () => {
+    const rows = [{ label: "Zahlungstermin", value: isoPlus(45) }];
+    await seedFile("f-1", { extractedAdditionalFields: rows });
+    expect(await reaches(31)).toBe(false);
+    await seedFile("f-1", { extractedDueDate: null, extractedAdditionalFields: rows });
+    expect(await reaches(31)).toBe(false);
+    await seedFile("f-1", { extractedDueDate: plus(45), extractedAdditionalFields: rows });
     expect(await reaches(52)).toBe(true);
     expect(await reaches(53)).toBe(false);
-  });
-
-  it("prefers the typed field over a legacy row, as the scorer does", async () => {
-    await seedFile("f-1", {
-      extractedDueDate: null,
-      extractedAdditionalFields: [{ label: "Zahlungstermin", value: isoPlus(45) }],
-    });
-    expect(await reaches(31)).toBe(false);
   });
 
   it("is never stretched by a printed payment term", async () => {

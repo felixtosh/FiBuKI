@@ -34,7 +34,8 @@
     "selfhost:repair-rescored-connections": "vite-node --config vitest.selfhost.config.ts scripts/repair-rescored-connections.ts",
     "selfhost:repair-mail-file-sizes": "vite-node --config vitest.selfhost.config.ts scripts/repair-mail-file-sizes.ts",
     "selfhost:repair-inbound-daily-limits": "vite-node --config vitest.selfhost.config.ts scripts/repair-inbound-daily-limits.ts",
-    "selfhost:report-swept-hand-corrected-directions": "vite-node --config vitest.selfhost.config.ts scripts/report-swept-hand-corrected-directions.ts"
+    "selfhost:report-swept-hand-corrected-directions": "vite-node --config vitest.selfhost.config.ts scripts/report-swept-hand-corrected-directions.ts",
+    "selfhost:backfill-file-dates": "vite-node --config vitest.selfhost.config.ts scripts/backfill-file-dates.ts"
   },
   "engines": {
     "node": "22"
