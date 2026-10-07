@@ -14,7 +14,7 @@ interface PartnerPillProps {
   onRemove?: () => void;
   /**
    * Confirm an automatic or AI assignment: re-assign it as the User's own, so
-   * the matcher learns from it. Shows a checkbox left of the X; a manual or
+   * the matcher learns from it. Shows a check mark left of the X; a manual or
    * accepted assignment shows the green user-check instead.
    */
   onConfirm?: () => void;
