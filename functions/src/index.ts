@@ -89,7 +89,7 @@ export {
   onSyncQueueCreated,
 } from "./gmail/gmailSyncQueue";
 export { onMailServiceConnected, onMailServiceReconnected } from "./gmail/onMailServiceConnected";
-export { onTransactionsImported } from "./gmail/onTransactionsImported";
+export { onTransactionsImported, onDraftImportCompleted } from "./gmail/onTransactionsImported";
 export { onTransactionsImportedCompanyCheck } from "./matching/onTransactionsImportedCompanyCheck";
 export { searchGmailCallable } from "./gmail/searchGmailCallable";
 export {
