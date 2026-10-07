@@ -153,7 +153,10 @@ export function firestoreFileGateway(
     async softDelete(fileId) {
       const f = await ownFile(fileId);
       if (!f || isGeneratedInvoiceFile(f.data)) return;
-      await performDeleteFile(db, userId, fileId, f.data);
+      await performDeleteFile(db, userId, fileId, f.data, {
+        actor: "auto",
+        summary: "Deleted because it was removed from the synced folder",
+      });
       await f.ref.update({ sourceGoneAt: Timestamp.now() });
     },
 

@@ -28,6 +28,7 @@ import { filePaymentTotal } from "../matching/coverage";
 import { connectFiles } from "../fileConnections/writer";
 import { matchReceiptPair, suggestedReceipt, type PairLink, type PairMatchFile } from "./pairMatcher";
 import { normalizeInvoiceNumber } from "../corrections/linkMatcher";
+import { activityEntry, logActivity } from "../utils/activity";
 
 type Db = FirebaseFirestore.Firestore;
 type Data = FirebaseFirestore.DocumentData;
@@ -317,9 +318,25 @@ export async function runReceiptPairCheck(
   const update: Record<string, unknown> = {};
   if (!options.suggestOnly) {
     if (mine) {
-      if (stored?.fileId !== mine.invoiceId) update.receiptLink = { fileId: mine.invoiceId, setBy: "auto", setAt: now };
+      if (stored?.fileId !== mine.invoiceId) {
+        update.receiptLink = { fileId: mine.invoiceId, setBy: "auto", setAt: now };
+        const invoiceName = (dataOf.get(mine.invoiceId)?.fileName as string | undefined) ?? mine.invoiceId;
+        Object.assign(update, logActivity(activityEntry({
+          type: "receipt_linked",
+          actor: "auto",
+          fileId: mine.invoiceId,
+          fileName: invoiceName,
+          summary: `Linked as the receipt for "${invoiceName}"`,
+        }, now)));
+      }
     } else if (stored) {
       update.receiptLink = null;
+      Object.assign(update, logActivity(activityEntry({
+        type: "receipt_unlinked",
+        actor: "auto",
+        fileId: stored.fileId ?? null,
+        summary: "Receipt link removed: the pair no longer matches",
+      }, now)));
     }
   }
   const suggestions = [...new Set([...demoted, ...(mine ? [] : result.suggestions)])].filter(
@@ -341,6 +358,13 @@ export async function runReceiptPairCheck(
       receiptLink: { fileId, setBy: "auto", setAt: now },
       receiptPairSuggestions: [],
       updatedAt: now,
+      ...logActivity(activityEntry({
+        type: "receipt_linked",
+        actor: "auto",
+        fileId,
+        fileName: (fileData.fileName as string | undefined) ?? null,
+        summary: `Linked as the receipt for "${fileData.fileName ?? fileId}"`,
+      }, now)),
     });
     for (const id of suggestionIds(receiptData)) {
       if (id !== fileId) await dropSuggestion(db, userId, id, link.receiptId, now);

@@ -33,6 +33,8 @@ vi.mock("firebase-admin/firestore", () => {
     getFirestore: () => createMockFirestore(),
     FieldValue: {
       serverTimestamp: () => new Date("2026-08-28T12:00:00Z"),
+      // The activity log line a Fact Change appends (#752).
+      arrayUnion: (...items: unknown[]) => ({ arrayUnion: items }),
     },
     Timestamp: MockTimestamp,
   };

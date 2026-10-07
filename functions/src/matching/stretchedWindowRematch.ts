@@ -31,6 +31,8 @@ import {
   storedSuggestionsOf,
   transactionsForFile,
 } from "./matcher";
+import { transactionSuggestionsActivity } from "./suggestionActivity";
+import { logActivity } from "../utils/activity";
 
 type Db = FirebaseFirestore.Firestore;
 type Data = FirebaseFirestore.DocumentData;
@@ -148,10 +150,12 @@ export async function rematchStretchedWindows(
     let autoConnected = picks.map((p) => p.match.transactionId);
     if (options.apply) {
       autoConnected = (await autoConnect(db, userId, file.id, picks)).map((p) => p.match.transactionId);
+      const logged = transactionSuggestionsActivity(fresh.transactionSuggestions, suggestions, "re-matching with the wider date window");
       await db.collection("files").doc(file.id).update({
         transactionSuggestions: suggestions,
         transactionMatchedAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
+        ...(logged ? logActivity(logged) : {}),
       });
     }
 

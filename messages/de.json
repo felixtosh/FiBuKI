@@ -1065,5 +1065,53 @@
         "rejected": "abgelehnt {ids}"
       }
     }
+  },
+  "activity": {
+    "title": "Aktivitätsprotokoll",
+    "empty": "Noch keine Aktivität",
+    "more": "{n} weitere",
+    "actors": {
+      "manual": "Du",
+      "suggestion": "Vorschlag",
+      "auto": "Auto",
+      "ai": "KI"
+    },
+    "time": {
+      "justNow": "gerade eben",
+      "minutes": "vor {n} Min.",
+      "hours": "vor {n} Std.",
+      "days": "vor {n} T."
+    },
+    "types": {
+      "partner_assigned": "Partner zugeordnet",
+      "partner_removed": "Partner entfernt",
+      "partner_suggested": "Partner vorgeschlagen",
+      "file_connected": "Beleg verbunden",
+      "file_disconnected": "Beleg getrennt",
+      "transaction_connected": "Transaktion verbunden",
+      "transaction_disconnected": "Transaktion getrennt",
+      "transaction_suggested": "Transaktion vorgeschlagen",
+      "connection_confirmed": "Verbindung bestätigt",
+      "category_assigned": "Kategorie zugeordnet",
+      "category_removed": "Kategorie entfernt",
+      "category_matched": "Kategorie automatisch zugeordnet",
+      "receipt_search": "Belegsuche",
+      "file_matching": "Belegzuordnung",
+      "partner_matching": "Partnerzuordnung",
+      "company_check": "Firmenprüfung",
+      "file_created": "Beleg hinzugefügt",
+      "file_deleted": "Beleg gelöscht",
+      "file_restored": "Beleg wiederhergestellt",
+      "extracted": "Dokument gelesen",
+      "extraction_failed": "Lesen fehlgeschlagen",
+      "marked_not_invoice": "Keine Rechnung",
+      "facts_corrected": "Daten korrigiert",
+      "facts_derived": "Daten abgeleitet",
+      "copy_marked": "Kopie erfasst",
+      "copy_suggested": "Kopie vorgeschlagen",
+      "receipt_linked": "Zahlungsbeleg verknüpft",
+      "receipt_unlinked": "Zahlungsbeleg-Verknüpfung entfernt",
+      "correction_linked": "Korrektur verknüpft"
+    }
   }
 }
