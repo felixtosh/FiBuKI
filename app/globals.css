@@ -362,6 +362,20 @@
   animation-delay: 200ms;
 }
 
+/* Page enter: opacity ONLY. Any transform here (including tailwindcss-animate's
+   enter keyframe, which always animates transform, even for a plain fade-in)
+   makes the page wrapper the containing block of the fixed detail panels for
+   as long as it runs, and they jump. */
+@keyframes page-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.animate-page-in {
+  animation: page-in 200ms ease-out;
+}
+
 /* Reduced motion: instant all custom animations */
 @media (prefers-reduced-motion: reduce) {
   .animate-row-complete,
@@ -371,7 +385,8 @@
   .animate-counter-bump,
   .animate-suggestion-accept,
   .animate-suggestion-dismiss,
-  .animate-info-icon-in {
+  .animate-info-icon-in,
+  .animate-page-in {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
