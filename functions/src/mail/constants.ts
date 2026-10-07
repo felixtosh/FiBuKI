@@ -39,6 +39,15 @@ export const INVOICE_KEYWORDS = [
  */
 export const MAX_IMAP_SCAN_MESSAGES = 200;
 
+/**
+ * Ceiling on the candidates one IMAP search page reads BODYSTRUCTURE for
+ * (#768). IMAP SEARCH cannot ask for attachments, so the provider checks the
+ * matches itself, newest first, until the page is full; in a mailbox of
+ * notification mail that could be the whole window. At the bound it stops,
+ * says so, and returns a cursor so the caller can ask for the next page.
+ */
+export const MAX_IMAP_ATTACHMENT_CHECKS = 200;
+
 /** MIME types we treat as invoice attachments. */
 export const INVOICE_MIME_TYPES = [
   "application/pdf",

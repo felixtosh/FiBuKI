@@ -25,6 +25,11 @@ const { state } = vi.hoisted(() => {
     fetchRange: null as unknown,
     /** Envelopes the bounded scan walks. */
     fetchList: [] as Array<Record<string, unknown>>,
+    /** Every UID set a BODYSTRUCTURE fetch asked for, in call order. */
+    structureFetches: [] as number[][],
+    /** A UID's BODYSTRUCTURE; a UID not named here gets defaultStructure. */
+    structures: {} as Record<number, unknown>,
+    defaultStructure: null as unknown,
     fetchResult: null as unknown,
     downloadPart: null as string | null,
     downloadBuffer: Buffer.from("PDFDATA"),
@@ -56,7 +61,16 @@ vi.mock("imapflow", async () => {
       }
       return state.searchResult;
     }
-    async *fetch(range: unknown) {
+    async *fetch(range: unknown, query: { bodyStructure?: boolean }) {
+      if (query?.bodyStructure) {
+        // The attachment check: answer per UID, ascending, as a server does.
+        const uids = (range as number[]).slice().sort((a, b) => a - b);
+        state.structureFetches.push(uids);
+        for (const uid of uids) {
+          yield { uid, bodyStructure: state.structures[uid] ?? state.defaultStructure };
+        }
+        return;
+      }
       state.fetchRange = range;
       for (const msg of state.fetchList) yield msg;
     }
@@ -79,7 +93,33 @@ vi.mock("imapflow", async () => {
 
 import { ImapProvider, ImapConfig } from "../imap/ImapProvider";
 import { makeProvider } from "../index";
-import { MAX_IMAP_SCAN_MESSAGES } from "../constants";
+import { MAX_IMAP_ATTACHMENT_CHECKS, MAX_IMAP_SCAN_MESSAGES } from "../constants";
+
+const PDF = {
+  type: "multipart/mixed",
+  childNodes: [
+    { part: "1", type: "text/plain" },
+    {
+      part: "2",
+      type: "application/pdf",
+      disposition: "attachment",
+      dispositionParameters: { filename: "invoice.pdf" },
+    },
+  ],
+};
+const NO_ATTACHMENT = { type: "text/html" };
+const ZIP_ONLY = {
+  type: "multipart/mixed",
+  childNodes: [
+    { part: "1", type: "text/plain" },
+    {
+      part: "2",
+      type: "application/zip",
+      disposition: "attachment",
+      dispositionParameters: { filename: "logs.zip" },
+    },
+  ],
+};
 
 function cfg(over: Partial<ImapConfig> = {}): ImapConfig {
   return {
@@ -102,6 +142,11 @@ beforeEach(() => {
   state.searchThrows = false;
   state.fetchRange = null;
   state.fetchList = [];
+  state.structureFetches = [];
+  state.structures = {};
+  // Every match carries a PDF unless a test says otherwise, so the tests that
+  // pin the query and the cursor are not about attachments.
+  state.defaultStructure = PDF;
   state.fetchResult = null;
   state.downloadPart = null;
   state.downloadBuffers = {};
@@ -359,6 +404,120 @@ describe("ImapProvider.search", () => {
     // the lost body match is not left implied by the scan bound alone.
     const scanned = (page.limitations ?? []).find((l) => l.constraint === "keywords");
     expect(scanned?.detail).toMatch(/Subject and From only/);
+  });
+
+  // ---- the attachment flag (#768) --------------------------------------------
+  //
+  // IMAP SEARCH cannot see attachments, so the provider reads BODYSTRUCTURE
+  // itself before it cuts the page. Mail without one (notifications, threads
+  // that mention "invoice") must not take the slots the receipt needs.
+  it("fills the page with attachment-bearing messages only, newest first", async () => {
+    // 30 matches: the newest 25 carry nothing, the next 5 a PDF.
+    state.searchResult = Array.from({ length: 30 }, (_, i) => i + 1);
+    for (let uid = 6; uid <= 30; uid++) state.structures[uid] = NO_ATTACHMENT;
+
+    const page = await new ImapProvider(cfg()).search({
+      keywords: ["github"],
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+      limit: 20,
+    });
+
+    expect(page.messages).toEqual([
+      { id: "5" },
+      { id: "4" },
+      { id: "3" },
+      { id: "2" },
+      { id: "1" },
+    ]);
+    expect(page.nextPageToken).toBeUndefined();
+  });
+
+  it("keeps only invoice-type attachments and says how it checked", async () => {
+    state.searchResult = [3, 2, 1];
+    state.structures = { 3: ZIP_ONLY, 2: PDF, 1: NO_ATTACHMENT };
+
+    const page = await new ImapProvider(cfg()).search({
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+    });
+
+    expect(page.messages).toEqual([{ id: "2" }]);
+    const flag = (page.limitations ?? []).find((l) => l.constraint === "hasAttachment");
+    expect(flag?.handling).toBe("scanned");
+    expect(flag?.detail).toMatch(/reads each match's BODYSTRUCTURE/);
+    expect(flag?.detail).not.toMatch(/stopped/i);
+  });
+
+  it("leaves a search without the attachment flag as it was", async () => {
+    // The HTML-invoice strategy and the header scan want mail with no
+    // attachment, so nothing is checked and the page is cut as before.
+    state.searchResult = Array.from({ length: 60 }, (_, i) => i + 1);
+    state.defaultStructure = NO_ATTACHMENT;
+
+    const page = await new ImapProvider(cfg()).search({
+      keywords: [],
+      hasAttachment: false,
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+      limit: 20,
+    });
+
+    expect(state.structureFetches).toEqual([]);
+    expect(page.messages).toHaveLength(20);
+    expect(page.messages[0]).toEqual({ id: "60" });
+    expect(page.nextPageToken).toBe("41");
+    expect(page.limitations).toBeUndefined();
+  });
+
+  it("stops at a fixed bound, says so, and hands back a cursor below the last read", async () => {
+    // 500 matches, none with an invoice attachment: an unbounded check would
+    // read the whole window to fill one page.
+    state.searchResult = Array.from({ length: 500 }, (_, i) => i + 1);
+    state.defaultStructure = NO_ATTACHMENT;
+
+    const page = await new ImapProvider(cfg()).search({
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+      limit: 20,
+    });
+
+    const read = state.structureFetches.flat();
+    expect(read.length).toBe(MAX_IMAP_ATTACHMENT_CHECKS);
+    // Newest first: 500 down to the last one the bound allowed.
+    expect(Math.max(...read)).toBe(500);
+    const lowest = 500 - MAX_IMAP_ATTACHMENT_CHECKS + 1;
+    expect(Math.min(...read)).toBe(lowest);
+
+    expect(page.messages).toEqual([]);
+    expect(page.nextPageToken).toBe(String(lowest));
+    const flag = (page.limitations ?? []).find((l) => l.constraint === "hasAttachment");
+    expect(flag?.detail).toMatch(/stopped/i);
+
+    // The next page continues strictly below the cursor.
+    state.structureFetches = [];
+    await new ImapProvider(cfg()).search({
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+      limit: 20,
+      pageToken: page.nextPageToken,
+    });
+    expect(Math.max(...state.structureFetches.flat())).toBe(lowest - 1);
+  });
+
+  it("does not say it stopped when the page filled within the bound", async () => {
+    state.searchResult = Array.from({ length: 500 }, (_, i) => i + 1);
+
+    const page = await new ImapProvider(cfg()).search({
+      dateFrom: new Date("2026-07-01T00:00:00Z"),
+      dateTo: new Date("2026-07-31T00:00:00Z"),
+      limit: 20,
+    });
+
+    expect(page.messages).toHaveLength(20);
+    expect(page.nextPageToken).toBe("481");
+    const flag = (page.limitations ?? []).find((l) => l.constraint === "hasAttachment");
+    expect(flag?.detail).not.toMatch(/stopped/i);
   });
 
   it("returns an empty page when the server matches nothing", async () => {
