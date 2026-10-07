@@ -11,7 +11,6 @@ import {
   Check,
   WandSparkles,
   AlertTriangle,
-  UserCheck,
   RotateCcw,
   ChevronDown,
   ChevronUp,
@@ -472,6 +471,7 @@ export function TransactionFilesSection({
   extensionInstalled = false,
 }: TransactionFilesSectionProps) {
   const confirmations = useConnectionConfirmations("transactionId", transaction.id);
+  const tConfirm = useTranslations("common.confirmMatch");
   const { confirm, pendingPair } = useConfirmConnection();
   const [isReceiptLostDialogOpen, setIsReceiptLostDialogOpen] = useState(false);
   const receiptLostMounted = useMountOnceOpened(isReceiptLostDialogOpen);
@@ -699,6 +699,25 @@ export function TransactionFilesSection({
 
   const handleRemoveCategory = async () => {
     await removeFromTransaction(transaction.id);
+  };
+
+  // The User's own category (picked or accepted) shows the green user-check;
+  // an automatic one a check mark that makes it theirs, so the matcher learns.
+  const categoryConfirmed =
+    transaction.noReceiptCategoryMatchedBy === "manual" || transaction.noReceiptCategoryMatchedBy === "suggestion";
+  const [confirmingCategory, setConfirmingCategory] = useState(false);
+  const handleConfirmCategory = async (categoryId: string) => {
+    setConfirmingCategory(true);
+    try {
+      await assignToTransaction(
+        transaction.id,
+        categoryId,
+        "manual",
+        transaction.noReceiptCategoryConfidence ?? undefined
+      );
+    } finally {
+      setConfirmingCategory(false);
+    }
   };
 
   const loading = filesLoading || categoriesLoading;
@@ -1137,16 +1156,23 @@ export function TransactionFilesSection({
                   ({transaction.receiptLostEntry.reason})
                 </span>
               )}
-              {/* Show manual checkmark or confidence percentage */}
-              {transaction.noReceiptCategoryMatchedBy === "manual" ? (
-                <span className="inline-flex items-center text-green-600 flex-shrink-0">
-                  <UserCheck className="h-3 w-3" />
-                </span>
-              ) : transaction.noReceiptCategoryConfidence ? (
+              {/* Confidence of an automatic category, then the check mark that confirms it */}
+              {!categoryConfirmed && transaction.noReceiptCategoryConfidence ? (
                 <span className="text-xs text-muted-foreground flex-shrink-0">
                   {Math.round(transaction.noReceiptCategoryConfidence)}%
                 </span>
               ) : null}
+              <ConfirmMark
+                confirmed={categoryConfirmed}
+                onConfirm={
+                  assignedCategory.templateId === "receipt-lost"
+                    ? undefined
+                    : () => handleConfirmCategory(assignedCategory.id)
+                }
+                pending={confirmingCategory}
+                confirmedLabel={tConfirm("categoryConfirmed")}
+                confirmLabel={tConfirm("categoryConfirm")}
+              />
               <button
                 type="button"
                 onClick={(e) => {

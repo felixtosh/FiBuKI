@@ -79,8 +79,12 @@ export async function assignNoReceiptCategoryToTransaction(
   // A batch may only write to a given document once, so transactionCount and
   // matchedPartnerIds move together in one update (#164 AC: they must move
   // together on both surfaces).
+  // Confirming the category the Transaction already has (the check mark on
+  // an automatic one) re-assigns it as the User's own; it is not one more
+  // Transaction in the category.
+  const alreadyThisCategory = txData.noReceiptCategoryId === categoryId;
   const categoryUpdate: Record<string, unknown> = {
-    transactionCount: FieldValue.increment(1),
+    ...(alreadyThisCategory ? {} : { transactionCount: FieldValue.increment(1) }),
     updatedAt: now,
   };
   if (partnerAdded) {
