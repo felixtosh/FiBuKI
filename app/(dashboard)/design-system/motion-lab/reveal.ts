@@ -151,6 +151,10 @@ export function playReveal(tr: HTMLElement, style: CompleteStyle, o: RevealOptio
         }),
       ];
     }
+
+    // Canvas styles are drawn by canvas-fx.ts, not here.
+    default:
+      return [];
   }
 }
 

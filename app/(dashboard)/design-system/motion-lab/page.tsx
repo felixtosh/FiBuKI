@@ -223,7 +223,10 @@ export default function MotionLabPage() {
                 </SelectContent>
               </Select>
             </div>
-            <Slider label="Duration" unit="ms" min={100} max={2500} step={10} value={settings.change.completeDuration} onChange={(v) => set("change", { completeDuration: v })} />
+            <Slider label="Duration" unit="ms" min={100} max={3000} step={10} value={settings.change.completeDuration} onChange={(v) => set("change", { completeDuration: v })} />
+            {COMPLETE_STYLES.find((style) => style.value === settings.change.completeStyle)?.canvas ? (
+              <Slider label="Intensity" min={0} max={1} step={0.05} value={settings.change.completeIntensity} onChange={(v) => set("change", { completeIntensity: v })} />
+            ) : null}
             <CurveEditor value={settings.change.completeEasing} onChange={(v) => set("change", { completeEasing: v })} />
             <Toggle label="Back to white runs right to left" checked={settings.change.undoMirrored} onChange={(v) => set("change", { undoMirrored: v })} />
           </div>

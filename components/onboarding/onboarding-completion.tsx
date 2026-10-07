@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
-import { TelegramLogo } from "@/components/ui/telegram-logo";
+import { TelegramIcon } from "@/components/ui/telegram-icon";
 import { COMMUNITY_SETTINGS_PATH } from "@/lib/config/community";
 
 interface OnboardingCompletionProps {
@@ -123,7 +123,7 @@ export function OnboardingCompletion({
 
         {/* Friendly invite to the Telegram community */}
         <div className="flex items-center gap-3 rounded-lg border p-3">
-          <TelegramLogo className="h-9 w-9 flex-shrink-0" />
+          <TelegramIcon className="h-5 w-5 flex-shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium">{telegram("title")}</p>
             <p className="text-xs text-muted-foreground">{telegram("text")}</p>

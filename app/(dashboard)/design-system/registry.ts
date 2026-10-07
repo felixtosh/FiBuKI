@@ -53,7 +53,7 @@ import switchDoc from "@/components/ui/switch.examples";
 import tableEmptyStateDoc from "@/components/ui/table-empty-state.examples";
 import tableDoc from "@/components/ui/table.examples";
 import tabsDoc from "@/components/ui/tabs.examples";
-import telegramLogoDoc from "@/components/ui/telegram-logo.examples";
+import telegramIconDoc from "@/components/ui/telegram-icon.examples";
 import tooltipDoc from "@/components/ui/tooltip.examples";
 
 export interface ComponentGroup {
@@ -67,8 +67,8 @@ export const componentGroups: ComponentGroup[] = [
   {
     id: "brand",
     title: "Brand",
-    intro: "The mascot and logos.",
-    docs: [fibukiMascotDoc, telegramLogoDoc],
+    intro: "The mascot.",
+    docs: [fibukiMascotDoc],
   },
   {
     id: "actions",
@@ -117,6 +117,12 @@ export const componentGroups: ComponentGroup[] = [
     title: "Connecting Files and Transactions",
     intro: "Specialised: the connect flow and its match display.",
     docs: [amountMatchDisplayDoc, connectButtonDoc, connectResultRowDoc, confirmMarkDoc, contentOverlayDoc],
+  },
+  {
+    id: "icons",
+    title: "Icons",
+    intro: "Our own icons, drawn to sit next to lucide's: 24px grid, 2px stroke, currentColor.",
+    docs: [telegramIconDoc],
   },
 ];
 

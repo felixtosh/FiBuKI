@@ -6,6 +6,7 @@ import { getTransactionColumns, type FileAmountData } from "@/components/transac
 import type { UserPartner } from "@/types/partner";
 import type { TransactionSource } from "@/types/source";
 import type { Transaction } from "@/types/transaction";
+import { CANVAS_STYLES, playCanvasReveal, type CanvasStyle } from "./canvas-fx";
 import { clearLayer, playReveal, rowLayer } from "./reveal";
 import { bezierCss, type LabSettings } from "./settings";
 
@@ -156,15 +157,28 @@ export function LabStage({
         const c = s.change;
         if (isComplete(old) !== isComplete(row)) {
           const layer = rowLayer(el, "reveal");
-          const animations = playReveal(el, c.completeStyle, {
-            duration: c.completeDuration * k,
-            easing: bezierCss(c.completeEasing),
-            mirrored: !isComplete(row) && c.undoMirrored,
-            oldColor: isComplete(old) ? "var(--color-complete-row)" : "var(--color-background)",
-          });
-          Promise.all(animations.map((a) => a.finished))
-            .then(() => clearLayer(layer))
-            .catch(() => {});
+          const mirrored = !isComplete(row) && c.undoMirrored;
+          const green = "var(--color-complete-row)";
+          const white = "var(--color-background)";
+          const oldColor = isComplete(old) ? green : white;
+          const done = CANVAS_STYLES.includes(c.completeStyle as CanvasStyle)
+            ? playCanvasReveal(el, layer, c.completeStyle as CanvasStyle, {
+                duration: c.completeDuration * k,
+                easing: c.completeEasing,
+                mirrored,
+                oldColor,
+                newColor: isComplete(row) ? green : white,
+                intensity: c.completeIntensity,
+              }).finished
+            : Promise.all(
+                playReveal(el, c.completeStyle, {
+                  duration: c.completeDuration * k,
+                  easing: bezierCss(c.completeEasing),
+                  mirrored,
+                  oldColor,
+                }).map((a) => a.finished)
+              );
+          done.then(() => clearLayer(layer)).catch(() => {});
         } else if (c.flash !== "none") {
           const flash = rowLayer(el, "flash");
           flash.style.display = "block";

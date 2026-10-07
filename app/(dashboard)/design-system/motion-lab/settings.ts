@@ -4,12 +4,29 @@
  * and classes.
  */
 
+import type { CanvasStyle } from "./canvas-fx";
+
 export type Bezier = [number, number, number, number];
 
 /** How a row turns green when it completes, and back when it no longer is. */
-export type CompleteStyle = "fade" | "wipe" | "splash" | "wave" | "glitch" | "blinds" | "shimmer";
+export type CompleteStyle =
+  | CanvasStyle
+  | "fade"
+  | "wipe"
+  | "splash"
+  | "wave"
+  | "glitch"
+  | "blinds"
+  | "shimmer";
 
-export const COMPLETE_STYLES: { value: CompleteStyle; label: string }[] = [
+/** Canvas effects first (drawn frame by frame), then the plain CSS ones. */
+export const COMPLETE_STYLES: { value: CompleteStyle; label: string; canvas?: boolean }[] = [
+  { value: "liquid", label: "Liquid: water front with foam", canvas: true },
+  { value: "pixel-glitch", label: "Pixel glitch: tearing, fringes", canvas: true },
+  { value: "ink", label: "Ink: soaks in with a wet rim", canvas: true },
+  { value: "ripple", label: "Ripple: shock ring, cells bob", canvas: true },
+  { value: "particles", label: "Particles: a swarm lands in place", canvas: true },
+  { value: "dither", label: "Dither: ordered pixel reveal", canvas: true },
   { value: "fade", label: "Fade" },
   { value: "wipe", label: "Wipe, left to right" },
   { value: "splash", label: "Splash from the left" },
@@ -50,6 +67,8 @@ export interface LabSettings {
     completeStyle: CompleteStyle;
     completeDuration: number;
     completeEasing: Bezier;
+    /** How much a canvas effect does: wave height, glitch amount, particle spread. */
+    completeIntensity: number;
     /** Going back from green runs the other way, right to left. */
     undoMirrored: boolean;
   };
@@ -94,9 +113,10 @@ export const DEFAULT_SETTINGS: LabSettings = {
     easing: PILL_EASING,
     pillDuration: 250,
     checkDuration: 300,
-    completeStyle: "wipe",
-    completeDuration: 700,
+    completeStyle: "liquid",
+    completeDuration: 900,
     completeEasing: [0.65, 0, 0.35, 1],
+    completeIntensity: 0.7,
     undoMirrored: true,
   },
   leave: {
