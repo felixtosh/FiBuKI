@@ -127,6 +127,7 @@ const ORIGIN_ACTOR: Record<FactChange["origin"], ActivityActor> = {
   "identity-sweep": "auto",
   "generated-invoice": "auto",
   "entity-name-backfill": "auto",
+  "date-backfill": "auto",
 };
 
 /**
