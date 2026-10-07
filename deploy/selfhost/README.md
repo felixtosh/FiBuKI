@@ -87,7 +87,7 @@ variables are in the Gmail section of `.env.example`.
 **On a private host the app stays in Testing mode.** Google only publishes an
 OAuth app whose home page and privacy-policy URL are public, on a domain the
 owner has verified, and its branding check fetches both pages. A host reachable
-only over a VPN (fibuki.home.syh.at is NetBird-only) cannot pass that check, so
+only over a VPN (a NetBird or WireGuard mesh, say) cannot pass that check, so
 the app is never published. In Testing mode:
 
 - every Google account that connects must be listed as a test user;
