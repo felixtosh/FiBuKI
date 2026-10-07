@@ -203,10 +203,10 @@ export const motionGroups: MotionGroup[] = [
       {
         name: "Page enter",
         used: "app/(dashboard)/template.tsx, on every navigation",
-        timing: "200ms, default curve",
-        code: "animate-in fade-in-0 slide-in-from-bottom-1 duration-200",
+        timing: "200ms fade, default curve (no slide: a transform there breaks the fixed detail panels)",
+        code: "animate-in fade-in-0 duration-200",
         Demo: () => (
-          <Replay>{() => <div className={cn(box, "animate-in fade-in-0 slide-in-from-bottom-1 duration-200 fill-mode-both")}>Page content</div>}</Replay>
+          <Replay>{() => <div className={cn(box, "animate-in fade-in-0 duration-200")}>Page content</div>}</Replay>
         ),
       },
     ],
