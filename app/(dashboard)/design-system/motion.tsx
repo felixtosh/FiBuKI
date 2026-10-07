@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ComponentType, type ReactNode } from "react";
+import Link from "next/link";
 import { Building2, Check, Info, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -160,6 +161,15 @@ function DialogDemo() {
 
 const box = "rounded-md border bg-background px-3 py-2 text-sm";
 
+/** The list motions run on a real table; the lab is where to see and tune them. */
+function MotionLabLink() {
+  return (
+    <Button asChild size="sm" variant="outline">
+      <Link href="/design-system/motion-lab">Try it in the motion lab</Link>
+    </Button>
+  );
+}
+
 export const motionGroups: MotionGroup[] = [
   {
     title: "Panels and menus",
@@ -214,11 +224,25 @@ export const motionGroups: MotionGroup[] = [
     intro: "Short one-shot animations when something changes: a match lands, a row completes, a count goes up.",
     entries: [
       {
-        name: "Row completes",
-        used: "Transactions table, the moment a row is complete",
-        timing: "600ms, --ease-out-expo",
-        code: "animate-row-complete",
-        Demo: () => <Replay>{() => <div className={cn(box, "bg-complete-row animate-row-complete w-64")}>A1 Telekom, -€49,90</div>}</Replay>,
+        name: "Rows arrive",
+        used: "Transactions table, rows new to the list (not rows scrolled into view)",
+        timing: "320ms, 40ms apart, 8px up, --ease-out-expo",
+        code: "LIST_MOTION.enter (lib/motion/settings.ts)",
+        Demo: () => <MotionLabLink />,
+      },
+      {
+        name: "Row turns green, or back",
+        used: "Transactions table, a row completing or no longer complete on screen",
+        timing: "600ms liquid, intensity 0.1, cubic-bezier(0.65, 0, 0.28, 1)",
+        code: "LIST_MOTION.change (lib/motion/settings.ts)",
+        Demo: () => <MotionLabLink />,
+      },
+      {
+        name: "Rows glide",
+        used: "Transactions table, the other rows when rows arrive or leave",
+        timing: "250ms, --ease-slide",
+        code: "LIST_MOTION.leave (lib/motion/settings.ts)",
+        Demo: () => <MotionLabLink />,
       },
       {
         name: "Pill pops in",
@@ -230,7 +254,7 @@ export const motionGroups: MotionGroup[] = [
       {
         name: "Check appears",
         used: "AmountMatchDisplay, upload progress",
-        timing: "300ms, --ease-spring",
+        timing: "300ms, --ease-out-back",
         code: "animate-check-appear",
         Demo: () => <Replay>{() => <Check className="h-5 w-5 text-green-600 animate-check-appear" />}</Replay>,
       },
