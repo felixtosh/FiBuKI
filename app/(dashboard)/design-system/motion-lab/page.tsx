@@ -5,16 +5,19 @@ import Link from "next/link";
 import { ArrowLeft, Check, Copy, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { LabTable, type LabRow } from "./lab-table";
 import {
+  COMPLETE_STYLES,
   DEFAULT_SETTINGS,
   EASING_PRESETS,
   bezierCss,
   fromJson,
   toJson,
   type Bezier,
+  type CompleteStyle,
   type LabSettings,
 } from "./settings";
 
@@ -105,22 +108,48 @@ export default function MotionLabPage() {
   }, []);
 
   const leave = useCallback(() => {
-    setRows((current) => {
+    setRows((previous) => {
+      // Refill quietly when the list runs low, so there is always one to remove.
+      const current = previous.filter((row) => !row.leaving).length <= 4 ? makeRows(SAMPLE, false) : previous;
       const candidates = current.filter((row) => !row.leaving);
       const target = candidates[Math.min(2, candidates.length - 1)];
       return target ? current.map((row) => (row.id === target.id ? { ...row, leaving: true } : row)) : current;
     });
   }, []);
 
+  // Turns the second row green, or back to white if it already is.
+  const toggleGreen = useCallback(() => {
+    setRows((current) =>
+      current.map((row, i) => {
+        if (i !== 1) return row;
+        const complete = Boolean(row.partner && row.fileAmount !== undefined);
+        const next = complete
+          ? { ...row, fileAmount: undefined }
+          : { ...row, partner: row.partner ?? "Kunde GmbH", fileAmount: Math.abs(row.amount) };
+        return { ...next, version: row.version + 1 };
+      })
+    );
+  }, []);
+
+  // Releasing a control replays what it tunes.
+  const [playOnRelease, setPlayOnRelease] = useState(true);
+  const preview = useCallback(
+    (kind: "enter" | "change" | "complete" | "leave") => {
+      if (!playOnRelease) return;
+      ({ enter: loadList, change, complete: toggleGreen, leave })[kind]();
+    },
+    [playOnRelease, loadList, change, toggleGreen, leave]
+  );
+
   const onLeft = useCallback((id: string) => setRows((current) => current.filter((row) => row.id !== id)), []);
 
   useEffect(() => {
     if (!auto) return;
-    const steps = [arrive, change, change, leave];
+    const steps = [arrive, change, change, toggleGreen, toggleGreen, leave];
     let i = 0;
     const timer = setInterval(() => steps[i++ % steps.length](), 1800 * slow);
     return () => clearInterval(timer);
-  }, [auto, slow, arrive, change, leave]);
+  }, [auto, slow, arrive, change, toggleGreen, leave]);
 
   const set = <K extends keyof LabSettings>(group: K, patch: Partial<LabSettings[K]>) =>
     setSettings((s) => ({ ...s, [group]: { ...s[group], ...patch } }));
@@ -137,7 +166,7 @@ export default function MotionLabPage() {
           <p className="text-xs text-muted-foreground">Tune how rows arrive, change and leave. Copy the JSON at the bottom to hand it over.</p>
         </div>
 
-        <Group title="Rows arrive">
+        <Group title="Rows arrive" onRelease={() => preview("enter")}>
           <Slider label="Duration" unit="ms" min={0} max={1200} step={10} value={settings.enter.duration} onChange={(v) => set("enter", { duration: v })} />
           <CurveEditor value={settings.enter.easing} onChange={(v) => set("enter", { easing: v })} />
           <Slider label="Delay between rows" unit="ms" min={0} max={200} step={5} value={settings.enter.rowStagger} onChange={(v) => set("enter", { rowStagger: v })} />
@@ -151,7 +180,7 @@ export default function MotionLabPage() {
           ) : null}
         </Group>
 
-        <Group title="A row changes">
+        <Group title="A row changes" onRelease={(kind) => preview(kind === "complete" ? "complete" : "change")}>
           <div className="space-y-1.5">
             <Label className="text-xs">Flash</Label>
             <div className="flex flex-wrap gap-1">
@@ -167,9 +196,36 @@ export default function MotionLabPage() {
           <Slider label="Changed cell duration" unit="ms" min={0} max={800} step={10} value={settings.change.cellDuration} onChange={(v) => set("change", { cellDuration: v })} />
           <Slider label="Changed cell travel" unit="px" min={0} max={20} step={1} value={settings.change.cellOffsetY} onChange={(v) => set("change", { cellOffsetY: v })} />
           <Slider label="New pill starts at scale" min={0.2} max={1} step={0.05} value={settings.change.pillFromScale} onChange={(v) => set("change", { pillFromScale: v })} />
+          <div data-preview="complete" className="space-y-4 rounded-md border bg-background p-3">
+            <p className="text-xs font-medium">Turning green, and back</p>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Style</Label>
+              <Select
+                value={settings.change.completeStyle}
+                onValueChange={(v) => {
+                  set("change", { completeStyle: v as CompleteStyle });
+                  preview("complete");
+                }}
+              >
+                <SelectTrigger data-no-preview className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COMPLETE_STYLES.map((style) => (
+                    <SelectItem key={style.value} value={style.value} className="text-xs">
+                      {style.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Slider label="Duration" unit="ms" min={100} max={2500} step={10} value={settings.change.completeDuration} onChange={(v) => set("change", { completeDuration: v })} />
+            <CurveEditor value={settings.change.completeEasing} onChange={(v) => set("change", { completeEasing: v })} />
+            <Toggle label="Back to white runs right to left" checked={settings.change.undoMirrored} onChange={(v) => set("change", { undoMirrored: v })} />
+          </div>
         </Group>
 
-        <Group title="A row leaves">
+        <Group title="A row leaves" onRelease={() => preview("leave")}>
           <Slider label="Duration" unit="ms" min={0} max={800} step={10} value={settings.leave.duration} onChange={(v) => set("leave", { duration: v })} />
           <CurveEditor value={settings.leave.easing} onChange={(v) => set("leave", { easing: v })} />
           <Slider label="Slide right" unit="px" min={0} max={60} step={1} value={settings.leave.offsetX} onChange={(v) => set("leave", { offsetX: v })} />
@@ -185,8 +241,10 @@ export default function MotionLabPage() {
             <Button size="sm" onClick={loadList}>Load list</Button>
             <Button size="sm" variant="outline" onClick={arrive}>New rows arrive</Button>
             <Button size="sm" variant="outline" onClick={change}>Change a row</Button>
+            <Button size="sm" variant="outline" onClick={toggleGreen}>Toggle green</Button>
             <Button size="sm" variant="outline" onClick={leave}>Remove a row</Button>
             <div className="ml-auto flex items-center gap-3">
+              <Toggle label="Play on release" checked={playOnRelease} onChange={setPlayOnRelease} />
               <Toggle label="Auto-play" checked={auto} onChange={setAuto} />
               <div className="flex items-center gap-1">
                 <span className="text-xs text-muted-foreground">Speed</span>
@@ -201,6 +259,7 @@ export default function MotionLabPage() {
           <LabTable rows={rows} settings={settings} slow={slow} onLeft={onLeft} />
           <p className="text-xs text-muted-foreground">
             The rows use the real Pill and AmountMatchDisplay. &quot;Change a row&quot; assigns a Partner, then connects a File, which completes the row.
+            &quot;Toggle green&quot; completes the second row, or takes it back. Letting go of a control replays what it tunes.
           </p>
         </div>
       </main>
@@ -208,9 +267,35 @@ export default function MotionLabPage() {
   );
 }
 
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * A block of settings. Letting go of any control inside (a slider, a preset, a
+ * toggle) calls onRelease with the nearest data-preview kind, so the stage
+ * replays what was just tuned.
+ */
+function Group({
+  title,
+  onRelease,
+  children,
+}: {
+  title: string;
+  onRelease?: (kind: string | undefined) => void;
+  children: React.ReactNode;
+}) {
+  const release = (e: React.SyntheticEvent) => {
+    const target = e.target as HTMLElement;
+    // Events from a portal (the Select's list) bubble here too; the Select plays its own preview.
+    if (!onRelease || !e.currentTarget.contains(target) || target.closest("[data-no-preview]")) return;
+    const kind = target.closest<HTMLElement>("[data-preview]")?.dataset.preview;
+    // pointerup comes before click, and a preset or toggle changes the setting
+    // on click: wait a tick so the replay uses the new value.
+    setTimeout(() => onRelease(kind), 0);
+  };
   return (
-    <section className="p-4 border-b space-y-4">
+    <section
+      className="p-4 border-b space-y-4"
+      onPointerUp={release}
+      onKeyUp={(e) => e.key !== "Tab" && e.key !== "Shift" && release(e)}
+    >
       <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h2>
       {children}
     </section>

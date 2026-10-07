@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Building2 } from "lucide-react";
 import { AmountMatchDisplay } from "@/components/ui/amount-match-display";
 import { Pill } from "@/components/ui/pill";
 import { cn } from "@/lib/utils";
+import { CompleteOverlay, hideOverlay, playComplete } from "./complete-styles";
 import { bezierCss, type LabSettings } from "./settings";
 
 export interface LabRow {
@@ -72,8 +73,15 @@ function Row({ row, timing, onLeft }: { row: LabRow; timing: Timing; onLeft: (id
   const flashRef = useRef<HTMLDivElement>(null);
   const lineRef = useRef<HTMLDivElement>(null);
   const cellsRef = useRef<HTMLDivElement>(null);
+  const completeRef = useRef<HTMLDivElement>(null);
   const firstVersion = useRef(row.version);
   const complete = Boolean(row.partner && row.fileAmount !== undefined);
+  // The row's own colour follows `complete` only once the completion
+  // animation has covered it.
+  const [shownComplete, setShownComplete] = useState(complete);
+  const targetComplete = useRef(complete);
+  const lastFlashComplete = useRef(complete);
+  const running = useRef<Animation[]>([]);
   // Animations read the settings of the moment they start; changing a slider
   // must not replay them.
   const timingRef = useRef(timing);
@@ -120,12 +128,45 @@ function Row({ row, timing, onLeft }: { row: LabRow; timing: Timing; onLeft: (id
   useEffect(() => {
     if (row.version === firstVersion.current) return;
     const { settings, slow } = timingRef.current;
-    if (settings.change.flash === "none") return;
+    // Turning green or back has its own animation (below), not the flash.
+    const completionChanged = complete !== lastFlashComplete.current;
+    lastFlashComplete.current = complete;
+    if (completionChanged || settings.change.flash === "none") return;
     flashRef.current?.animate([{ opacity: 1 }, { opacity: 0 }], {
       duration: settings.change.flashDuration * slow,
       easing: bezierCss(settings.change.easing),
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs per data change; `complete` is read, not watched
   }, [row.version]);
+
+  // Completion: paint the new colour over the row in the chosen style, then
+  // switch the row itself.
+  useEffect(() => {
+    const root = completeRef.current;
+    if (!root || complete === targetComplete.current) return;
+    targetComplete.current = complete;
+    hideOverlay(root, running.current);
+    const { settings, slow } = timingRef.current;
+    const c = settings.change;
+    const animations = playComplete(root, c.completeStyle, {
+      duration: c.completeDuration * slow,
+      easing: bezierCss(c.completeEasing),
+      mirrored: !complete && c.undoMirrored,
+      color: complete ? "var(--color-complete-row)" : "var(--color-background)",
+    });
+    running.current = animations;
+    let cancelled = false;
+    Promise.all(animations.map((a) => a.finished))
+      .then(() => {
+        if (cancelled) return;
+        setShownComplete(complete);
+        requestAnimationFrame(() => hideOverlay(root, animations));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [complete]);
 
   // Leave: slide and fade out, then close the gap, then drop the row.
   useEffect(() => {
@@ -161,7 +202,8 @@ function Row({ row, timing, onLeft }: { row: LabRow; timing: Timing; onLeft: (id
   }, [row.leaving, row.id, onLeft]);
 
   return (
-    <div ref={rowRef} className={cn("relative overflow-hidden", complete && "bg-complete-row")}>
+    <div ref={rowRef} className={cn("relative overflow-hidden", shownComplete && "bg-complete-row")}>
+      <CompleteOverlay ref={completeRef} />
       <div
         ref={flashRef}
         className={cn("pointer-events-none absolute inset-0 opacity-0", FLASH_CLASS[timing.settings.change.flash])}
