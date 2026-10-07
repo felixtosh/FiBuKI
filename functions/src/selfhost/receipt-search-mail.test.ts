@@ -25,6 +25,7 @@ import "../gmail/onTransactionsImported";
 import "../precision-search/precisionSearchQueue";
 import { bulkCreateTransactionsCallable } from "../imports/bulkCreateTransactions";
 import { createImportRecordCallable } from "../imports/createImportRecord";
+import { createDraftImportCallable } from "../imports/createDraftImport";
 import { queueIncompleteTransactionSearch } from "../precision-search/queueIncompleteSearch";
 import { __setMailProviderFactory } from "../mail/searchMailboxes";
 import type {
@@ -168,9 +169,32 @@ const ACME: Charge = { date: "2026-07-20T12:00:00.000Z", amount: -4900, name: "A
 
 let importCount = 0;
 
-/** Import bank lines through the real handler and run the search it queues. */
-async function importCharges(charges: Charge[] = [ACME]): Promise<string[]> {
-  const job = `job-${++importCount}`;
+/**
+ * Import bank lines through the real handlers and run the search it queues.
+ * `draft` is the app's own flow: a draft import record first, completed once
+ * the lines are written.
+ */
+async function importCharges(charges: Charge[] = [ACME], opts: { draft?: boolean } = {}): Promise<string[]> {
+  let job = `job-${++importCount}`;
+  if (opts.draft) {
+    const draft = await createDraftImportCallable.run({
+      data: {
+        sourceId: "src-n26",
+        fileName: "n26.csv",
+        csvHash: `hash-${job}`,
+        csvStoragePath: `imports/${job}.csv`,
+        csvDownloadUrl: `https://example.invalid/${job}.csv`,
+        parseOptions: { delimiter: ";", hasHeader: true },
+        detectedHeaders: ["Datum", "Betrag", "Empfänger"],
+        sampleRows: [],
+        totalRows: charges.length,
+      },
+      auth: AUTH,
+    } as never);
+    job = (draft as { importId: string }).importId;
+    await drainTriggers();
+    await __whenShimIdle();
+  }
   const created = await bulkCreateTransactionsCallable.run({
     data: {
       sourceId: "src-n26",
@@ -559,6 +583,17 @@ describe("#746: the receipt search reads IMAP Mail Integrations", () => {
     expect(opened).toEqual(["imap-1"]);
     expect(mailbox.searches).toBeGreaterThan(3);
     expect(mailbox.closed).toBe(1);
+  });
+
+  it("starts the search when a draft import is completed, as the app imports", async () => {
+    await imapMailbox("imap-1");
+    useFakeImap({ "imap-1": new FakeImapMailbox([ACME_JULY]) });
+
+    const [transactionId] = await importCharges([ACME], { draft: true });
+
+    expect(await mailFiles()).toEqual([
+      { sourceType: "gmail", mailbox: "imap-1", message: "4711", attachment: "2", nominated: transactionId },
+    ]);
   });
 
   it("pauses the search while an IMAP mailbox waits for new credentials", async () => {

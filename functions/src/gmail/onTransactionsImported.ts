@@ -12,7 +12,7 @@
  * still fetched forward by the scheduled Sync.
  */
 
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { getFirestore } from "firebase-admin/firestore";
 import { isSearchableMailIntegration } from "../mail/searchable";
 import { queueIncompleteTransactionSearch } from "../precision-search/queueIncompleteSearch";
@@ -60,5 +60,26 @@ export const onTransactionsImported = onDocumentCreated(
     const importData = event.data?.data() as ImportRecord | undefined;
     if (!importData) return;
     await handleTransactionsImported(event.params.importId, importData);
+  }
+);
+
+/**
+ * The app imports through a draft (#746): the import record is created with
+ * no lines and completed by an update once the lines are written, so the
+ * create trigger above sees an empty import and skips. This one runs the same
+ * search when a draft is completed.
+ */
+export const onDraftImportCompleted = onDocumentUpdated(
+  {
+    document: "imports/{importId}",
+    region: "europe-west1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+  },
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data() as (ImportRecord & { status?: string }) | undefined;
+    if (!after || before?.status !== "draft" || after.status !== "completed") return;
+    await handleTransactionsImported(event.params.importId, after);
   }
 );
