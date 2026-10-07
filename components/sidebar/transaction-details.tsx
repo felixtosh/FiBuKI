@@ -150,6 +150,22 @@ export function TransactionDetails({
     return partnerId;
   };
 
+  /** Confirm the automatic or AI Partner: the same Partner, now the User's own, so the matcher learns from it. */
+  const handleConfirmPartner = async () => {
+    if (!transaction.partnerId || !transaction.partnerType) return;
+    setIsAssigningPartner(true);
+    try {
+      await onAssignPartner(
+        transaction.partnerId,
+        transaction.partnerType,
+        "manual",
+        transaction.partnerMatchConfidence ?? 100
+      );
+    } finally {
+      setIsAssigningPartner(false);
+    }
+  };
+
   const handleSelectExistingPartner = async (partnerId: string, partnerType: "user" | "global") => {
     setIsAssigningPartner(true);
     try {
@@ -277,6 +293,8 @@ export function TransactionDetails({
               partnerType={transaction.partnerType ?? undefined}
               onClick={handleNavigateToPartner}
               onRemove={handleRemovePartner}
+              onConfirm={handleConfirmPartner}
+              confirming={isAssigningPartner}
             />
           ) : isLoadingSuggestions ? (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
