@@ -117,4 +117,11 @@ export interface VirtualRowProps<TData extends { id: string }> {
   dataAttributes?: Record<string, string>;
   /** Row-specific state that should trigger re-render when changed (e.g., searching state) */
   rowStateKey?: string | number | boolean;
+  /**
+   * The table's column definitions. TanStack keeps a row object as long as the
+   * data does, even when the columns change, so the memo has to see the
+   * columns themselves: a cell that reads a lookup the page loads later (the
+   * Partners, the Files) only shows it if the row re-renders when they arrive.
+   */
+  columns?: unknown;
 }
