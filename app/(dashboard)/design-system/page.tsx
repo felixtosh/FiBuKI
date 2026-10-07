@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -143,6 +144,9 @@ export default function DesignSystemPage() {
             </Section>
 
             <Section id="motion" title="Motion" intro="Every animation the app actually runs, with its real classes and curve.">
+              <Button asChild size="sm" variant="outline">
+                <Link href="/design-system/motion-lab">Open the motion lab: tune how list rows arrive, change and leave</Link>
+              </Button>
               {motionGroups.map((group) => (
                 <div key={group.title} className="space-y-3">
                   <div>
