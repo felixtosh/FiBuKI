@@ -67,13 +67,14 @@ export interface MotionSettings {
 }
 
 /**
- * Production values, from the motion lab JSON of 2026-10-07: rows arrive in
- * 320ms, 40ms apart, 8px up; a row turns green (or back) as a low liquid
- * wave in 600ms; the rest glide 250ms when rows come or go.
+ * Production values, from the motion lab JSON of 2026-10-07 (second round):
+ * rows arrive in 250ms, 40ms apart, 8px up; a row turns green (or back)
+ * through an ordered dither in 320ms; the rest glide 250ms when rows come or
+ * go.
  */
 export const LIST_MOTION: MotionSettings = {
   enter: {
-    duration: 320,
+    duration: 250,
     easing: [0.16, 1, 0.3, 1],
     rowStagger: 40,
     cellStagger: 0,
@@ -89,8 +90,8 @@ export const LIST_MOTION: MotionSettings = {
     easing: [0.34, 1.56, 0.64, 1],
     pillDuration: 250,
     checkDuration: 300,
-    completeStyle: "liquid",
-    completeDuration: 600,
+    completeStyle: "dither",
+    completeDuration: 320,
     completeEasing: [0.65, 0, 0.28, 1],
     completeIntensity: 0.1,
     undoMirrored: false,

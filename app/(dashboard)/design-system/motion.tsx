@@ -226,14 +226,14 @@ export const motionGroups: MotionGroup[] = [
       {
         name: "Rows arrive",
         used: "Transactions table, rows new to the list (not rows scrolled into view)",
-        timing: "320ms, 40ms apart, 8px up, --ease-out-expo",
+        timing: "250ms, 40ms apart, 8px up, --ease-out-expo",
         code: "LIST_MOTION.enter (lib/motion/settings.ts)",
         Demo: () => <MotionLabLink />,
       },
       {
         name: "Row turns green, or back",
         used: "Transactions table, a row completing or no longer complete on screen",
-        timing: "600ms liquid, intensity 0.1, cubic-bezier(0.65, 0, 0.28, 1)",
+        timing: "320ms dither, cubic-bezier(0.65, 0, 0.28, 1)",
         code: "LIST_MOTION.change (lib/motion/settings.ts)",
         Demo: () => <MotionLabLink />,
       },
