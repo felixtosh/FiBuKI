@@ -34,6 +34,12 @@ export interface UpdateOptions {
   slow?: number;
   /** The lab removes a row once its leave animation has played. */
   onLeft?: (id: string) => void;
+  /**
+   * Which rows arrive: "first-load" (production) animates only the list's
+   * first appearance; rows that come in later just appear. "new-rows" (the
+   * lab) animates every row new to the data.
+   */
+  arrivals?: "first-load" | "new-rows";
 }
 
 const MAX_STAGGERED = 20;
@@ -97,60 +103,83 @@ function animateArrival(el: HTMLElement, s: MotionSettings, index: number, k: nu
   }
 }
 
-export function createListMotion(rowAttribute = "data-transaction-id") {
+export function createListMotion(rowAttribute = "data-row-id") {
   let previous: Map<string, MotionRow> | null = null;
   let positions = new Map<string, number>();
 
   return {
     update(root: HTMLElement | null, rows: MotionRow[], s: MotionSettings, options: UpdateOptions = {}) {
       const before = previous;
-      // An empty first render (still loading) does not count as seen.
+      // An empty first render (still loading) does not count as the first load.
       previous = rows.length || before ? new Map(rows.map((row) => [row.id, row])) : null;
-      if (!root) return;
+      if (!root || !rows.length) return;
       const k = options.slow ?? 1;
       const reduced = prefersReducedMotion();
-      const tr = (id: string) => root.querySelector<HTMLElement>(`tr[${rowAttribute}="${CSS.escape(id)}"]`);
+      // Only ever the rows the table has drawn: a long list never costs a
+      // lookup per data row.
+      const drawn = () => Array.from(root.querySelectorAll<HTMLElement>(`tr[${rowAttribute}]`));
+      const idOf = (el: HTMLElement) => el.getAttribute(rowAttribute)!;
+      const one = (id: string) => root.querySelector<HTMLElement>(`tr[${rowAttribute}="${CSS.escape(id)}"]`);
+      const yOf = (el: HTMLElement) => Number(el.style.transform.match(/translateY\((-?[\d.]+)px\)/)?.[1]);
+      // Where each drawn row is, for the next glide.
+      const snapshot = () => {
+        const at = new Map<string, number>();
+        for (const el of drawn()) {
+          const y = yOf(el);
+          if (!Number.isNaN(y)) at.set(idOf(el), y);
+        }
+        positions = at;
+      };
 
-      // Arrivals, in the order they are on screen. The first rows ever seen
-      // arrive too: that is the list loading.
-      const known = before ?? new Map<string, MotionRow>();
-      const fresh = rows.filter((row) => !known.has(row.id));
+      // Arrivals, in the order they are on screen.
+      const fresh = new Set<string>();
+      if (!before) rows.forEach((row) => fresh.add(row.id));
+      else if (options.arrivals === "new-rows") rows.forEach((row) => !before.has(row.id) && fresh.add(row.id));
       const entering = new Set<string>();
       let staggerIndex = 0;
-      const arrive = (candidates: MotionRow[]) => {
-        const found = candidates
-          .map((row) => ({ row, el: tr(row.id) }))
-          .filter((a): a is { row: MotionRow; el: HTMLElement } => a.el !== null)
-          .sort((a, b) => a.el.getBoundingClientRect().top - b.el.getBoundingClientRect().top);
-        for (const { row, el } of found) {
-          entering.add(row.id);
+      const arrive = () => {
+        const found = drawn()
+          .filter((el) => fresh.has(idOf(el)) && !entering.has(idOf(el)))
+          .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+        for (const el of found) {
+          entering.add(idOf(el));
           if (!reduced) animateArrival(el, s, Math.min(staggerIndex, MAX_STAGGERED), k);
           staggerIndex++;
         }
-        return candidates.filter((row) => !entering.has(row.id));
       };
-      let missing = arrive(fresh);
-      // A virtualised table draws its rows a render after it gets them (it
-      // measures itself first), so rows that are new but not drawn yet are
-      // looked for again over the next frames, still before they paint. Rows
-      // that never show (scrolled out of view) simply never animate.
-      let tries = 0;
-      const retry = () => {
-        if (!missing.length || tries++ >= 4) return;
-        missing = arrive(missing);
+      if (fresh.size) {
+        arrive();
+        // A virtualised table draws its rows a render after it gets them (it
+        // measures itself first), so look again over the next few frames,
+        // still before they paint. Later rows (scrolled into view) never move.
+        let tries = 0;
+        const retry = () => {
+          if (tries++ >= 4) return;
+          arrive();
+          // The rows drawn late need their place recorded too.
+          snapshot();
+          requestAnimationFrame(retry);
+        };
         requestAnimationFrame(retry);
-      };
-      if (missing.length && fresh.length) requestAnimationFrame(retry);
+      }
 
+      // Changes: compared in memory, the page touched only for changed rows.
       for (const row of rows) {
         const old = before?.get(row.id);
         if (!old) continue;
-        const el = tr(row.id);
-        if (!el) continue;
+        const flipped = old.complete !== row.complete;
+        const changed = old.version !== row.version;
+        const leaving = row.leaving && !old.leaving;
+        if (!flipped && !changed && !leaving) continue;
+        const el = one(row.id);
+        if (!el) {
+          if (leaving) options.onLeft?.(row.id);
+          continue;
+        }
         const c = s.change;
 
         // Turning green, or back.
-        if (old.complete !== row.complete && !reduced) {
+        if (flipped && !reduced) {
           const layer = rowLayer(el, "reveal");
           const drop = liftCells(el);
           const green = "var(--color-complete-row)";
@@ -180,7 +209,7 @@ export function createListMotion(rowAttribute = "data-transaction-id") {
               clearLayer(layer);
               drop();
             });
-        } else if (old.version !== row.version && c.flash !== "none" && !reduced) {
+        } else if (changed && !flipped && c.flash !== "none" && !reduced) {
           const flash = rowLayer(el, "flash");
           const drop = liftCells(el);
           flash.style.display = "block";
@@ -195,7 +224,7 @@ export function createListMotion(rowAttribute = "data-transaction-id") {
         }
 
         // Leaving (the lab).
-        if (row.leaving && !old.leaving) {
+        if (leaving) {
           const l = s.leave;
           const out = reduced
             ? Promise.resolve()
@@ -212,26 +241,24 @@ export function createListMotion(rowAttribute = "data-transaction-id") {
         }
       }
 
-      // Glide: rows that moved because rows came or went slide to their new
-      // place instead of jumping (FLIP, read from the table's own translateY).
-      const next = new Map<string, number>();
-      for (const row of rows) {
-        const el = tr(row.id);
-        const y = Number(el?.style.transform.match(/translateY\((-?[\d.]+)px\)/)?.[1]);
-        if (!el || Number.isNaN(y)) continue;
-        next.set(row.id, y);
-        const was = positions.get(row.id);
-        if (reduced || was === undefined || was === y || entering.has(row.id) || !s.leave.collapse) continue;
-        // Only rows that moved because the data changed: a sort or a column
-        // resize also moves rows, but then nothing arrived or left.
-        if (!before || (fresh.length === 0 && before.size === rows.length)) continue;
+      // Glide: drawn rows that moved because rows came or went slide to their
+      // new place instead of jumping (FLIP, from the table's own translateY).
+      // A sort or a column resize moves rows too, but then no row came or went.
+      const cameOrWent = !!before && (before.size !== rows.length || rows.some((row) => !before.has(row.id)));
+      const last = positions;
+      for (const el of drawn()) {
+        const id = idOf(el);
+        const y = yOf(el);
+        if (Number.isNaN(y)) continue;
+        const was = last.get(id);
+        if (!cameOrWent || reduced || was === undefined || was === y || entering.has(id) || !s.leave.collapse) continue;
         const t = y > was ? s.enter : s.leave;
         el.animate([{ translate: `0 ${was - y}px` }, { translate: "0 0" }], {
           duration: t.duration * k,
           easing: bezierCss(t.easing),
         });
       }
-      positions = next;
+      snapshot();
     },
   };
 }

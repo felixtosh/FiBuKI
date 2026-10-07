@@ -8,8 +8,6 @@ import {
   ResizableDataTable,
   DataTableHandle,
 } from "@/components/ui/data-table";
-import { createListMotion, type ListMotion } from "@/lib/motion/list-motion";
-import { LIST_MOTION } from "@/lib/motion/settings";
 
 interface DataTableProps<TData> {
   columns: ColumnDef<TData, unknown>[];
@@ -22,11 +20,7 @@ interface DataTableProps<TData> {
   onDisplayedOrderChange?: (orderedIds: string[]) => void;
   /** Set of transaction IDs that are currently being searched - used to bust row memo cache */
   searchingTransactionIds?: Set<string>;
-  /**
-   * Rows arrive, turn green (or back) and glide as LIST_MOTION says (on by
-   * default). The motion lab turns it off and runs the same engine with its
-   * own settings.
-   */
+  /** Rows arrive, turn green and glide (on by default); the motion lab turns it off. */
   animateRows?: boolean;
 }
 
@@ -105,45 +99,34 @@ function DataTableInner<TData extends { id: string }>(
     [searchingTransactionIds]
   );
 
-  // Rows arriving, turning green (or back) and gliding (lib/motion). Runs after
-  // the table has rendered and before the browser paints.
-  const motionRoot = React.useRef<HTMLDivElement>(null);
-  const motion = React.useRef(null as ListMotion | null);
-  React.useLayoutEffect(() => {
-    if (!animateRows) return;
-    motion.current ??= createListMotion();
-    motion.current.update(
-      motionRoot.current,
-      data.map((row) => ({
-        id: row.id,
-        complete: isTransactionRow(row) && isRowComplete(row),
-      })),
-      LIST_MOTION
-    );
-    // isTransactionRow / isRowComplete are pure helpers re-created each render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, animateRows]);
+  // Turning green when a row completes on screen (lib/motion, run by the table).
+  const isComplete = React.useCallback(
+    function isComplete(row: TData) {
+      return isTransactionRow(row) && isRowComplete(row);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pure helpers re-created each render
+    []
+  );
 
-  // display: contents adds no box, so the table lays out exactly as before.
   return (
-    <div ref={motionRoot} className="contents">
-      <ResizableDataTable
-        ref={ref}
-        columnWidthsStorageKey="fibuki.columnWidths.transactions"
-        columns={columns}
-        data={data}
-        onRowClick={onRowClick}
-        selectedRowId={selectedRowId}
-        defaultColumnSizes={DEFAULT_TRANSACTION_COLUMN_SIZES}
-        initialSorting={DEFAULT_SORTING}
-        getRowClassName={getRowClassName}
-        getRowDataAttributes={getRowDataAttributes}
-        getRowStateKey={getRowStateKey}
-        emptyState={emptyState}
-        emptyMessage="No transactions found."
-        onDisplayedOrderChange={onDisplayedOrderChange}
-      />
-    </div>
+    <ResizableDataTable
+      ref={ref}
+      columnWidthsStorageKey="fibuki.columnWidths.transactions"
+      columns={columns}
+      data={data}
+      onRowClick={onRowClick}
+      selectedRowId={selectedRowId}
+      defaultColumnSizes={DEFAULT_TRANSACTION_COLUMN_SIZES}
+      initialSorting={DEFAULT_SORTING}
+      getRowClassName={getRowClassName}
+      getRowDataAttributes={getRowDataAttributes}
+      getRowStateKey={getRowStateKey}
+      emptyState={emptyState}
+      emptyMessage="No transactions found."
+      onDisplayedOrderChange={onDisplayedOrderChange}
+      isRowComplete={isComplete}
+      animateRows={animateRows}
+    />
   );
 }
 

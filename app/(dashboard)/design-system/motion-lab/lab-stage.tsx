@@ -100,7 +100,9 @@ export function LabStage({
       rootRef.current,
       rows.map((row) => ({ id: row.id, complete: isComplete(row), version: row.version, leaving: row.leaving })),
       s,
-      { slow: k, onLeft: left }
+      // The lab also shows rows arriving later ("New rows arrive"); production
+      // animates only the first load.
+      { slow: k, onLeft: left, arrivals: "new-rows" }
     );
   }, [rows]);
 
