@@ -384,6 +384,13 @@ callables do not already allow.
 
 **Claude Code Hook**: `.claude/hooks/check-cloud-function-pattern.sh` warns if local scoring is detected.
 
+### Matching changes run the replay
+
+A PR that changes how Files, Transactions or Partners are matched gets the `replay`
+label and its counts in the Evidence section. It warns, it never blocks. How it works:
+[`docs/replay.md`](docs/replay.md); results, decisions and what to build next:
+[`docs/benchmarking.md`](docs/benchmarking.md).
+
 ### Every change is in the item's activity log (#752)
 
 A write that changes what the User sees on a Transaction or a File (a value set or
