@@ -86,7 +86,7 @@ export const DEFAULT_SETTINGS: LabSettings = {
     lineDuration: 400,
   },
   change: {
-    flash: "complete",
+    flash: "none",
     flashDuration: 900,
     easing: [0.16, 1, 0.3, 1],
     cellOffsetY: 6,
