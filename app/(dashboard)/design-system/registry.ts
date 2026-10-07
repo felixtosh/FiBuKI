@@ -35,6 +35,7 @@ import inputDoc from "@/components/ui/input.examples";
 import labelDoc from "@/components/ui/label.examples";
 import overflowFilterRowDoc from "@/components/ui/overflow-filter-row.examples";
 import pillDoc from "@/components/ui/pill.examples";
+import playOnChangeDoc from "@/components/ui/play-on-change.examples";
 import popoverDoc from "@/components/ui/popover.examples";
 import progressCounterDoc from "@/components/ui/progress-counter.examples";
 import progressDoc from "@/components/ui/progress.examples";
@@ -91,7 +92,7 @@ export const componentGroups: ComponentGroup[] = [
     id: "feedback",
     title: "Feedback",
     intro: "Telling the user what happened or what is loading.",
-    docs: [alertDoc, skeletonDoc, progressDoc, tableEmptyStateDoc, summaryToastDoc],
+    docs: [alertDoc, skeletonDoc, progressDoc, tableEmptyStateDoc, summaryToastDoc, playOnChangeDoc],
   },
   {
     id: "overlays",

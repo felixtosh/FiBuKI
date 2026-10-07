@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { LabTable, type LabRow } from "./lab-table";
+import { LabStage, type LabRow } from "./lab-stage";
 import {
   COMPLETE_STYLES,
   DEFAULT_SETTINGS,
@@ -30,21 +30,21 @@ import {
 const STORAGE_KEY = "fibuki.motionLab.settings";
 
 const SAMPLE: Omit<LabRow, "id" | "version">[] = [
-  { date: "15.03.2026", text: "A1 TELEKOM AUSTRIA RECHNUNG 03/26", amount: -4990, partner: "A1 Telekom", fileAmount: 4990 },
-  { date: "14.03.2026", text: "Kunde GmbH Invoice 2026-12", amount: 120000, partner: "Kunde GmbH" },
-  { date: "12.03.2026", text: "AMAZON EU SARL", amount: -2399 },
-  { date: "10.03.2026", text: "WIENER LINIEN JAHRESKARTE", amount: -36500, partner: "Wiener Linien", fileAmount: 36500 },
-  { date: "08.03.2026", text: "SVS BEITRAG Q1", amount: -82015 },
-  { date: "05.03.2026", text: "HETZNER ONLINE GMBH", amount: -1890, partner: "Hetzner" },
-  { date: "03.03.2026", text: "SPAR DANKT 4711", amount: -1245 },
-  { date: "01.03.2026", text: "Kundin Huber Honorar", amount: 85000 },
+  { date: "2026-03-15", counterparty: "A1 Telekom Austria AG", reference: "Rechnung 03/26", amount: -4990, partner: "A1 Telekom", fileAmount: 4990 },
+  { date: "2026-03-14", counterparty: "Kunde GmbH", reference: "Invoice 2026-12", amount: 120000, partner: "Kunde GmbH" },
+  { date: "2026-03-12", counterparty: "Amazon EU S.a.r.l.", reference: "302-4471023", amount: -2399 },
+  { date: "2026-03-10", counterparty: "Wiener Linien", reference: "Jahreskarte 2026", amount: -36500, partner: "Wiener Linien", fileAmount: 36500 },
+  { date: "2026-03-08", counterparty: "SVS", reference: "Beitrag Q1", amount: -82015 },
+  { date: "2026-03-05", counterparty: "Hetzner Online GmbH", reference: "R0023318842", amount: -1890, partner: "Hetzner Online" },
+  { date: "2026-03-03", counterparty: "Spar", reference: "Spar dankt 4711", amount: -1245 },
+  { date: "2026-03-01", counterparty: "Kundin Huber", reference: "Honorar Februar", amount: 85000 },
 ];
 
 const ARRIVALS: Omit<LabRow, "id" | "version">[] = [
-  { date: "16.03.2026", text: "GOOGLE WORKSPACE", amount: -1380 },
-  { date: "16.03.2026", text: "ADOBE CREATIVE CLOUD", amount: -6599 },
-  { date: "17.03.2026", text: "ÖBB TICKET WIEN-LINZ", amount: -3790 },
-  { date: "17.03.2026", text: "Kunde GmbH Invoice 2026-13", amount: 96000 },
+  { date: "2026-03-16", counterparty: "Google Workspace", reference: "GSuite 03/26", amount: -1380 },
+  { date: "2026-03-17", counterparty: "Adobe", reference: "Creative Cloud", amount: -6599 },
+  { date: "2026-03-18", counterparty: "ÖBB", reference: "Ticket Wien-Linz", amount: -3790 },
+  { date: "2026-03-19", counterparty: "Kunde GmbH", reference: "Invoice 2026-13", amount: 96000 },
 ];
 
 let nextId = 0;
@@ -85,7 +85,12 @@ export default function MotionLabPage() {
   const arrive = useCallback(() => {
     const start = arrivals.current % ARRIVALS.length;
     arrivals.current += 2;
-    const batch = [ARRIVALS[start], ARRIVALS[(start + 1) % ARRIVALS.length]];
+    // The table sorts newest first, so each batch is dated after the last one.
+    const day = (n: number) => new Date(Date.UTC(2026, 2, 16 + n)).toISOString().slice(0, 10);
+    const batch = [
+      { ...ARRIVALS[start], date: day(arrivals.current) },
+      { ...ARRIVALS[(start + 1) % ARRIVALS.length], date: day(arrivals.current + 1) },
+    ];
     setRows((current) => [
       ...makeRows(batch, true),
       ...current.map((row) => ({ ...row, enterIndex: undefined })),
@@ -101,7 +106,7 @@ export default function MotionLabPage() {
         if (i !== index) return row;
         const next = row.partner
           ? { ...row, fileAmount: Math.abs(row.amount) }
-          : { ...row, partner: row.text.split(" ")[0].replace(/^\w/, (c) => c.toUpperCase()) };
+          : { ...row, partner: row.counterparty };
         return { ...next, version: row.version + 1 };
       });
     });
@@ -193,9 +198,8 @@ export default function MotionLabPage() {
           </div>
           <Slider label="Flash fades over" unit="ms" min={0} max={2000} step={10} value={settings.change.flashDuration} onChange={(v) => set("change", { flashDuration: v })} />
           <CurveEditor value={settings.change.easing} onChange={(v) => set("change", { easing: v })} />
-          <Slider label="Changed cell duration" unit="ms" min={0} max={800} step={10} value={settings.change.cellDuration} onChange={(v) => set("change", { cellDuration: v })} />
-          <Slider label="Changed cell travel" unit="px" min={0} max={20} step={1} value={settings.change.cellOffsetY} onChange={(v) => set("change", { cellOffsetY: v })} />
-          <Slider label="New pill starts at scale" min={0.2} max={1} step={0.05} value={settings.change.pillFromScale} onChange={(v) => set("change", { pillFromScale: v })} />
+          <Slider label="Partner pill pops in" unit="ms" min={0} max={1000} step={10} value={settings.change.pillDuration} onChange={(v) => set("change", { pillDuration: v })} />
+          <Slider label="File check appears" unit="ms" min={0} max={1000} step={10} value={settings.change.checkDuration} onChange={(v) => set("change", { checkDuration: v })} />
           <div data-preview="complete" className="space-y-4 rounded-md border bg-background p-3">
             <p className="text-xs font-medium">Turning green, and back</p>
             <div className="space-y-1.5">
@@ -256,9 +260,9 @@ export default function MotionLabPage() {
               </div>
             </div>
           </div>
-          <LabTable rows={rows} settings={settings} slow={slow} onLeft={onLeft} />
+          <LabStage rows={rows} settings={settings} slow={slow} onLeft={onLeft} />
           <p className="text-xs text-muted-foreground">
-            The rows use the real Pill and AmountMatchDisplay. &quot;Change a row&quot; assigns a Partner, then connects a File, which completes the row.
+            This is the real Transactions table with sample rows. &quot;Change a row&quot; assigns a Partner, then connects a File, which completes the row.
             &quot;Toggle green&quot; completes the second row, or takes it back. Letting go of a control replays what it tunes.
           </p>
         </div>

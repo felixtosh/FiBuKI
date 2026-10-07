@@ -40,12 +40,12 @@ export interface LabSettings {
   change: {
     flash: "complete" | "info" | "highlight" | "none";
     flashDuration: number;
+    /** Curve of the flash, the pill pop and the check. */
     easing: Bezier;
-    /** A changed cell's new content slides in by this much. */
-    cellOffsetY: number;
-    cellDuration: number;
-    /** A new pill starts at this scale. */
-    pillFromScale: number;
+    /** The real animate-pill-pop: a Partner or category assigned on screen. */
+    pillDuration: number;
+    /** The real animate-check-appear: the check in the File pill. */
+    checkDuration: number;
     /** The row turning green (complete) or back. */
     completeStyle: CompleteStyle;
     completeDuration: number;
@@ -73,6 +73,9 @@ export const EASING_PRESETS: { name: string; token?: string; value: Bezier }[] =
   { name: "linear", value: [0, 0, 1, 1] },
 ];
 
+/** Today's curves of the two real cell animations (globals.css). */
+export const PILL_EASING: Bezier = [0.34, 1.56, 0.64, 1];
+
 export const DEFAULT_SETTINGS: LabSettings = {
   enter: {
     duration: 320,
@@ -88,10 +91,9 @@ export const DEFAULT_SETTINGS: LabSettings = {
   change: {
     flash: "none",
     flashDuration: 900,
-    easing: [0.16, 1, 0.3, 1],
-    cellOffsetY: 6,
-    cellDuration: 250,
-    pillFromScale: 0.6,
+    easing: PILL_EASING,
+    pillDuration: 250,
+    checkDuration: 300,
     completeStyle: "wipe",
     completeDuration: 700,
     completeEasing: [0.65, 0, 0.35, 1],
