@@ -18,6 +18,8 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLatestCallback } from "@/hooks/use-latest-callback";
+import { createListMotion, type ListMotion } from "@/lib/motion/list-motion";
+import { LIST_MOTION } from "@/lib/motion/settings";
 import { ResizableDataTableProps, DataTableHandle, DataTableSection, RowClickModifiers } from "./types";
 import { ResizeHandle } from "./resize-handle";
 import {
@@ -64,6 +66,8 @@ function ResizableDataTableInner<TData extends { id: string }>(
     minColumnWidth = DEFAULT_MIN_COLUMN_WIDTH,
     getRowClassName,
     getRowDataAttributes,
+    isRowComplete,
+    animateRows = true,
     getRowStateKey,
     estimateRowSize = DEFAULT_ESTIMATE_ROW_SIZE,
     sectionHeaderHeight = DEFAULT_SECTION_HEADER_HEIGHT,
@@ -181,6 +185,22 @@ function ResizableDataTableInner<TData extends { id: string }>(
 
   const parentRef = React.useRef<HTMLDivElement>(null);
   const rows = table.getRowModel().rows;
+
+  // Rows arriving on the first load, turning green (or back) and gliding
+  // (lib/motion). Runs after the table has rendered and before the browser
+  // paints. Compared in memory; only drawn rows are ever looked up.
+  const motion = React.useRef(null as ListMotion | null);
+  const isRowCompleteLatest = useLatestCallback((row: TData) => isRowComplete?.(row) ?? false);
+  React.useLayoutEffect(() => {
+    if (!animateRows) return;
+    motion.current ??= createListMotion();
+    const all = data ?? sections?.flatMap((section) => section.data) ?? [];
+    motion.current.update(
+      parentRef.current,
+      all.map((row) => ({ id: row.id, complete: isRowCompleteLatest(row) })),
+      LIST_MOTION
+    );
+  }, [data, sections, animateRows, isRowCompleteLatest]);
 
   // Create a map from data id to row for quick lookup
   const rowByIdMap = React.useMemo(() => {
@@ -658,7 +678,8 @@ function ResizableDataTableInner<TData extends { id: string }>(
               const baseClassName = getRowClassName?.(original, isSelected);
               const sectionClassName = item.rowClassName;
               const combinedClassName = cn(baseClassName, sectionClassName);
-              const dataAttributes = getRowDataAttributes?.(original);
+              // row-id is how the list motion finds a drawn row (lib/motion).
+              const dataAttributes = { ...getRowDataAttributes?.(original), "row-id": original.id };
 
               return (
                 <VirtualRow

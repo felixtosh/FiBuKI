@@ -72,6 +72,8 @@ function FilesDataTableInner(
   }: FilesDataTableProps,
   ref: React.ForwardedRef<FilesDataTableHandle>
 ) {
+  const isFileConnected = React.useCallback((row: TaxFile) => row.transactionIds.length > 0, []);
+
   // Get row className based on status
   const getRowClassName = React.useCallback(
     (row: TaxFile, isSelected: boolean) => {
@@ -127,6 +129,8 @@ function FilesDataTableInner(
       selectedRowId={selectedRowId}
       defaultColumnSizes={DEFAULT_FILE_COLUMN_SIZES}
       initialSorting={initialSorting ?? DEFAULT_SORTING}
+      // Connected files are the green ones (getRowClassName above).
+      isRowComplete={isFileConnected}
       getRowClassName={getRowClassName}
       getRowDataAttributes={getRowDataAttributes}
       getRowStateKey={getRowStateKey}

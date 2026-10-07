@@ -8,7 +8,6 @@ import {
   ResizableDataTable,
   DataTableHandle,
 } from "@/components/ui/data-table";
-import { MOTION, isRecentlyUpdated } from "@/design-system";
 
 interface DataTableProps<TData> {
   columns: ColumnDef<TData, unknown>[];
@@ -21,6 +20,8 @@ interface DataTableProps<TData> {
   onDisplayedOrderChange?: (orderedIds: string[]) => void;
   /** Set of transaction IDs that are currently being searched - used to bust row memo cache */
   searchingTransactionIds?: Set<string>;
+  /** Rows arrive, turn green and glide (on by default); the motion lab turns it off. */
+  animateRows?: boolean;
 }
 
 export type { DataTableHandle };
@@ -47,6 +48,7 @@ function DataTableInner<TData extends { id: string }>(
     emptyState,
     onDisplayedOrderChange,
     searchingTransactionIds,
+    animateRows = true,
   }: DataTableProps<TData>,
   ref: React.ForwardedRef<DataTableHandle>
 ) {
@@ -69,18 +71,13 @@ function DataTableInner<TData extends { id: string }>(
           return "opacity-50";
         }
 
+        // Turning green is animated by the list motion below, only when it
+        // happens on screen; the colour itself is just the state.
         if (isRowComplete(row)) {
-          // Check if this row just became complete (glow animation)
-          const justCompleted = isRecentlyUpdated(
-            (row as unknown as Record<string, unknown>).updatedAt,
-            MOTION.JUST_COMPLETED_THRESHOLD_MS
-          );
-          const glowClass = justCompleted ? "animate-row-complete" : "";
-
           if (isSelected) {
-            return `bg-complete-row-selected hover:bg-complete-row-selected/80 ${glowClass}`;
+            return "bg-complete-row-selected hover:bg-complete-row-selected/80";
           }
-          return `bg-complete-row hover:bg-complete-row/80 ${glowClass}`;
+          return "bg-complete-row hover:bg-complete-row/80";
         }
       }
       return "";
@@ -102,6 +99,15 @@ function DataTableInner<TData extends { id: string }>(
     [searchingTransactionIds]
   );
 
+  // Turning green when a row completes on screen (lib/motion, run by the table).
+  const isComplete = React.useCallback(
+    function isComplete(row: TData) {
+      return isTransactionRow(row) && isRowComplete(row);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pure helpers re-created each render
+    []
+  );
+
   return (
     <ResizableDataTable
       ref={ref}
@@ -118,13 +124,15 @@ function DataTableInner<TData extends { id: string }>(
       emptyState={emptyState}
       emptyMessage="No transactions found."
       onDisplayedOrderChange={onDisplayedOrderChange}
+      isRowComplete={isComplete}
+      animateRows={animateRows}
     />
   );
 }
 
 // Export with forwardRef - using type assertion for generic component with ref
 export const DataTable = forwardRef(DataTableInner) as <
-  TData extends { id: string }
+  TData extends { id: string },
 >(
-  props: DataTableProps<TData> & { ref?: React.Ref<DataTableHandle> }
+  props: DataTableProps<TData> & { ref?: React.Ref<DataTableHandle> },
 ) => React.ReactElement;
