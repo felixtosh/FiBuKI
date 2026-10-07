@@ -1111,7 +1111,13 @@
       "copy_suggested": "Copy suggested",
       "receipt_linked": "Receipt linked",
       "receipt_unlinked": "Receipt link removed",
-      "correction_linked": "Correction linked"
+      "correction_linked": "Correction linked",
+      "category_suggested": "Category suggested",
+      "transaction_edited": "Edited",
+      "reconciled": "Reconciled",
+      "reconciliation_suggested": "Reconciliation suggested",
+      "ruling_recorded": "Ruling recorded",
+      "ruling_revoked": "Ruling revoked"
     }
   }
 }

@@ -9,6 +9,7 @@ import {
 import { matchCategoriesForTransactions } from "./matchCategories";
 import { createLocalPartnerFromGlobal } from "./createLocalPartnerFromGlobal";
 import { AutomationMeta } from "../automation/types";
+import { activityEntry } from "../utils/activity";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -254,6 +255,19 @@ export const onPartnerCreate = onDocumentCreated(
             });
           } else {
             suggestionsAdded++;
+            // The log (#752): a new best suggestion from the new Partner.
+            const previousTop = Array.isArray(txData.partnerSuggestions) ? txData.partnerSuggestions[0]?.partnerId : undefined;
+            if (!txData.partnerId && topMatch.partnerId !== previousTop) {
+              const suggestedName = partnerNameMap.get(topMatch.partnerId) || null;
+              updates.automationHistory = FieldValue.arrayUnion(activityEntry({
+                type: "partner_suggested",
+                actor: "auto",
+                forPartnerId: topMatch.partnerId,
+                partnerName: suggestedName,
+                confidence: topMatch.confidence,
+                summary: `Partner "${suggestedName || topMatch.partnerId}" suggested (${Math.round(topMatch.confidence)}%)`,
+              }));
+            }
           }
 
           batch.update(txDoc.ref, updates);

@@ -26,6 +26,8 @@ import {
   Lightbulb,
   PencilLine,
   AlertTriangle,
+  CreditCard,
+  Gavel,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -64,6 +66,12 @@ const TYPE_STYLE: Record<string, { icon: typeof History; color: string }> = {
   receipt_linked: { icon: Link2, color: "text-green-600" },
   receipt_unlinked: { icon: Unlink, color: "text-orange-500" },
   correction_linked: { icon: Link2, color: "text-green-600" },
+  category_suggested: { icon: Lightbulb, color: "text-purple-400" },
+  transaction_edited: { icon: PencilLine, color: "text-blue-500" },
+  reconciled: { icon: CreditCard, color: "text-green-600" },
+  reconciliation_suggested: { icon: CreditCard, color: "text-blue-400" },
+  ruling_recorded: { icon: Gavel, color: "text-blue-500" },
+  ruling_revoked: { icon: Gavel, color: "text-orange-500" },
 };
 
 function statusDot(status: AutomationHistoryEntry["status"]) {

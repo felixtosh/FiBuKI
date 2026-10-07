@@ -297,9 +297,13 @@ describe("web callable and MCP tool handler write identical state from one fixtu
     expect(store.getDoc("transactions", "tx-web")?.noReceiptCategoryId).toBe("cat-web");
     expect(store.getDoc("transactions", "tx-mcp")?.noReceiptCategoryId).toBe("cat-mcp");
 
-    const webTx = normalize(store.getDoc("transactions", "tx-web"));
-    const mcpTx = normalize(store.getDoc("transactions", "tx-mcp"));
+    // The activity log names who assigned it (#752): the web is the User, the
+    // tool surface is AI. Everything else must be identical.
+    const { automationHistory: webLog, ...webTx } = normalize(store.getDoc("transactions", "tx-web")) as Record<string, unknown>;
+    const { automationHistory: mcpLog, ...mcpTx } = normalize(store.getDoc("transactions", "tx-mcp")) as Record<string, unknown>;
     expect(mcpTx).toEqual(webTx);
+    expect(JSON.stringify(webLog)).toContain('"actor":"manual"');
+    expect(JSON.stringify(mcpLog)).toContain('"actor":"ai"');
 
     const webCategory = normalize(store.getDoc("noReceiptCategories", "cat-web"));
     const mcpCategory = normalize(store.getDoc("noReceiptCategories", "cat-mcp"));

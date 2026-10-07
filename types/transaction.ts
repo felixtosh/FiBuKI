@@ -119,7 +119,12 @@ export interface AutomationHistoryEntry {
     | "copy_suggested"
     | "receipt_linked"
     | "receipt_unlinked"
-    | "correction_linked";
+    | "correction_linked"
+    | "transaction_edited"
+    | "reconciled"
+    | "reconciliation_suggested"
+    | "ruling_recorded"
+    | "ruling_revoked";
   /** When it ran */
   ranAt: Timestamp;
   /** Status of the run */

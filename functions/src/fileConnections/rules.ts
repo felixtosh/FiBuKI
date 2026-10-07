@@ -62,8 +62,9 @@ export const ORIGIN_RULES: Readonly<Record<ConnectionOrigin, OriginRules>> = {
     connectionType: "suggestion_accepted",
     actor: "suggestion",
   },
-  mcp: { rejection: "refuse", overQuota: false, learning: "directed", connectionType: "api", actor: "manual" },
-  agent: { rejection: "refuse", overQuota: false, learning: "directed", connectionType: "manual", actor: "manual" },
+  // An AI client acting for the User: it learns like the User, and the log says AI did it (#752).
+  mcp: { rejection: "refuse", overQuota: false, learning: "directed", connectionType: "api", actor: "ai" },
+  agent: { rejection: "refuse", overQuota: false, learning: "directed", connectionType: "manual", actor: "ai" },
   auto: { rejection: "refuse", overQuota: false, learning: "automated", connectionType: "auto_matched", actor: "auto" },
   ai: { rejection: "refuse", overQuota: false, learning: "automated", connectionType: "ai_matched", actor: "ai" },
 };

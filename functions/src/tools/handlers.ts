@@ -120,6 +120,7 @@ import {
   agentMayReplaceAutomated,
   agentSourceInfo,
 } from "./agentConnectChecks";
+import { activityEntry, logActivity } from "../utils/activity";
 
 /**
  * Convert a Firestore Timestamp to the YYYY-MM-DD calendar day it stands for.
@@ -744,6 +745,16 @@ export async function updateTransaction(
     historyId = historyRef.id;
   }
 
+  // The log (#752): the tool surface is an AI client, and the activity log
+  // names what it changed, beside the undoable history entry above.
+  const changed = Object.keys(newValues);
+  if (changed.length > 0) {
+    Object.assign(updates, logActivity(activityEntry({
+      type: "transaction_edited",
+      actor: "ai",
+      summary: `${options.rollbackFrom ? "Edit undone by the assistant" : "Edited by the assistant"}: ${changed.join(", ")}`,
+    })));
+  }
   await docRef.update(updates);
   return {
     success: true,
@@ -827,6 +838,7 @@ export async function acceptReceiptOnly(userId: string, args: Record<string, unk
     await docRef.update({
       receiptOnlyAcceptance: null,
       updatedAt: FieldValue.serverTimestamp(),
+      ...logActivity(activityEntry({ type: "ruling_revoked", actor: "ai", summary: "Accepted Receipt ruling revoked" })),
     });
     return { success: true, transactionId };
   }
@@ -854,6 +866,7 @@ export async function acceptReceiptOnly(userId: string, args: Record<string, unk
   await docRef.update({
     receiptOnlyAcceptance: acceptance,
     updatedAt: FieldValue.serverTimestamp(),
+    ...logActivity(activityEntry({ type: "ruling_recorded", actor: "ai", summary: `Accepted Receipt ruling recorded: ${trimmedReason}` })),
   });
 
   return warning
@@ -872,11 +885,12 @@ export async function acceptPartialPayment(userId: string, args: Record<string, 
   const { transactionId, reason, revoke } = args;
   if (!transactionId) throw new Error("transactionId is required");
   try {
-    await rulePartialPayment(db, userId, {
-      transactionId: transactionId as string,
-      action: revoke === true ? "revoke" : "accept",
-      reason,
-    });
+    await rulePartialPayment(
+      db,
+      userId,
+      { transactionId: transactionId as string, action: revoke === true ? "revoke" : "accept", reason },
+      "ai"
+    );
   } catch (error) {
     if (error instanceof PartialPaymentRulingError) {
       throw new Error(error.code === "permission-denied" ? "Transaction not found" : error.message);
@@ -1463,10 +1477,12 @@ export async function disconnectFileFromTransaction(userId: string, args: Record
 
   // The app's disconnect (#584): it reverts a Partner the connect copied
   // across. Records no Rejection: only the app's disconnect can.
-  await performDisconnectFile(db, userId, {
-    fileId: fileId as string,
-    transactionId: transactionId as string,
-  });
+  await performDisconnectFile(
+    db,
+    userId,
+    { fileId: fileId as string, transactionId: transactionId as string },
+    "ai"
+  );
   return { success: true, fileId, transactionId };
 }
 
@@ -2077,6 +2093,7 @@ export async function assignNoReceiptCategory(userId: string, args: Record<strin
     transactionId: transactionId as string,
     categoryId: categoryId as string,
     matchedBy: "manual",
+    actor: "ai",
   });
 
   return {
@@ -2105,12 +2122,19 @@ export async function removeNoReceiptCategory(userId: string, transactionId: str
   const batch = db.batch();
   const now = FieldValue.serverTimestamp();
 
+  const categoryName = ((await db.collection("noReceiptCategories").doc(categoryId).get()).data()?.name as string | undefined) ?? categoryId;
   batch.update(txDoc.ref, {
     noReceiptCategoryId: null,
     noReceiptCategoryTemplateId: null,
     noReceiptCategoryMatchedBy: null,
     isComplete: hasFiles,
     updatedAt: now,
+    ...logActivity(activityEntry({
+      type: "category_removed",
+      actor: "ai",
+      categoryName,
+      summary: `Category "${categoryName}" removed by the assistant`,
+    })),
   });
 
   batch.update(db.collection("noReceiptCategories").doc(categoryId), {
@@ -2799,11 +2823,11 @@ export async function removePartnerFromTx(userId: string, args: Record<string, u
       type: "partner_removed",
       ranAt: Timestamp.now(),
       status: "completed",
-      actor: "manual",
-      level: "decision",
+      actor: "ai",
+      level: "outcome",
       partnerName: partnerName || previousPartnerId || null,
       forPartnerId: previousPartnerId || null,
-      summary: `Partner "${partnerName || previousPartnerId}" removed via API`,
+      summary: `Partner "${partnerName || previousPartnerId}" removed by the assistant`,
     }),
   });
 
@@ -2867,6 +2891,7 @@ export async function assignPartnerToFileTool(
     partnerId,
     partnerType: "user",
     ...(byAgent ? { matchedBy: "ai" as const } : { matchedBy: "manual" as const, confidence: 100 }),
+    actor: "ai",
   });
 
   return { success: true, ...result };
@@ -2883,7 +2908,7 @@ export async function removePartnerFromFileTool(userId: string, args: Record<str
   if (!fileId) throw new Error("fileId is required");
 
   const { removePartnerFromFile } = await import("../files/filePartner");
-  const result = await removePartnerFromFile(db, userId, fileId);
+  const result = await removePartnerFromFile(db, userId, fileId, "ai");
   return { success: true, ...result };
 }
 
@@ -2987,11 +3012,16 @@ export async function mergePartnersTool(userId: string, args: Record<string, unk
   }
 
   const { mergeUserPartnersInternal } = await import("../partners/mergeUserPartners");
-  return mergeUserPartnersInternal(db, userId, {
-    survivorId: args.survivorId as string,
-    loserIds: args.loserIds as string[],
-    confirmVatIdConflict: args.confirmVatIdConflict === true,
-  });
+  return mergeUserPartnersInternal(
+    db,
+    userId,
+    {
+      survivorId: args.survivorId as string,
+      loserIds: args.loserIds as string[],
+      confirmVatIdConflict: args.confirmVatIdConflict === true,
+    },
+    "ai"
+  );
 }
 
 /**

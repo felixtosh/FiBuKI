@@ -23,12 +23,15 @@ interface DisconnectFileResponse {
 export async function performDisconnectFile(
   db: FirebaseFirestore.Firestore,
   userId: string,
-  request: DisconnectFileRequest
+  request: DisconnectFileRequest,
+  /** Who disconnects, for the activity log (#752): the tool surface passes `ai`. */
+  actor: "manual" | "ai" = "manual"
 ): Promise<DisconnectFileResponse> {
   await unlinkFile(db, userId, {
     fileId: request?.fileId,
     transactionId: request?.transactionId,
     reject: request?.rejectFile === true,
+    actor,
   });
   return { success: true };
 }

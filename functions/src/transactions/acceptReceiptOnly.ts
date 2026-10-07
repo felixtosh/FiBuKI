@@ -13,6 +13,7 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import type { ReceiptOnlyAcceptance } from "../documents/receiptOnlyAcceptance";
+import { activityEntry, logActivity } from "../utils/activity";
 
 interface AcceptReceiptOnlyRequest {
   /** Transaction ID to rule on */
@@ -97,6 +98,7 @@ export const acceptReceiptOnlyCallable = createCallable<
       await transactionRef.update({
         receiptOnlyAcceptance: null,
         updatedAt: FieldValue.serverTimestamp(),
+        ...logActivity(activityEntry({ type: "ruling_revoked", actor: "manual", summary: "Accepted Receipt ruling revoked" })),
       });
       return { success: true };
     }
@@ -129,6 +131,7 @@ export const acceptReceiptOnlyCallable = createCallable<
     await transactionRef.update({
       receiptOnlyAcceptance: acceptance,
       updatedAt: FieldValue.serverTimestamp(),
+      ...logActivity(activityEntry({ type: "ruling_recorded", actor: "manual", summary: `Accepted Receipt ruling recorded: ${trimmedReason}` })),
     });
 
     return warning ? { success: true, warning } : { success: true };

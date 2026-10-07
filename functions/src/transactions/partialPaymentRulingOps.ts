@@ -19,6 +19,7 @@ import {
   type PartialPaymentAcceptance,
   type RuledFileRecord,
 } from "../uva/partialPaymentAcceptance";
+import { activityEntry, logActivity } from "../utils/activity";
 
 export type PartialPaymentRulingErrorCode =
   | "invalid-argument"
@@ -53,7 +54,9 @@ export interface PartialPaymentRulingRequest {
 export async function rulePartialPayment(
   db: Firestore,
   userId: string,
-  request: PartialPaymentRulingRequest
+  request: PartialPaymentRulingRequest,
+  /** Who ruled, for the activity log (#752); the tool surface passes `ai`. */
+  actor: "manual" | "ai" = "manual"
 ): Promise<PartialPaymentAcceptance | null> {
   const { transactionId, action, reason } = request;
   if (!transactionId || typeof transactionId !== "string") {
@@ -83,6 +86,7 @@ export async function rulePartialPayment(
     await transactionRef.update({
       partialPaymentAcceptance: null,
       updatedAt: FieldValue.serverTimestamp(),
+      ...logActivity(activityEntry({ type: "ruling_revoked", actor: actor, summary: "Accepted Partial Payment ruling revoked" })),
     });
     return null;
   }
@@ -125,6 +129,7 @@ export async function rulePartialPayment(
   await transactionRef.update({
     partialPaymentAcceptance: acceptance,
     updatedAt: FieldValue.serverTimestamp(),
+    ...logActivity(activityEntry({ type: "ruling_recorded", actor: actor, summary: `Accepted Partial Payment ruling recorded: ${trimmedReason}` })),
   });
   return acceptance;
 }

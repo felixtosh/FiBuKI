@@ -1111,7 +1111,13 @@
       "copy_suggested": "Kopie vorgeschlagen",
       "receipt_linked": "Zahlungsbeleg verknüpft",
       "receipt_unlinked": "Zahlungsbeleg-Verknüpfung entfernt",
-      "correction_linked": "Korrektur verknüpft"
+      "correction_linked": "Korrektur verknüpft",
+      "category_suggested": "Kategorie vorgeschlagen",
+      "transaction_edited": "Bearbeitet",
+      "reconciled": "Abgeglichen",
+      "reconciliation_suggested": "Abgleich vorgeschlagen",
+      "ruling_recorded": "Entscheidung erfasst",
+      "ruling_revoked": "Entscheidung widerrufen"
     }
   }
 }
