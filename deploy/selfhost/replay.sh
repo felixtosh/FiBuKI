@@ -35,7 +35,6 @@ OUT="$ROOT/reports/$PR"
 COMPOSE_DIR=/opt/fibuki/deploy/selfhost
 NODE_IMAGE=node:22-slim
 
-[[ -f "$ACCOUNTS" ]] || { echo "no accounts file at $ACCOUNTS" >&2; exit 2; }
 [[ -d "$SRC/head/functions" && -d "$SRC/base/functions" ]] || { echo "missing $SRC/{head,base}/functions" >&2; exit 2; }
 mkdir -p "$SETS" "$OUT"
 chmod 700 "$ROOT" "$SETS"
@@ -60,6 +59,20 @@ sheet() {
     "
 }
 
+# The accounts: the users an admin put in the benchmark in user management
+# (docs/benchmarking.md). The old hand-kept file is the fallback while that
+# list is empty, so a box set up before the switch keeps working.
+ACCOUNT_LIST="$ROOT/accounts.current"
+# Only "<uid> <label> <months>" lines: anything else the API logs on start is dropped.
+compose exec -T fibuki-api npm run -s selfhost:replay -- accounts 2>/dev/null \
+  | grep -E '^[A-Za-z0-9_-]{1,128} [^ ]+ [0-9]+$' > "$ACCOUNT_LIST" || : > "$ACCOUNT_LIST"
+if [[ ! -s "$ACCOUNT_LIST" ]]; then
+  [[ -f "$ACCOUNTS" ]] || { echo "no account is in the benchmark and there is no $ACCOUNTS" >&2; exit 2; }
+  echo "no account opted in through user management; using $ACCOUNTS"
+  cp "$ACCOUNTS" "$ACCOUNT_LIST"
+fi
+chmod 600 "$ACCOUNT_LIST"
+
 echo "replay PR #$PR: head $HEAD_SHA, base $BASE_SHA"
 # The accounts file is read on fd 3, not stdin: `compose exec -T` inherits the
 # loop's stdin and would swallow every line after the first account (the first
@@ -83,7 +96,7 @@ while read -r -u 3 uid label months; do
     sh -c "npm run -s selfhost:replay -- diff /out/$uid.base.sheet.json /out/$uid.head.sheet.json --md /out/$uid.md --json /out/$uid.json > /dev/null" \
     || true
   rm -f "$OUT/$uid.base.sheet.json" "$OUT/$uid.head.sheet.json"
-done 3< "$ACCOUNTS"
+done 3< "$ACCOUNT_LIST"
 
 # One summary for the PR comment and the admin page: counts per account, no rows.
 export PR HEAD_SHA BASE_SHA

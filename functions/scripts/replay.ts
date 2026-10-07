@@ -5,6 +5,13 @@
  *   npm run selfhost:replay -- export --user <uid> --out felix.replay-set.json [--label Felix] [--months 12] [--keep-text]
  *   npm run selfhost:replay -- sheet  --set felix.replay-set.json --out main.sheet.json [--label main]
  *   npm run selfhost:replay -- diff   main.sheet.json pr-660.sheet.json [--md report.md] [--json diff.json]
+ *   npm run selfhost:replay -- accounts                        (the opted-in accounts, for replay.sh)
+ *   npm run selfhost:replay -- verify --bundle bench-2026-10.json
+ *   npm run selfhost:replay -- sheet  --bundle bench-2026-10.json --account Felix --out main.sheet.json
+ *
+ * A bundle is one shared benchmark version, downloaded from fibuki.com/admin/replay
+ * (docs/benchmarking.md). `verify` checks its checksum and prints what it holds;
+ * `sheet --bundle` verifies it too, and runs one of its accounts.
  *
  * `export` reads one User's matching inputs from the deployment database
  * (DATABASE_URL) and writes nothing there. On fibuki.com:
@@ -26,6 +33,9 @@ import { getFirestore } from "firebase-admin/firestore";
 import { exportReplaySet, loadReplaySet, parseReplaySet, replaySetCounts } from "../src/replay/set";
 import { buildSheet, type Sheet } from "../src/replay/sheet";
 import { diffSheets, renderDiffMarkdown } from "../src/replay/diff";
+import { benchmarkAccounts, BENCHMARK_MONTHS, verifyBundle, type BenchmarkBundle } from "../src/benchmark/benchmarkData";
+import { accountLabel } from "../src/benchmark/benchmarkCallables";
+import type { ReplaySet } from "../src/replay/set";
 
 const USAGE = `replay: run the matcher over a real account on two commits and diff the decisions
 
@@ -33,9 +43,13 @@ Usage:
   replay export --user <uid> --out <set.json> [--label <name>] [--months <n>] [--keep-text]
                  --months: the most recent calendar months only (default 12; 0 = everything)
   replay sheet  --set <set.json> --out <sheet.json> [--label <name>]
+  replay sheet  --bundle <bench-YYYY-MM.json> --account <label|uid> --out <sheet.json> [--label <name>]
   replay diff   <base.sheet.json> <head.sheet.json> [--md <report.md>] [--json <diff.json>]
+  replay verify --bundle <bench-YYYY-MM.json>
+  replay accounts
+                 the accounts in the benchmark, one "<uid> <label> <months>" per line
 
-export needs DATABASE_URL (the deployment). sheet refuses it (embedded database only).`;
+export and accounts need DATABASE_URL (the deployment). sheet and verify refuse it (embedded database only).`;
 
 function flagValue(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -97,16 +111,56 @@ async function runExport(args: string[]): Promise<number> {
   return 0;
 }
 
+/** Read a bundle, verify its checksum, and say which version it is: the scorecard's first line. */
+async function readBundle(path: string): Promise<BenchmarkBundle> {
+  const bundle = verifyBundle(await readJson(path));
+  console.log(`${bundle.version} · checksum ${bundle.checksum.slice(0, 12)} · ${bundle.accounts.map((a) => a.label).join(", ")}`);
+  return bundle;
+}
+
+async function runVerify(args: string[]): Promise<number> {
+  const bundlePath = flagValue(args, "--bundle");
+  if (!bundlePath) usageError("--bundle <bench-YYYY-MM.json> is required");
+  const bundle = await readBundle(bundlePath);
+  for (const set of bundle.accounts) {
+    const counts = replaySetCounts(set);
+    console.log(`  ${set.label} (${set.userId}): ${counts.transactions} transactions, ${counts.files} files, ${counts.fileConnections} connections`);
+  }
+  console.log(`checksum verified; built ${bundle.builtAt}, last ${bundle.months} months per account`);
+  return 0;
+}
+
+async function runAccounts(): Promise<number> {
+  if (!process.env.DATABASE_URL) usageError("accounts reads the deployment: DATABASE_URL must be set");
+  for (const account of await benchmarkAccounts(getFirestore(), accountLabel)) {
+    // replay.sh reads "<uid> <label> [months]"; a label is one word there.
+    console.log(`${account.uid} ${account.label.replace(/\s+/g, "_")} ${BENCHMARK_MONTHS}`);
+  }
+  return 0;
+}
+
 async function runSheet(args: string[]): Promise<number> {
   const setPath = flagValue(args, "--set");
+  const bundlePath = flagValue(args, "--bundle");
   const out = flagValue(args, "--out");
-  if (!setPath) usageError("--set <set.json> is required");
+  if (!setPath && !bundlePath) usageError("--set <set.json> or --bundle <bench-YYYY-MM.json> is required");
   if (!out) usageError("--out <sheet.json> is required");
   if (process.env.DATABASE_URL) {
     usageError("sheet runs on the embedded database only; unset DATABASE_URL (it would load the set into a deployment)");
   }
 
-  const set = parseReplaySet(await readJson(setPath));
+  let set: ReplaySet;
+  if (bundlePath) {
+    const which = flagValue(args, "--account");
+    if (!which) usageError("--account <label|uid> is required with --bundle");
+    const bundle = await readBundle(bundlePath);
+    const found = bundle.accounts.find((a) => a.userId === which || a.label.toLowerCase() === which.toLowerCase());
+    if (!found) usageError(`no account "${which}" in ${bundle.version}; it holds ${bundle.accounts.map((a) => a.label).join(", ")}`);
+    // The version names the data, so two sheets from the same version diff.
+    set = { ...found, exportedAt: `${bundle.version}:${bundle.checksum.slice(0, 12)}` };
+  } else {
+    set = parseReplaySet(await readJson(setPath!));
+  }
   const db = getFirestore();
   await loadReplaySet(db, set);
   const sheet = await buildSheet(set.userId, {
@@ -156,6 +210,8 @@ async function main(): Promise<void> {
     if (command === "export") code = await runExport(args);
     else if (command === "sheet") code = await runSheet(args);
     else if (command === "diff") code = await runDiff(args);
+    else if (command === "verify") code = await runVerify(args);
+    else if (command === "accounts") code = await runAccounts();
     else usageError(`unknown command ${command}`);
   } catch (err) {
     console.error(`error: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);

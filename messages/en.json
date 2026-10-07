@@ -1014,6 +1014,33 @@
   },
 
   "admin": {
+    "benchmark": {
+      "title": "Benchmark",
+      "inBenchmark": "In the benchmark",
+      "inBenchmarkHint": "Their account goes into the shared benchmark data. Only with an agreement that allows it.",
+      "inBenchmarkBecause": "Allowed by: {note}",
+      "contractNote": "Agreement that allows it",
+      "contractNotePlaceholder": "e.g. Contract of 2026-10-07",
+      "addToBenchmark": "Add to the benchmark",
+      "cancel": "Cancel",
+      "mayDownload": "May download benchmark data",
+      "mayDownloadHint": "Every download is logged with the version.",
+      "versionsTitle": "Benchmark data",
+      "versionsHint": "Frozen snapshots of every account in the benchmark, the last 12 months each. Everyone who benchmarks uses the same version, so results are comparable.",
+      "build": "Build version",
+      "sinceNewest": "{n} hand decisions since {version}. Build a new version once enough have come in.",
+      "noVersions": "No version built yet. Add accounts in user management, then build one.",
+      "version": "Version",
+      "builtAt": "Built",
+      "accounts": "Accounts",
+      "checksum": "Checksum",
+      "size": "Size",
+      "downloadVersion": "Download",
+      "deleteVersion": "Delete",
+      "deleteConfirm": "Delete {version}? Copies already downloaded stay where they are.",
+      "downloadNotAllowed": "You may not download benchmark data. An admin sets it in user management.",
+      "downloadFailed": "The download failed."
+    },
     "replay": {
       "navLabel": "Replay",
       "title": "Replay",

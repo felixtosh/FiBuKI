@@ -94,6 +94,12 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   invoiceShares: denied,
   // ECB reference rates (#92): server-side only, and not user data at all.
   fxReferenceRates: denied,
+  // The shared benchmark data (functions/src/benchmark): consent records,
+  // versions with real bank lines, and the download log. Server-only; the
+  // admin callables and the download route are the only doors.
+  benchmarkMembers: denied,
+  benchmarkVersions: denied,
+  benchmarkDownloads: denied,
 };
 
 /**

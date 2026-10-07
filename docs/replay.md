@@ -156,6 +156,10 @@ What we decided about all of this, the results so far and the build order are in
 
 ## Where the code is
 
+- `functions/src/benchmark/`: the shared benchmark data (who is in it, versions, the
+  download), `app/api/admin/benchmark/route.ts`, and the cards in user management and on
+  `/admin/replay`. How to use it: [`benchmarking.md`](benchmarking.md).
+
 - `functions/src/replay/set.ts`: the set format, export and load.
 - `functions/src/replay/sheet.ts`: the sheet builder, on top of the matcher.
 - `functions/src/replay/diff.ts`: the verdicts and the Markdown report.

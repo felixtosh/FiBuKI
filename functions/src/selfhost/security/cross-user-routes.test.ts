@@ -532,3 +532,50 @@ describe("/api/admin/replay serves the caller's own reports only", () => {
     }
   });
 });
+
+describe("/api/admin/benchmark hands benchmark data only to people with the switch", () => {
+  beforeEach(async () => {
+    // A version that holds the victim's account, as one built from the benchmark would.
+    const { getStorage } = await import("../storage-shim");
+    await getStorage().bucket().file("benchmark/bench-2026-10.json").save(JSON.stringify({ accounts: [{ label: CANARY }] }));
+    await getFirestore().doc("benchmarkVersions/bench-2026-10").set({
+      version: "bench-2026-10",
+      builtAt: "2026-10-07T10:00:00.000Z",
+      checksum: "c",
+      sizeBytes: 1,
+      storagePath: "benchmark/bench-2026-10.json",
+      deletedAt: null,
+    });
+  });
+
+  it("refuses a user without the switch, listed or by version, and leaks nothing", async () => {
+    const { GET } = await import("@/app/api/admin/benchmark/route");
+    for (const query of ["", "?version=bench-2026-10", "?version=../../etc/passwd"]) {
+      const res = await GET(asUser(ATTACKER, `/api/admin/benchmark${query}`));
+      expect(res.status).toBe(403);
+      assertNoLeak(await res.text(), "admin/benchmark");
+    }
+    expect((await getFirestore().collection("benchmarkDownloads").get()).empty).toBe(true);
+  });
+
+  it("refuses a request without a user, and an API key that is not one", async () => {
+    const { GET } = await import("@/app/api/admin/benchmark/route");
+    expect((await GET(anonymous("/api/admin/benchmark?version=bench-2026-10"))).status).toBe(401);
+    const { NextRequest } = await import("next/server");
+    const withKey = new NextRequest(new URL("/api/admin/benchmark?version=bench-2026-10", "https://web.test"), {
+      headers: { Authorization: "Bearer fk_not_a_real_key" },
+    });
+    const res = await GET(withKey);
+    expect(res.status).toBe(401);
+    assertNoLeak(await res.text(), "admin/benchmark key");
+  });
+
+  it("a user with the switch takes the version, and the download is logged", async () => {
+    await getFirestore().doc(`benchmarkMembers/${ATTACKER}`).set({ uid: ATTACKER, mayDownload: true });
+    const { GET } = await import("@/app/api/admin/benchmark/route");
+    const res = await GET(asUser(ATTACKER, "/api/admin/benchmark?version=bench-2026-10"));
+    expect(res.status).toBe(200);
+    const log = await getFirestore().collection("benchmarkDownloads").get();
+    expect(log.docs.map((d) => d.data())).toEqual([expect.objectContaining({ uid: ATTACKER, version: "bench-2026-10", via: "login" })]);
+  });
+});
