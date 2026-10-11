@@ -7,9 +7,10 @@ the map around it.
 
 ## What runs today: the replay
 
-Put the **`replay`** label on a PR. Every push to it then runs the matcher over each
+Every push to a PR that changes the matching code runs the matcher over each
 benchmark account on fibuki.com, once on the PR's base and once on its head, and
-posts one comment with counts per account:
+posts one comment with counts per account. Any other PR runs it once it carries the
+**`replay`** label.
 
 | Mark | Meaning |
 |---|---|

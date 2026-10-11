@@ -1,21 +1,23 @@
 # Replay a PR against the real accounts on the box (docs/replay.md).
 #
-# Put the `replay` label on a PR, and every push to it from then on runs the
-# matcher over each configured account on fibuki.com, once on the PR's base
-# commit and once on its head, and posts the counts as one PR comment
-# (updated in place). The data never leaves the box: the runner ships the two
-# functions/ trees in and gets a JSON of counts back. The full reports, with
-# bank lines in them, stay under /opt/fibuki-replay/reports and are read on
-# fibuki.com/admin/replay by each account's owner.
+# Runs by itself on every push to a PR that changes the matching code (the
+# paths in MATCHING_PATHS below), and on any PR that carries the `replay`
+# label. It runs the matcher over each benchmark account on fibuki.com, once
+# on the PR's base commit and once on its head, and posts the counts as one PR
+# comment (updated in place). It warns, it never blocks: the check passes
+# whatever the verdict. The data never leaves the box: the runner ships the
+# two functions/ trees in and gets a JSON of counts back. The full reports,
+# with bank lines in them, stay under /opt/fibuki-replay/reports and are read
+# on fibuki.com/admin/replay by each account's owner.
 #
-# Same key and host as deploy-hetzner.yml. A fork PR never runs: GitHub hands
-# no secrets to it, and the job condition says so up front.
+# Same key and host as deploy-hetzner.yml. A fork PR and a Dependabot PR never
+# run: GitHub hands neither the secrets, and the job condition says so up front.
 
 name: Replay
 
 on:
   pull_request:
-    types: [labeled, synchronize]
+    types: [opened, reopened, synchronize, labeled]
 
 concurrency:
   group: replay-${{ github.event.pull_request.number }}
@@ -26,11 +28,49 @@ permissions:
   pull-requests: write
 
 jobs:
+  # Whether this push needs a replay: the label, or a change to what the
+  # replay's sheet runs (the matcher, its inputs and the writers it reads).
+  decide:
+    name: Does this PR change matching?
+    if: >-
+      ${{ github.event.pull_request.head.repo.full_name == github.repository &&
+          github.actor != 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.files.outputs.run }}
+    steps:
+      - name: Read the changed files
+        id: files
+        uses: actions/github-script@v8
+        env:
+          MATCHING_PATHS: >-
+            ^functions/src/(matching|fileConnections|partners|fileFacts|receiptPairs|replay)/
+            ^functions/src/utils/(partner-matcher|filePartnerMatcher|category-matcher|identity-matcher)\.ts$
+        with:
+          script: |
+            const labelled = context.payload.pull_request.labels.some((l) => l.name === "replay");
+            if (context.payload.action === "labeled" && context.payload.label?.name !== "replay") {
+              core.setOutput("run", "false");
+              return;
+            }
+            const patterns = process.env.MATCHING_PATHS.split(/\s+/).filter(Boolean).map((p) => new RegExp(p));
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const touched = files
+              .map((f) => f.filename)
+              .filter((name) => !/\.test\.ts$|__tests__\//.test(name))
+              .filter((name) => patterns.some((p) => p.test(name)));
+            core.info(touched.length ? `matching files changed:\n${touched.join("\n")}` : "no matching files changed");
+            core.setOutput("run", labelled || touched.length > 0 ? "true" : "false");
+
   replay:
     name: Replay on fibuki.com
-    if: >-
-      ${{ contains(github.event.pull_request.labels.*.name, 'replay') &&
-          github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: decide
+    if: ${{ needs.decide.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 30

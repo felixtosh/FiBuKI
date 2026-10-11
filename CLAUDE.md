@@ -386,8 +386,9 @@ callables do not already allow.
 
 ### Matching changes run the replay
 
-A PR that changes how Files, Transactions or Partners are matched gets the `replay`
-label and its counts in the Evidence section. It warns, it never blocks. How it works:
+A PR that changes how Files, Transactions or Partners are matched runs the replay by
+itself (the `replay` label forces it on any other PR); put its counts in the Evidence
+section. It warns, it never blocks. How it works:
 [`docs/replay.md`](docs/replay.md); results, decisions and what to build next:
 [`docs/benchmarking.md`](docs/benchmarking.md).
 

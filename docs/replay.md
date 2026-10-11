@@ -96,8 +96,10 @@ the Evidence section.
 
 The three steps above are the engine. On fibuki.com they run by themselves:
 
-1. Put the **`replay`** label on a PR. Every push to that PR from then on runs the
-   replay (`.github/workflows/replay.yml`).
+1. A PR that changes the matching code (`functions/src/matching`, `fileConnections`,
+   `partners`, `fileFacts`, `receiptPairs`, `replay` and the matcher utilities) runs the
+   replay on every push by itself (`.github/workflows/replay.yml`). Any other PR runs it
+   once the **`replay`** label is on it.
 2. The workflow ships the PR's and the base commit's `functions/` trees to the box and
    runs `deploy/selfhost/replay.sh` there. The script exports every account listed in
    `/opt/fibuki-replay/accounts` fresh through the running API container (read-only),
