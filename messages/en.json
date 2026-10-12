@@ -1174,36 +1174,18 @@
       "magicRunning": "The AI agent is running",
       "step": "Step {n}: {label}",
       "methods": {
-        "vat": {
-          "label": "VAT ID",
-          "description": {
-            "filePartner": "The VAT ID on the document, against your Partners, then the global list, then the EU VAT registry (VIES)."
-          }
-        },
         "rules": {
           "label": "Rules",
           "description": {
-            "filePartner": "IBAN, website, email domain and name against your Partners and the global list.",
-            "transactionPartner": "IBAN, VAT ID, website, name and learned patterns against your Partners and the global list.",
-            "connection": "Amount, date, Partner and reference, scored; a sure match connects on its own."
+            "filePartner": "No AI: VAT ID (your Partners, the global list, the EU registry), IBAN, website, email domain and name. When nothing else found it, the name printed on the document.",
+            "transactionPartner": "No AI: IBAN, VAT ID, website, name and learned patterns against your Partners and the global list, or the Partner of the connected Files.",
+            "connection": "No AI: amount, date, Partner and reference, scored; a sure match connects on its own."
           }
         },
         "llm": {
           "label": "LLM",
           "description": {
             "filePartner": "A model looks the company up when the rules found nothing."
-          }
-        },
-        "name": {
-          "label": "Name",
-          "description": {
-            "filePartner": "When the lookup found nothing either: a new Partner from the name printed on the document."
-          }
-        },
-        "file": {
-          "label": "File",
-          "description": {
-            "transactionPartner": "The Partner of the connected Files, when they all name the same one."
           }
         },
         "magic": {
@@ -1222,6 +1204,12 @@
             "connection": "You: your own pick, or a suggestion you accepted."
           }
         }
+      },
+      "ruleSteps": {
+        "vat": "Found by its VAT ID.",
+        "rules": "Found by IBAN, website, email domain, name or a learned pattern.",
+        "name": "A new Partner from the name printed on the document.",
+        "file": "Taken from the connected Files."
       }
     }
   }

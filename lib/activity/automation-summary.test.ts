@@ -68,14 +68,14 @@ describe("summarizeAutomations", () => {
 
   it("lists the ladder's methods in escalation order and counts only the section's lines", () => {
     const s = summarizeAutomations(log, "filePartner", true);
-    expect(s.methods).toEqual(["vat", "rules", "llm", "name", "magic", "manual"]);
-    expect(s.counts).toEqual({ vat: 1, rules: 1, llm: 0, name: 0, magic: 0, manual: 0 });
+    expect(s.cells).toEqual(["rules", "llm", "magic", "manual"]);
+    expect(s.counts).toEqual({ rules: 2, llm: 0, magic: 0, manual: 0 });
     expect(summarizeAutomations(log, "connection", true).counts).toEqual({ rules: 0, magic: 1, manual: 0 });
   });
 
   it("marks the method of the latest match, and none without a match now", () => {
-    expect(summarizeAutomations(log, "filePartner", true).matchedBy).toBe("vat");
-    expect(summarizeAutomations(log, "connection", true).matchedBy).toBe("magic");
+    expect(summarizeAutomations(log, "filePartner", true)).toMatchObject({ matchedBy: "rules", matchStep: "vat" });
+    expect(summarizeAutomations(log, "connection", true)).toMatchObject({ matchedBy: "magic", matchStep: null });
     expect(summarizeAutomations(log, "filePartner", false).matchedBy).toBeNull();
   });
 
@@ -94,7 +94,7 @@ describe("summarizeAutomations", () => {
       entry({ type: "partner_assigned", actor: "auto", forPartnerId: "p1", summary: 'Partner "A" assigned by its VAT ID', ranAt: at("2026-10-01T09:00:00Z") }),
       entry({ type: "partner_assigned", actor: "manual", forPartnerId: "p1", summary: 'Partner "A" confirmed', ranAt: at("2026-10-01T09:05:00Z") }),
     ];
-    expect(summarizeAutomations(confirmed, "filePartner", true).matchedBy).toBe("vat");
+    expect(summarizeAutomations(confirmed, "filePartner", true)).toMatchObject({ matchedBy: "rules", matchStep: "vat" });
     const reassigned = [
       ...confirmed,
       entry({ type: "partner_removed", actor: "manual", ranAt: at("2026-10-01T09:06:00Z") }),

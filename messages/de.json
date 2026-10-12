@@ -1174,36 +1174,18 @@
       "magicRunning": "Der KI-Agent läuft",
       "step": "Schritt {n}: {label}",
       "methods": {
-        "vat": {
-          "label": "UID",
-          "description": {
-            "filePartner": "Die UID auf dem Beleg, gegen deine Partner, dann die globale Liste, dann das EU-Register (VIES)."
-          }
-        },
         "rules": {
           "label": "Regeln",
           "description": {
-            "filePartner": "IBAN, Website, E-Mail-Domain und Name gegen deine Partner und die globale Liste.",
-            "transactionPartner": "IBAN, UID, Website, Name und gelernte Muster gegen deine Partner und die globale Liste.",
-            "connection": "Betrag, Datum, Partner und Referenz, bewertet; ein sicherer Treffer verknüpft von selbst."
+            "filePartner": "Ohne KI: UID (deine Partner, die globale Liste, das EU-Register), IBAN, Website, E-Mail-Domain und Name. Wenn sonst nichts passte, der Name auf dem Beleg.",
+            "transactionPartner": "Ohne KI: IBAN, UID, Website, Name und gelernte Muster gegen deine Partner und die globale Liste, oder der Partner der verknüpften Belege.",
+            "connection": "Ohne KI: Betrag, Datum, Partner und Referenz, bewertet; ein sicherer Treffer verknüpft von selbst."
           }
         },
         "llm": {
           "label": "LLM",
           "description": {
             "filePartner": "Ein Modell schlägt das Unternehmen nach, wenn die Regeln nichts gefunden haben."
-          }
-        },
-        "name": {
-          "label": "Name",
-          "description": {
-            "filePartner": "Wenn auch die Suche nichts fand: ein neuer Partner aus dem Namen auf dem Beleg."
-          }
-        },
-        "file": {
-          "label": "Beleg",
-          "description": {
-            "transactionPartner": "Der Partner der verknüpften Belege, wenn alle denselben nennen."
           }
         },
         "magic": {
@@ -1222,6 +1204,12 @@
             "connection": "Du: deine eigene Wahl oder ein Vorschlag, den du angenommen hast."
           }
         }
+      },
+      "ruleSteps": {
+        "vat": "Über die UID gefunden.",
+        "rules": "Über IBAN, Website, E-Mail-Domain, Name oder ein gelerntes Muster gefunden.",
+        "name": "Ein neuer Partner aus dem Namen auf dem Beleg.",
+        "file": "Von den verknüpften Belegen übernommen."
       }
     }
   }

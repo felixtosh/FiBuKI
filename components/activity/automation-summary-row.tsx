@@ -1,22 +1,19 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Bot, FileText, Fingerprint, Loader2, Paperclip, User, WandSparkles, Zap } from "lucide-react";
+import { Bot, Loader2, User, WandSparkles, Zap } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   summarizeAutomations,
+  type AutomationCell,
   type AutomationLadder,
-  type AutomationMethod,
 } from "@/lib/activity/automation-summary";
 import type { AutomationHistoryEntry } from "@/types/transaction";
 import { cn } from "@/lib/utils";
 
-const METHOD_ICON: Record<AutomationMethod, typeof Zap> = {
-  vat: Fingerprint,
+const CELL_ICON: Record<AutomationCell, typeof Zap> = {
   rules: Zap,
   llm: Bot,
-  name: FileText,
-  file: Paperclip,
   magic: WandSparkles,
   manual: User,
 };
@@ -56,7 +53,7 @@ export function AutomationSummaryRow({
 
   return (
     <div className={cn("inline-flex h-6 items-stretch overflow-hidden rounded-md bg-muted", className)}>
-      {summary.methods.map((kind, index) => {
+      {summary.cells.map((kind, index) => {
         const count = summary.counts[kind] ?? 0;
         const isMatch = summary.matchedBy === kind;
         const isAction = kind === "magic" && !!onMagic;
@@ -91,6 +88,9 @@ export function AutomationSummaryRow({
                 {t("ran", { n: count })}
                 {isMatch ? ` · ${t("madeMatch")}` : null}
               </p>
+              {isMatch && summary.matchStep ? (
+                <p className="mt-1">{t(`ruleSteps.${summary.matchStep}`)}</p>
+              ) : null}
               {isAction ? <p className="mt-1 font-medium">{magicBusy ? t("magicRunning") : t("runMagic")}</p> : null}
             </TooltipContent>
           </Tooltip>
@@ -100,8 +100,8 @@ export function AutomationSummaryRow({
   );
 }
 
-function CellContent({ kind, count, busy }: { kind: AutomationMethod; count: number; busy: boolean }) {
-  const Icon = busy ? Loader2 : METHOD_ICON[kind];
+function CellContent({ kind, count, busy }: { kind: AutomationCell; count: number; busy: boolean }) {
+  const Icon = busy ? Loader2 : CELL_ICON[kind];
   return (
     <>
       <Icon className={cn("h-3 w-3 shrink-0", busy && "animate-spin")} />

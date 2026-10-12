@@ -12,18 +12,37 @@ import { toDateSafe } from "../../functions/src/utils/toDateSafe";
  * a step was tried unless the log says so.
  */
 
-/** Every method a ladder can show. */
+/**
+ * The step a log line came from. `vat`, `name` and `file` are rules too; the
+ * ladder shows them in the Rules cell and names them in its tooltip.
+ */
 export type AutomationMethod = "vat" | "rules" | "llm" | "name" | "file" | "magic" | "manual";
 
-/** A section's ladder, and the order its methods escalate in. */
+/** A ladder cell: free rules, a one-off model call, the agent, a person. */
+export type AutomationCell = "rules" | "llm" | "magic" | "manual";
+
+/** The rule steps the Rules cell's tooltip can name. */
+export type RuleStep = "vat" | "rules" | "name" | "file";
+
+const CELL_OF: Record<AutomationMethod, AutomationCell> = {
+  vat: "rules",
+  rules: "rules",
+  name: "rules",
+  file: "rules",
+  llm: "llm",
+  magic: "magic",
+  manual: "manual",
+};
+
+/** A section's ladder, in the order it escalates. */
 export const LADDERS = {
-  /** matchFilePartner: VAT ID (own, global, VIES) → rules → AI lookup → printed name → agent. */
-  filePartner: ["vat", "rules", "llm", "name", "magic", "manual"],
-  /** Rules pass (with learned patterns) → the connected Files → agent (the company check queues it). */
-  transactionPartner: ["rules", "file", "magic", "manual"],
+  /** matchFilePartner: rules (VAT ID, VIES, IBAN, website, name; the printed name last) → AI lookup → agent. */
+  filePartner: ["rules", "llm", "magic", "manual"],
+  /** Rules pass (learned patterns, the connected Files) → agent (the company check queues it). */
+  transactionPartner: ["rules", "magic", "manual"],
   /** Scoring and auto-connect → the receipt-search agent. Files and Transactions alike. */
   connection: ["rules", "magic", "manual"],
-} as const satisfies Record<string, readonly AutomationMethod[]>;
+} as const satisfies Record<string, readonly AutomationCell[]>;
 
 export type AutomationLadder = keyof typeof LADDERS;
 
@@ -94,10 +113,12 @@ export function automationMethodOf(
 }
 
 export interface AutomationSummary {
-  methods: readonly AutomationMethod[];
-  counts: Partial<Record<AutomationMethod, number>>;
-  /** The method whose match stands, or null when nothing is matched. */
-  matchedBy: AutomationMethod | null;
+  cells: readonly AutomationCell[];
+  counts: Partial<Record<AutomationCell, number>>;
+  /** The cell whose match stands, or null when nothing is matched. */
+  matchedBy: AutomationCell | null;
+  /** When Rules made the match: which rule. */
+  matchStep: RuleStep | null;
 }
 
 /**
@@ -110,10 +131,10 @@ export function summarizeAutomations(
   ladder: AutomationLadder,
   matched: boolean
 ): AutomationSummary {
-  const methods = LADDERS[ladder];
+  const cells = LADDERS[ladder];
   const types = ladder === "connection" ? CONNECTION_TYPES : PARTNER_TYPES;
-  const counts: Partial<Record<AutomationMethod, number>> = {};
-  for (const method of methods) counts[method] = 0;
+  const counts: Partial<Record<AutomationCell, number>> = {};
+  for (const cell of cells) counts[cell] = 0;
 
   const log = [...(entries ?? [])].sort(
     (a, b) => (toDateSafe(a.ranAt)?.getTime() ?? 0) - (toDateSafe(b.ranAt)?.getTime() ?? 0)
@@ -141,7 +162,7 @@ export function summarizeAutomations(
     // A queue marker is not a run: the run logs itself when it ends.
     if (entry.status === "pending" || entry.type === "company_check") continue;
     const method = automationMethodOf(entry, ladder);
-    counts[method] = (counts[method] ?? 0) + 1;
+    counts[CELL_OF[method]] = (counts[CELL_OF[method]] ?? 0) + 1;
 
     if (entry.type === "partner_removed") {
       credit = null;
@@ -159,5 +180,7 @@ export function summarizeAutomations(
     credit = { method: creditMethod, partnerId: entry.forPartnerId ?? undefined };
   }
 
-  return { methods, counts, matchedBy: matched && credit ? credit.method : null };
+  if (!matched || !credit) return { cells, counts, matchedBy: null, matchStep: null };
+  const matchedBy = CELL_OF[credit.method];
+  return { cells, counts, matchedBy, matchStep: matchedBy === "rules" ? (credit.method as RuleStep) : null };
 }
