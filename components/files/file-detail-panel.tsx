@@ -32,7 +32,6 @@ import {
   Trash2,
   Plus,
   RotateCcw,
-  Info,
   Scissors,
   History,
   MoreHorizontal,
@@ -44,11 +43,6 @@ import { useAuthenticatedDownload } from "@/hooks/use-authenticated-download";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { PanelHeader, FieldRow } from "@/components/ui/detail-panel-primitives";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
@@ -591,54 +585,6 @@ function FileDetailPanelInner({
                     }
                     magicBusy={isWandActive}
                   />
-                </div>
-                <div className="flex items-center gap-1 empty:hidden">
-                  {/* Debug info button */}
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-6 w-6">
-                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                      </Button>
-                    </PopoverTrigger>
-                  <PopoverContent className="w-80 text-xs" align="end">
-                    <div className="space-y-2">
-                      <p className="font-medium">Partner Match Debug</p>
-                      <div className="space-y-1 text-muted-foreground">
-                        <p><span className="font-medium text-foreground">Matched By:</span> {file.partnerMatchedBy || "none"}</p>
-                        <p><span className="font-medium text-foreground">Confidence:</span> {file.partnerMatchConfidence ?? "—"}%</p>
-                        <p><span className="font-medium text-foreground">Partner ID:</span> {file.partnerId || "none"}</p>
-                        <p><span className="font-medium text-foreground">Partner Type:</span> {file.partnerType || "none"}</p>
-                      </div>
-                      {file.partnerSuggestions && file.partnerSuggestions.length > 0 && (
-                        <>
-                          <Separator className="my-2" />
-                          <p className="font-medium">Suggestions ({file.partnerSuggestions.length})</p>
-                          <div className="space-y-1.5">
-                            {file.partnerSuggestions.map((s, i) => (
-                              <div key={i} className="text-muted-foreground bg-muted/50 p-1.5 rounded">
-                                <p><span className="font-medium text-foreground">#{i+1}:</span> {s.partnerId}</p>
-                                <p>Confidence: {s.confidence}% | Source: {s.source}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                      {file.extractedPartner && (
-                        <>
-                          <Separator className="my-2" />
-                          <p className="font-medium">Extracted Data</p>
-                          <div className="space-y-1 text-muted-foreground">
-                            <p><span className="font-medium text-foreground">Partner:</span> {file.extractedPartner}</p>
-                            {file.extractedVatId && <p><span className="font-medium text-foreground">VAT ID:</span> {file.extractedVatId}</p>}
-                            {file.extractedIban && <p><span className="font-medium text-foreground">IBAN:</span> {file.extractedIban}</p>}
-                            {file.invoiceDirection && <p><span className="font-medium text-foreground">Direction:</span> {file.invoiceDirection}</p>}
-                            {file.matchedUserAccount && <p><span className="font-medium text-foreground">User Account:</span> {file.matchedUserAccount}</p>}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </PopoverContent>
-                </Popover>
                 </div>
               </div>
 
