@@ -264,10 +264,11 @@ export function TransactionDetails({
 
       {/* Partner section */}
       <div className="border-t pt-3 mt-3 -mx-4 px-4" data-onboarding="partner-section">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex flex-1 items-center gap-2">
             <h3 className="text-sm font-semibold">Partner</h3>
             <AutomationSummaryRow
+              className="ml-auto"
               entries={transaction.automationHistory}
               area="partner"
               matched={!!transaction.partnerId}

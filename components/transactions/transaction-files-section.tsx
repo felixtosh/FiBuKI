@@ -729,12 +729,12 @@ export function TransactionFilesSection({
     <TooltipProvider>
       <div className="space-y-3" data-onboarding="files-section">
         {/* Section Header with Search and History Buttons */}
-        <div className="flex items-center justify-between relative z-10">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between gap-2 relative z-10">
+          <div className="flex flex-1 items-center gap-2">
             <h3 className="text-sm font-semibold">File</h3>
-            {headerAction}
+            {headerAction ? <div className="ml-auto">{headerAction}</div> : null}
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 empty:hidden">
             {/* Browser replay button — shown when recipe exists + extension installed + no files */}
             {!hasFiles && !transaction.noReceiptCategoryId && extensionInstalled && transaction.partnerId && replayMode && partnerRecipes && partnerRecipes.length > 0 && (
               <Tooltip>
