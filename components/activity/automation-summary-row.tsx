@@ -1,8 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Bot, User, WandSparkles, Zap } from "lucide-react";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Bot, Loader2, User, WandSparkles, Zap } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AUTOMATION_KINDS,
@@ -26,8 +25,10 @@ interface AutomationSummaryRowProps {
   area: AutomationArea;
   /** Whether the item holds a match in this area right now. */
   matched: boolean;
-  /** Opens the activity log, where every counted line is. */
-  onOpenLog?: () => void;
+  /** Starts the AI agent for this area. Without it the Magic cell is a count like the others. */
+  onMagic?: () => void;
+  /** The agent is running for this item. */
+  magicBusy?: boolean;
   className?: string;
 }
 
@@ -35,36 +36,47 @@ interface AutomationSummaryRowProps {
  * Which kinds of automation ran on a Partner or a connections section, how
  * often, and which one made the standing match (green). Counted from the
  * activity log, never from a second source (lib/activity/automation-summary).
+ *
+ * The Magic cell is also the section's wand: it starts the AI agent.
  */
-export function AutomationSummaryRow({ entries, area, matched, onOpenLog, className }: AutomationSummaryRowProps) {
+export function AutomationSummaryRow({
+  entries,
+  area,
+  matched,
+  onMagic,
+  magicBusy = false,
+  className,
+}: AutomationSummaryRowProps) {
   const t = useTranslations("activity.summary");
   const summary = summarizeAutomations(entries, area, matched);
 
   return (
-    <div className={cn("flex items-center gap-1", className)}>
+    <div className={cn("inline-flex h-6 items-stretch divide-x overflow-hidden rounded-md border", className)}>
       {AUTOMATION_KINDS.map((kind) => {
-        const Icon = KIND_ICON[kind];
         const count = summary.counts[kind];
         const isMatch = summary.matchedBy === kind;
+        const isAction = kind === "magic" && !!onMagic;
+        const cellClass = cn(
+          "inline-flex w-11 items-center justify-center gap-1 text-xs tabular-nums",
+          isMatch
+            ? "bg-complete-row text-amount-positive"
+            : count !== 0
+              ? "text-foreground/80"
+              : "text-muted-foreground/50",
+          isAction && "cursor-pointer text-foreground transition-colors hover:bg-muted disabled:cursor-default disabled:opacity-60"
+        );
         return (
           <Tooltip key={kind}>
             <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={onOpenLog}
-                aria-label={`${t(`kinds.${kind}.label`)}: ${count}`}
-                className={cn(
-                  "inline-flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border px-2 text-xs tabular-nums transition-colors",
-                  isMatch
-                    ? "border-amount-positive/40 bg-complete-row text-amount-positive"
-                    : count > 0
-                      ? "text-foreground/80 hover:bg-muted"
-                      : "text-muted-foreground/50 hover:bg-muted"
-                )}
-              >
-                <Icon className="h-3.5 w-3.5 shrink-0" />
-                <span>{count}</span>
-              </button>
+              {isAction ? (
+                <button type="button" onClick={onMagic} disabled={magicBusy} className={cellClass}>
+                  <CellContent kind={kind} count={count} busy={magicBusy} />
+                </button>
+              ) : (
+                <span tabIndex={0} className={cellClass}>
+                  <CellContent kind={kind} count={count} busy={false} />
+                </span>
+              )}
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-64 text-xs">
               <p className="font-medium">{t(`kinds.${kind}.label`)}</p>
@@ -73,29 +85,21 @@ export function AutomationSummaryRow({ entries, area, matched, onOpenLog, classN
                 {t("ran", { n: count })}
                 {isMatch ? ` · ${t("madeMatch")}` : null}
               </p>
+              {isAction ? <p className="mt-1 font-medium">{magicBusy ? t("magicRunning") : t("runMagic")}</p> : null}
             </TooltipContent>
           </Tooltip>
         );
       })}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="ml-1 inline-flex h-7 items-center px-1">
-            <Checkbox
-              checked={matched}
-              tabIndex={-1}
-              aria-readonly
-              aria-label={matched ? t(`matched.${area}`) : t(`unmatched.${area}`)}
-              className={cn(
-                "pointer-events-none",
-                matched && "border-amount-positive data-[state=checked]:bg-amount-positive"
-              )}
-            />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs">
-          {matched ? t(`matched.${area}`) : t(`unmatched.${area}`)}
-        </TooltipContent>
-      </Tooltip>
     </div>
+  );
+}
+
+function CellContent({ kind, count, busy }: { kind: AutomationKind; count: number; busy: boolean }) {
+  const Icon = busy ? Loader2 : KIND_ICON[kind];
+  return (
+    <>
+      <Icon className={cn("h-3 w-3 shrink-0", busy && "animate-spin")} />
+      <span>{count}</span>
+    </>
   );
 }

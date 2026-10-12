@@ -1084,7 +1084,6 @@ export function InvoiceDetailPanel({
                 onEnterEditMode={() => setMode("edit")}
                 correctionNumber={correction?.number}
                 onOpenInvoice={openInvoice}
-                onOpenActivityLog={() => setShowActivityLog(true)}
               />
             ) : (
               <EditSections
@@ -1367,7 +1366,6 @@ interface ViewSectionsProps {
   /** Number of the Invoice Correction that cancels this invoice, once loaded. */
   correctionNumber?: string;
   onOpenInvoice: (invoiceId: string) => void;
-  onOpenActivityLog: () => void;
 }
 
 function ViewSections({
@@ -1390,7 +1388,6 @@ function ViewSections({
   onEnterEditMode,
   correctionNumber,
   onOpenInvoice,
-  onOpenActivityLog,
 }: ViewSectionsProps) {
   const t = useTranslations("invoices.correction");
   const lineItemCount = form.lineItems.filter(
@@ -1516,7 +1513,6 @@ function ViewSections({
           entries={issuedFile.automationHistory}
           area="connection"
           matched={(issuedFile.transactionIds?.length ?? 0) > 0}
-          onOpenLog={onOpenActivityLog}
         />
       ) : (
         <div className="space-y-2">

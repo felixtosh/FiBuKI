@@ -26,7 +26,7 @@ import { PartnerPill } from "@/components/partners/partner-pill";
 import { AutomationSummaryRow } from "@/components/activity/automation-summary-row";
 import { FieldRow } from "@/components/ui/detail-panel-primitives";
 import { usePartnerSuggestions, useAssignedPartner } from "@/hooks/use-partner-suggestions";
-import { Plus, ExternalLink, Loader2, WandSparkles } from "lucide-react";
+import { Plus, ExternalLink, Loader2 } from "lucide-react";
 import { ShowMoreButton } from "@/components/ui/show-more-button";
 import { cn } from "@/lib/utils";
 import { functions } from "@/lib/firebase/config";
@@ -46,8 +46,6 @@ interface TransactionDetailsProps {
   ) => Promise<void>;
   onRemovePartner: () => Promise<void>;
   onCreatePartner: (data: { name: string; aliases?: string[]; vatId?: string; ibans?: string[]; website?: string; country?: string; notes?: string }, options?: { skipAutoMatch?: boolean }) => Promise<string>;
-  /** Opens the activity log from the automation summary row. */
-  onOpenActivityLog?: () => void;
 }
 
 export function TransactionDetails({
@@ -58,7 +56,6 @@ export function TransactionDetails({
   onAssignPartner,
   onRemovePartner,
   onCreatePartner,
-  onOpenActivityLog,
 }: TransactionDetailsProps) {
   const router = useRouter();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
@@ -269,23 +266,6 @@ export function TransactionDetails({
       <div className="border-t pt-3 mt-3 -mx-4 px-4" data-onboarding="partner-section">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-medium">Partner</h3>
-          {/* Show search button only when no partner assigned */}
-          {!assignedPartner && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              onClick={() => startPartnerSearch(transaction.id)}
-              disabled={isWandActive}
-              title="AI search for partner"
-            >
-              {isWandActive ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <WandSparkles className="h-3.5 w-3.5" />
-              )}
-            </Button>
-          )}
         </div>
 
         <FieldRow label="Connect" labelWidth="w-32">
@@ -340,7 +320,8 @@ export function TransactionDetails({
           entries={transaction.automationHistory}
           area="partner"
           matched={!!transaction.partnerId}
-          onOpenLog={onOpenActivityLog}
+          onMagic={!assignedPartner ? () => startPartnerSearch(transaction.id) : undefined}
+          magicBusy={isWandActive}
         />
       </div>
 

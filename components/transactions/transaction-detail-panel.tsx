@@ -314,7 +314,6 @@ export function TransactionDetailPanel({
             onAssignPartner={handleAssignPartner}
             onRemovePartner={handleRemovePartner}
             onCreatePartner={handleCreatePartner}
-            onOpenActivityLog={() => setShowHistoryPanel(true)}
           />
 
           {/* A refund and what it corrects (#564) */}
@@ -330,7 +329,6 @@ export function TransactionDetailPanel({
               transaction={transaction}
               isSearching={isSearching || isReceiptSearchRunning}
               searchLabel={strategyLabel}
-              onTriggerSearch={triggerSearch}
               onOpenConnectFile={onOpenConnectFile}
               onPreviewSuggestedFile={onPreviewSuggestedFile}
               isConnectFileOpen={isConnectFileOpen}
@@ -347,7 +345,12 @@ export function TransactionDetailPanel({
               entries={transaction.automationHistory}
               area="connection"
               matched={(transaction.fileIds?.length ?? 0) > 0}
-              onOpenLog={() => setShowHistoryPanel(true)}
+              onMagic={
+                (transaction.fileIds?.length ?? 0) === 0 && !transaction.noReceiptCategoryId
+                  ? triggerSearch
+                  : undefined
+              }
+              magicBusy={isSearching || isReceiptSearchRunning}
             />
           </div>
         </div>

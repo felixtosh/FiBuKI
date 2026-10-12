@@ -1168,14 +1168,6 @@
     "summary": {
       "ran": "{n, plural, =0 {Nie gelaufen} one {Einmal gelaufen} other {# Mal gelaufen}}",
       "madeMatch": "hat die aktuelle Zuordnung gemacht",
-      "matched": {
-        "partner": "Partner zugeordnet",
-        "connection": "Verknüpft"
-      },
-      "unmatched": {
-        "partner": "Noch kein Partner",
-        "connection": "Noch nicht verknüpft"
-      },
       "kinds": {
         "auto": {
           "label": "Auto",
@@ -1194,8 +1186,8 @@
         "magic": {
           "label": "Magic",
           "description": {
-            "partner": "Der KI-Agent, gestartet über den Zauberstab oder den Chat.",
-            "connection": "Der KI-Agent, gestartet über den Zauberstab oder den Chat."
+            "partner": "Der KI-Agent, gestartet über diesen Button oder den Chat.",
+            "connection": "Der KI-Agent, gestartet über diesen Button oder den Chat."
           }
         },
         "manual": {
@@ -1205,7 +1197,9 @@
             "connection": "Du: deine eigene Wahl oder ein Vorschlag, den du angenommen hast."
           }
         }
-      }
+      },
+      "runMagic": "Klicken, um den KI-Agenten zu starten",
+      "magicRunning": "Der KI-Agent läuft"
     }
   }
 }

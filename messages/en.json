@@ -1166,16 +1166,8 @@
       "ruling_revoked": "Ruling revoked"
     },
     "summary": {
-      "ran": "Ran {n, plural, =0 {never} one {once} other {# times}}",
+      "ran": "{n, plural, =0 {Never ran} one {Ran once} other {Ran # times}}",
       "madeMatch": "made the current match",
-      "matched": {
-        "partner": "Partner assigned",
-        "connection": "Connected"
-      },
-      "unmatched": {
-        "partner": "No Partner yet",
-        "connection": "Not connected yet"
-      },
       "kinds": {
         "auto": {
           "label": "Auto",
@@ -1194,8 +1186,8 @@
         "magic": {
           "label": "Magic",
           "description": {
-            "partner": "The AI agent, started from the wand or the chat.",
-            "connection": "The AI agent, started from the wand or the chat."
+            "partner": "The AI agent, started from this button or the chat.",
+            "connection": "The AI agent, started from this button or the chat."
           }
         },
         "manual": {
@@ -1205,7 +1197,9 @@
             "connection": "You: your own pick, or a suggestion you accepted."
           }
         }
-      }
+      },
+      "runMagic": "Click to start the AI agent",
+      "magicRunning": "The AI agent is running"
     }
   }
 }

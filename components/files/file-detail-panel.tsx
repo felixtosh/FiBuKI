@@ -32,9 +32,7 @@ import {
   Trash2,
   Plus,
   RotateCcw,
-  Loader2,
   Info,
-  Search,
   Scissors,
   History,
   MoreHorizontal,
@@ -581,23 +579,6 @@ function FileDetailPanelInner({
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium">Partner</h3>
                 <div className="flex items-center gap-1">
-                  {/* Search button to trigger AI partner search */}
-                  {!assignedPartner && file.extractionComplete && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={() => startFilePartnerSearch(file.id)}
-                      disabled={isWandActive}
-                      title="Search for partner"
-                    >
-                      {isWandActive ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Search className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  )}
                   {/* Debug info button */}
                   <Popover>
                     <PopoverTrigger asChild>
@@ -697,7 +678,12 @@ function FileDetailPanelInner({
                 entries={file.automationHistory}
                 area="partner"
                 matched={!!file.partnerId}
-                onOpenLog={() => setShowActivityLog(true)}
+                onMagic={
+                  !assignedPartner && file.extractionComplete
+                    ? () => startFilePartnerSearch(file.id)
+                    : undefined
+                }
+                magicBusy={isWandActive}
               />
             </div>
 
@@ -736,16 +722,6 @@ function FileDetailPanelInner({
               onDismissSuggestion={handleDismissTransactionSuggestion}
               onTriggerRematch={handleTriggerTransactionRematch}
               isRematching={isRematchingTransactions}
-              onAiSearch={() =>
-                startFileTransactionSearch(file.id, {
-                  fileName: file.fileName,
-                  amount: file.extractedAmount ?? undefined,
-                  currency: file.extractedCurrency ?? undefined,
-                  date: toDateSafe(file.extractedDate)?.toISOString().split("T")[0],
-                  partner: file.extractedPartner ?? undefined,
-                })
-              }
-              isAiSearching={isWandActive}
             />
 
             {/* What looked for a Transaction, and what connected the one there */}
@@ -753,7 +729,19 @@ function FileDetailPanelInner({
               entries={file.automationHistory}
               area="connection"
               matched={(file.transactionIds?.length ?? 0) > 0}
-              onOpenLog={() => setShowActivityLog(true)}
+              onMagic={
+                (file.transactionIds?.length ?? 0) === 0
+                  ? () =>
+                      startFileTransactionSearch(file.id, {
+                        fileName: file.fileName,
+                        amount: file.extractedAmount ?? undefined,
+                        currency: file.extractedCurrency ?? undefined,
+                        date: toDateSafe(file.extractedDate)?.toISOString().split("T")[0],
+                        partner: file.extractedPartner ?? undefined,
+                      })
+                  : undefined
+              }
+              magicBusy={isWandActive}
             />
           </div>
         </ScrollArea>
