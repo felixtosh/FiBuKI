@@ -1051,7 +1051,7 @@ async function logAgentRunOnItem(
   workerType: WorkerType,
   triggerContext: WorkerTriggerContext | undefined,
   runId: string,
-  outcome: { status: "completed" | "failed"; text: string; createdPartnerId?: string | null }
+  outcome: { status: "completed" | "failed"; text: string; created?: CreatedByRun }
 ): Promise<void> {
   const target = AGENT_RUN_TARGET[workerType];
   if (!target) return;
@@ -1066,20 +1066,27 @@ async function logAgentRunOnItem(
         level: "info",
         status: outcome.status,
         workerRunId: runId,
-        forPartnerId: outcome.createdPartnerId ?? null,
+        forPartnerId: outcome.created?.partnerId ?? null,
+        fileId: outcome.created?.fileId ?? null,
         summary: outcome.status === "completed" ? `Agent search: ${text}` : `Agent search failed: ${text}`,
       })
     )
   );
 }
 
-/** The Partner the run created with its createPartner tool, if any. */
-function partnerCreatedIn(transcript: WorkerMessage[]): string | null {
+interface CreatedByRun {
+  partnerId: string | null;
+  fileId: string | null;
+}
+
+/** The first Partner the run created and the first File it downloaded, from its tool results. */
+function createdIn(transcript: WorkerMessage[]): CreatedByRun {
+  const created: CreatedByRun = { partnerId: null, fileId: null };
   for (const msg of transcript) {
     for (const part of msg.parts ?? []) {
       if (part.type !== "tool" || !("toolCall" in part)) continue;
       const tc = (part as { toolCall: { name: string; result?: unknown } }).toolCall;
-      if (tc?.name !== "createPartner") continue;
+      if (!tc) continue;
       let result = tc.result;
       if (typeof result === "string") {
         try {
@@ -1088,11 +1095,17 @@ function partnerCreatedIn(transcript: WorkerMessage[]): string | null {
           continue;
         }
       }
-      const id = (result as { partnerId?: unknown } | null)?.partnerId;
-      if (typeof id === "string" && id) return id;
+      const r = (result ?? {}) as { partnerId?: unknown; fileId?: unknown; fileIds?: unknown };
+      if (tc.name === "createPartner" && !created.partnerId && typeof r.partnerId === "string") {
+        created.partnerId = r.partnerId;
+      }
+      if ((tc.name === "downloadGmailAttachment" || tc.name === "convertEmailToPdf") && !created.fileId) {
+        const first = Array.isArray(r.fileIds) ? r.fileIds[0] : r.fileId;
+        if (typeof first === "string" && first) created.fileId = first;
+      }
     }
   }
-  return null;
+  return created;
 }
 
 // ============================================================================
@@ -1433,7 +1446,7 @@ export async function POST(req: Request) {
           await logAgentRunOnItem(workerType, effectiveTriggerContext, runId, {
             status: "completed",
             text: buildCompactMessage(buildToolSummary(transcript)),
-            createdPartnerId: partnerCreatedIn(transcript),
+            created: createdIn(transcript),
           });
         } catch (err) {
           console.error("[Worker API] Failed to log the run on its item:", err);

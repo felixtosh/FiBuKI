@@ -47,11 +47,20 @@ const CONNECTION_TYPES = new Set([
   "transaction_search",
 ]);
 
-/** Agent runs, logged once per run by the worker route; `forPartnerId` names a Partner the run created. */
+/**
+ * Agent runs, logged once per run by the worker route. `forPartnerId` names a
+ * Partner the run created, `fileId` a File it downloaded.
+ */
 const AGENT_RUN_TYPES = new Set(["partner_search", "receipt_search", "transaction_search"]);
 
 /** The entries that set the match, as opposed to suggesting or removing one. */
 const MATCH_TYPES = new Set(["partner_assigned", "file_connected", "transaction_connected"]);
+
+/** A Partner merge repoints the match; it finds nothing (mergeUserPartners). */
+const isMerge = (entry: Pick<AutomationHistoryEntry, "summary">) => (entry.summary ?? "").includes(" merged into ");
+
+/** The File's own line when the receipt-search agent downloaded it (createFileRecord). */
+const FOUND_BY_AGENT = "found by the receipt search";
 
 /**
  * Which method wrote a log line. A person comes first; then the step the
@@ -105,32 +114,50 @@ export function summarizeAutomations(
   const types = ladder === "connection" ? CONNECTION_TYPES : PARTNER_TYPES;
   const counts: Partial<Record<AutomationMethod, number>> = {};
   for (const method of methods) counts[method] = 0;
-  let matchEntry: AutomationHistoryEntry | null = null;
-  let matchTime = -Infinity;
 
-  const agentCreatedPartners = new Set<string>();
+  const log = [...(entries ?? [])].sort(
+    (a, b) => (toDateSafe(a.ranAt)?.getTime() ?? 0) - (toDateSafe(b.ranAt)?.getTime() ?? 0)
+  );
 
-  for (const entry of entries ?? []) {
+  // What the agent brought into being for this item, whenever its run logged it.
+  const agentPartners = new Set<string>();
+  const agentFiles = new Set<string>();
+  let itemFoundByAgent = false;
+  for (const entry of log) {
+    if (AGENT_RUN_TYPES.has(entry.type)) {
+      if (entry.forPartnerId) agentPartners.add(entry.forPartnerId);
+      if (entry.fileId) agentFiles.add(entry.fileId);
+    }
+    if (entry.type === "file_created" && (entry.summary ?? "").includes(FOUND_BY_AGENT)) itemFoundByAgent = true;
+  }
+
+  let credit = null as { method: AutomationMethod; partnerId?: string } | null;
+  for (const entry of log) {
     if (!types.has(entry.type)) continue;
-    if (AGENT_RUN_TYPES.has(entry.type) && entry.forPartnerId) agentCreatedPartners.add(entry.forPartnerId);
+    if (ladder !== "connection" && isMerge(entry)) {
+      if (credit && entry.forPartnerId) credit = { method: credit.method, partnerId: entry.forPartnerId };
+      continue;
+    }
     // A queue marker is not a run: the run logs itself when it ends.
     if (entry.status === "pending" || entry.type === "company_check") continue;
     const method = automationMethodOf(entry, ladder);
     counts[method] = (counts[method] ?? 0) + 1;
-    if (!MATCH_TYPES.has(entry.type) || entry.status === "failed") continue;
-    const time = toDateSafe(entry.ranAt)?.getTime() ?? 0;
-    if (time >= matchTime) {
-      matchTime = time;
-      matchEntry = entry;
+
+    if (entry.type === "partner_removed") {
+      credit = null;
+      continue;
     }
+    if (!MATCH_TYPES.has(entry.type) || entry.status === "failed") continue;
+    // A person confirming the Partner already there: the finder keeps the credit.
+    if (ladder !== "connection" && method === "manual" && credit && entry.forPartnerId === credit.partnerId) continue;
+
+    let creditMethod = method;
+    if (ladder !== "connection" && entry.forPartnerId && agentPartners.has(entry.forPartnerId)) creditMethod = "magic";
+    if (ladder === "connection" && method !== "manual") {
+      if ((entry.fileId && agentFiles.has(entry.fileId)) || itemFoundByAgent) creditMethod = "magic";
+    }
+    credit = { method: creditMethod, partnerId: entry.forPartnerId ?? undefined };
   }
 
-  // A Partner the agent created for this item is the agent's match, whoever
-  // assigned it afterwards (the rules on the new Partner, an open panel).
-  const matchedBy = !matched || !matchEntry
-    ? null
-    : ladder !== "connection" && matchEntry.forPartnerId && agentCreatedPartners.has(matchEntry.forPartnerId)
-      ? "magic"
-      : automationMethodOf(matchEntry, ladder);
-  return { methods, counts, matchedBy };
+  return { methods, counts, matchedBy: matched && credit ? credit.method : null };
 }

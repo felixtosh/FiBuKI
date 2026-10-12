@@ -21,6 +21,8 @@ describe("the summaries the ladder reads are still what the matchers write", () 
     ["matching/matchFilePartner.ts", "the name on the document"],
     ["matching/matchFilePartner.ts", "taken from the connected File"],
     ["matching/partnerProvenance.ts", "taken from the Files still connected"],
+    ["partners/mergeUserPartners.ts", " merged into "],
+    ["files/createFileRecord.ts", "found by the receipt search"],
   ])("%s writes %j", (file, phrase) => {
     expect(source(file)).toContain(phrase);
   });
@@ -85,6 +87,44 @@ describe("summarizeAutomations", () => {
     const s = summarizeAutomations(ikea, "filePartner", true);
     expect(s.matchedBy).toBe("magic");
     expect(s.counts).toMatchObject({ rules: 1, magic: 1 });
+  });
+
+  it("keeps the finder's credit when a person confirms, and drops it when the Partner is removed", () => {
+    const confirmed = [
+      entry({ type: "partner_assigned", actor: "auto", forPartnerId: "p1", summary: 'Partner "A" assigned by its VAT ID', ranAt: at("2026-10-01T09:00:00Z") }),
+      entry({ type: "partner_assigned", actor: "manual", forPartnerId: "p1", summary: 'Partner "A" confirmed', ranAt: at("2026-10-01T09:05:00Z") }),
+    ];
+    expect(summarizeAutomations(confirmed, "filePartner", true).matchedBy).toBe("vat");
+    const reassigned = [
+      ...confirmed,
+      entry({ type: "partner_removed", actor: "manual", ranAt: at("2026-10-01T09:06:00Z") }),
+      entry({ type: "partner_assigned", actor: "manual", forPartnerId: "p1", summary: 'Partner "A" assigned', ranAt: at("2026-10-01T09:07:00Z") }),
+    ];
+    expect(summarizeAutomations(reassigned, "filePartner", true).matchedBy).toBe("manual");
+  });
+
+  it("treats a merge as bookkeeping, not a match", () => {
+    const merged = [
+      entry({ type: "partner_assigned", actor: "auto", forPartnerId: "p1", summary: 'Partner "A" auto-assigned', ranAt: at("2026-10-01T09:00:00Z") }),
+      entry({ type: "partner_assigned", actor: "manual", forPartnerId: "p2", summary: 'Partner "A" merged into "B"', ranAt: at("2026-10-01T09:05:00Z") }),
+      entry({ type: "partner_assigned", actor: "manual", forPartnerId: "p2", summary: 'Partner "B" assigned', ranAt: at("2026-10-01T09:06:00Z") }),
+    ];
+    const s = summarizeAutomations(merged, "transactionPartner", true);
+    expect(s.matchedBy).toBe("rules");
+    expect(s.counts).toMatchObject({ rules: 1, manual: 1 });
+  });
+
+  it("credits Magic for a File the agent downloaded that the rules then connected", () => {
+    const onTransaction = [
+      entry({ type: "file_connected", actor: "auto", fileId: "f1", summary: 'File "x.pdf" auto-connected', ranAt: at("2026-10-01T09:01:00Z") }),
+      entry({ type: "receipt_search", actor: "ai", fileId: "f1", summary: "Agent search: downloaded", ranAt: at("2026-10-01T09:02:00Z") }),
+    ];
+    expect(summarizeAutomations(onTransaction, "connection", true).matchedBy).toBe("magic");
+    const onFile = [
+      entry({ type: "file_created", actor: "auto", summary: "From Gmail, found by the receipt search for a Transaction" }),
+      entry({ type: "transaction_connected", actor: "auto", summary: "Connected automatically" }),
+    ];
+    expect(summarizeAutomations(onFile, "connection", true).matchedBy).toBe("magic");
   });
 
   it("does not count a queue marker as a run", () => {
