@@ -148,7 +148,6 @@ const CSP_DIRECTIVES: Record<string, string[]> = {
     "https://identitytoolkit.googleapis.com",
     "https://securetoken.googleapis.com",
     "https://oauth2.googleapis.com",
-    "https://*.cloud.langfuse.com",
     "https://api.truelayer.com",
     "https://api.truelayer-sandbox.com",
     "https://auth.truelayer.com",

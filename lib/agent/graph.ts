@@ -1,11 +1,18 @@
 /**
- * LangGraph Agent Graph
+ * The sidebar chat's agent graph (LangGraph).
  *
- * Defines the agent graph with nodes for:
- * - Agent: LLM reasoning and tool selection
- * - Tools: Execute selected tools
- * - Confirmation: Handle tools requiring user confirmation
- * - Respond: Generate final response
+ *   START -> agent -> (tool calls?) -> tools -> agent -> ... -> END
+ *                                        \-> wrapUp -> END   (step budget spent)
+ *
+ * - agent: the model, with the static prompt plus the moment's context
+ *   (lib/agent/context.ts).
+ * - tools: runs the proposed calls, after the trajectory guard
+ *   (lib/agent/trajectory-guard.ts) refused the senseless ones. A call to a
+ *   write that needs the User's yes does not run: it is answered with
+ *   `awaiting_confirmation` and a token. presentChoices runs and gets a token.
+ *   Either ends the turn: the User's click continues it (lib/agent/choices.ts).
+ * - wrapUp: after MAX_TOOL_ROUNDS the model answers in text from what it has,
+ *   instead of the turn dying at the recursion limit mid-sentence.
  */
 
 import { StateGraph, Annotation, START, END } from "@langchain/langgraph";
@@ -17,18 +24,29 @@ import {
   ToolMessage,
 } from "@langchain/core/messages";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
-import { ALL_TOOLS, TOOLS_REQUIRING_CONFIRMATION } from "./tools";
+import type { RunnableConfig } from "@langchain/core/runnables";
+import { CHAT_TOOLS } from "./tools";
 import { SYSTEM_PROMPT } from "@/lib/chat/system-prompt";
 import { createChatModel, ModelProvider } from "./model";
 import { endedSilentlyAfterTools, SILENT_TURN_NUDGE } from "./silent-turn";
+import { checkToolCalls } from "./trajectory-guard";
+import { awaitingConfirmation, requiresConfirmation, type PresentedChoices } from "./choices";
+import { issueChoice } from "./pending-choice";
+
+/** Tool rounds per turn before the model must answer with what it has. */
+export const MAX_TOOL_ROUNDS = 12;
+
+/** LangGraph steps for that budget: agent + tools per round, the wrap-up, and slack. */
+export const RECURSION_LIMIT = MAX_TOOL_ROUNDS * 2 + 6;
+
+const WRAP_UP_NUDGE =
+  "You have used this turn's tool budget. Do not call tools. Tell the user in two or three sentences what you " +
+  "found and did so far, and what is still open.";
 
 // ============================================================================
 // State Definition
 // ============================================================================
 
-/**
- * Agent state annotation
- */
 const AgentStateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
     reducer: (prev, next) => [...prev, ...next],
@@ -44,19 +62,21 @@ const AgentStateAnnotation = Annotation.Root({
   }),
   modelProvider: Annotation<ModelProvider>({
     reducer: (_, next) => next,
-    default: () => "anthropic" as ModelProvider,
+    default: () => "gemini" as ModelProvider,
   }),
-  pendingConfirmation: Annotation<{
-    toolName: string;
-    toolCallId: string;
-    args: Record<string, unknown>;
-  } | null>({
+  /** The "Right now" block: date and open page. Also what an id may be grounded in. */
+  context: Annotation<string>({
     reducer: (_, next) => next,
-    default: () => null,
+    default: () => "",
   }),
-  shouldContinue: Annotation<boolean>({
+  toolRounds: Annotation<number>({
     reducer: (_, next) => next,
-    default: () => true,
+    default: () => 0,
+  }),
+  /** Set when a round ended on a choice or a confirmation: the turn waits for the User. */
+  awaitingUser: Annotation<boolean>({
+    reducer: (_, next) => next,
+    default: () => false,
   }),
 });
 
@@ -66,364 +86,209 @@ type AgentState = typeof AgentStateAnnotation.State;
 // Model Setup
 // ============================================================================
 
-console.log("[Graph] Available tools:", ALL_TOOLS.map(t => t.name).join(", "));
+const modelCache = new Map<string, Awaited<ReturnType<typeof createChatModel>>>();
 
-// Model cache to avoid recreating for same provider
-const modelCache = new Map<ModelProvider, Awaited<ReturnType<typeof createChatModel>>>();
-
-async function getModel(provider: ModelProvider) {
-  if (!modelCache.has(provider)) {
-    console.log(`[Graph] Creating ${provider} model`);
-    const model = await createChatModel({ provider }, ALL_TOOLS);
-    modelCache.set(provider, model);
+/** The chat model; `answerOnly` may not call tools (the wrap-up). */
+async function getModel(provider: ModelProvider, answerOnly = false) {
+  const key = `${provider}:${answerOnly ? "answer" : "tools"}`;
+  if (!modelCache.has(key)) {
+    modelCache.set(
+      key,
+      await createChatModel({ provider, ...(answerOnly ? { toolChoice: "none" as const } : {}) }, CHAT_TOOLS)
+    );
   }
-  return modelCache.get(provider)!;
+  return modelCache.get(key)!;
+}
+
+const NARRATE_REMINDER =
+  "Reminder: your last tool call came with no words to the user. Start this message with one short sentence: " +
+  "what you just found and what you do next.";
+
+/** The model's last tool round said nothing to the User (docs/buki-rubric.md, Experience). */
+function lastRoundWasSilent(messages: BaseMessage[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m instanceof HumanMessage) return false;
+    if (toolCallsOf(m).length > 0) {
+      const c = m.content;
+      const text = typeof c === "string" ? c : Array.isArray(c) ? c.map((b) => (typeof b === "object" && b && "text" in b ? String(b.text ?? "") : "")).join("") : "";
+      return text.trim() === "";
+    }
+  }
+  return false;
+}
+
+/**
+ * The prompt plus the moment's context, and a reminder when the last tool
+ * round went silent: a nudge in the next call costs nothing, unlike a retry.
+ */
+function systemMessage(state: AgentState): SystemMessage {
+  const parts = [SYSTEM_PROMPT];
+  if (state.context) parts.push(state.context);
+  if (lastRoundWasSilent(state.messages)) parts.push(NARRATE_REMINDER);
+  return new SystemMessage(parts.join("\n\n"));
+}
+
+/** The graph owns the system prompt: any SystemMessage in state (client-injected or stale) is dropped. */
+function withSystem(state: AgentState): BaseMessage[] {
+  return [systemMessage(state), ...state.messages.filter((m) => !(m instanceof SystemMessage))];
+}
+
+function toolCallsOf(message: BaseMessage | undefined): Array<{ id?: string; name: string; args: Record<string, unknown> }> {
+  const m = message as { tool_calls?: Array<{ id?: string; name: string; args: Record<string, unknown> }> } | undefined;
+  return m?.tool_calls ?? [];
 }
 
 // ============================================================================
 // Graph Nodes
 // ============================================================================
 
-/**
- * Agent node - calls the LLM with tools
- */
 async function agentNode(state: AgentState): Promise<Partial<AgentState>> {
   const { messages, userId, authHeader, modelProvider } = state;
-
-  // Get the model for this provider
   const model = await getModel(modelProvider);
+  const input = withSystem(state);
+  const config = { configurable: { userId, authHeader } };
 
-  // The graph owns the system prompt: drop any SystemMessage that arrived in
-  // state (client-injected or stale) and always prepend our own.
-  const messagesWithSystem = [
-    new SystemMessage(SYSTEM_PROMPT),
-    ...messages.filter((m) => !(m instanceof SystemMessage)),
-  ];
-
-  // Debug: log message types
-  console.log(`[Agent] Using ${modelProvider} model`);
-  console.log("[Agent] Message types:", messagesWithSystem.map(m => m._getType()).join(", "));
-  console.log("[Agent] Last message content:", messagesWithSystem[messagesWithSystem.length - 1].content?.toString().slice(0, 100));
-
-  // Call the model
-  const response = await model.invoke(messagesWithSystem, {
-    configurable: {
-      userId,
-      authHeader,
-    },
-  });
+  const response = await model.invoke(input, config);
 
   // Gemini sometimes ends a tool run with an empty turn: the tools ran, the
   // cards rendered, and the user is left with no word from BuKI. Ask once more
   // for the reply. The nudge is not kept in state, and the empty turn is dropped.
   if (endedSilentlyAfterTools(messages, response)) {
     console.warn("[Agent] Empty reply after tool results, asking for the reply");
-    const retry = await model.invoke(
-      [...messagesWithSystem, new HumanMessage(SILENT_TURN_NUDGE)],
-      { configurable: { userId, authHeader } },
-    );
+    const retry = await model.invoke([...input, new HumanMessage(SILENT_TURN_NUDGE)], config);
     return { messages: [retry] };
   }
-
-  // Debug: log response type
-  console.log("[Agent] Response has tool_calls:", !!(response as AIMessage).tool_calls?.length);
-  if ((response as AIMessage).tool_calls?.length) {
-    console.log("[Agent] Tool calls:", (response as AIMessage).tool_calls?.map(tc => tc.name).join(", "));
-  }
-
-  return {
-    messages: [response],
-  };
+  return { messages: [response] };
 }
 
+const toolNode = new ToolNode(CHAT_TOOLS);
+
 /**
- * Check if the agent wants to use a tool that requires confirmation
+ * Run one round of tool calls: refuse what the guard refuses, hold what needs
+ * the User's yes, run the rest, and issue a token for each choice shown.
  */
-function shouldConfirm(state: AgentState): "tools" | "confirm" | "respond" {
-  const { messages } = state;
-  const lastMessage = messages[messages.length - 1];
+async function toolsNode(state: AgentState, config?: RunnableConfig): Promise<Partial<AgentState>> {
+  const { userId, authHeader } = state;
+  const last = state.messages[state.messages.length - 1];
+  const calls = toolCallsOf(last);
+  const history = state.messages.slice(0, -1);
 
-  // Check for tool calls - handle both AIMessage instances and plain objects
+  const refusals = checkToolCalls(calls, history, state.context);
+  const out: BaseMessage[] = [];
+  const runnable: typeof calls = [];
+  let awaitingUser = false;
 
-  const msgAny = lastMessage as any;
-  const toolCalls = msgAny?.tool_calls || msgAny?.additional_kwargs?.tool_calls || [];
-
-  console.log("[Router] Last message type:", lastMessage?._getType?.() || typeof lastMessage);
-  console.log("[Router] Tool calls found:", toolCalls.length);
-
-  // If no tool calls, go to respond
-  if (!toolCalls.length) {
-    return "respond";
-  }
-
-  // Check if any tool requires confirmation
-  for (const toolCall of toolCalls) {
-    if (TOOLS_REQUIRING_CONFIRMATION.includes(toolCall.name)) {
-      return "confirm";
+  for (const [i, call] of calls.entries()) {
+    const id = call.id ?? `#${i}`;
+    const refusal = refusals.get(id);
+    if (refusal) {
+      console.warn(`[Tools] Guard refused ${call.name}: ${refusal.guard}`);
+      out.push(new ToolMessage({ tool_call_id: id, name: call.name, content: JSON.stringify(refusal) }));
+    } else if (requiresConfirmation(call.name)) {
+      const token = await issueChoice(userId, {
+        kind: "confirmation",
+        toolCallId: id,
+        options: [
+          { id: "approve", label: "approve", action: { tool: call.name as never, args: call.args } },
+          { id: "reject", label: "cancel" },
+        ],
+      });
+      out.push(
+        new ToolMessage({
+          tool_call_id: id,
+          name: call.name,
+          content: JSON.stringify(awaitingConfirmation(call.name, call.args, token)),
+        })
+      );
+      awaitingUser = true;
+    } else {
+      runnable.push(call);
     }
   }
 
-  // No confirmation needed, execute tools
-  return "tools";
-}
-
-/**
- * Confirmation node - pauses for user confirmation
- */
-async function confirmationNode(state: AgentState): Promise<Partial<AgentState>> {
-  const { messages } = state;
-  const lastMessage = messages[messages.length - 1];
-
-  if (!(lastMessage instanceof AIMessage) || !lastMessage.tool_calls?.length) {
-    return { shouldContinue: false };
+  if (runnable.length > 0) {
+    const toolConfig = {
+      ...config,
+      configurable: { ...config?.configurable, userId, authHeader },
+    };
+    const onlyRunnable = new AIMessage({ content: "", tool_calls: runnable.map((c, i) => ({ ...c, id: c.id ?? `#r${i}` })) });
+    const result = (await toolNode.invoke({ messages: [...history, onlyRunnable] }, toolConfig)) as {
+      messages: ToolMessage[];
+    };
+    for (const message of result.messages) {
+      const call = runnable.find((c) => c.id === message.tool_call_id);
+      if (call?.name === "presentChoices") {
+        const shown = parseJson(message.content) as PresentedChoices | null;
+        if (shown?.status === "awaiting_choice") {
+          const token = await issueChoice(userId, { kind: "choice", toolCallId: message.tool_call_id, options: shown.options });
+          out.push(
+            new ToolMessage({
+              tool_call_id: message.tool_call_id,
+              name: "presentChoices",
+              content: JSON.stringify({ ...shown, token }),
+            })
+          );
+          awaitingUser = true;
+          continue;
+        }
+      }
+      out.push(message);
+    }
   }
 
-  // Find the tool call that requires confirmation
-  const toolCall = lastMessage.tool_calls.find((tc) =>
-    TOOLS_REQUIRING_CONFIRMATION.includes(tc.name)
-  );
+  // Keep the results in the order the model asked for them.
+  const order = new Map(calls.map((c, i) => [c.id ?? `#${i}`, i]));
+  out.sort((a, b) => (order.get((a as ToolMessage).tool_call_id) ?? 0) - (order.get((b as ToolMessage).tool_call_id) ?? 0));
 
-  if (!toolCall) {
-    return { shouldContinue: true };
-  }
-
-  // Store pending confirmation
-  return {
-    pendingConfirmation: {
-      toolName: toolCall.name,
-      toolCallId: toolCall.id || "",
-      args: toolCall.args as Record<string, unknown>,
-    },
-    shouldContinue: false, // Pause for user confirmation
-  };
+  return { messages: out, toolRounds: state.toolRounds + 1, awaitingUser };
 }
 
-/**
- * Tools node - executes tools with userId/authHeader from state
- */
-const rawToolsNode = new ToolNode(ALL_TOOLS);
+/** The step budget is spent: answer in text from what is known. */
+async function wrapUpNode(state: AgentState): Promise<Partial<AgentState>> {
+  const model = await getModel(state.modelProvider, true);
+  const response = await model.invoke([...withSystem(state), new HumanMessage(WRAP_UP_NUDGE)]);
+  return { messages: [response] };
+}
 
-// Wrap tools node to pass config with userId
-
-async function toolsNode(state: AgentState, config?: any): Promise<Partial<AgentState>> {
-  const { userId, authHeader } = state;
-  console.log("[Tools] Executing tools node with userId:", userId ? "present" : "missing");
-
-  // Merge the state's userId/authHeader into the config
-  const toolConfig = {
-    ...config,
-    configurable: {
-      ...config?.configurable,
-      userId,
-      authHeader,
-    },
-  };
-
+function parseJson(content: unknown): unknown {
+  if (typeof content !== "string") return content;
   try {
-    const result = await rawToolsNode.invoke(state, toolConfig);
-    console.log("[Tools] Execution complete, got result with", result.messages?.length, "messages");
-    return result;
-  } catch (error) {
-    console.error("[Tools] Error executing tools:", error);
-    throw error;
+    return JSON.parse(content);
+  } catch {
+    return null;
   }
-}
-
-/**
- * Respond node - generates final response if no more tools
- */
-async function respondNode(state: AgentState): Promise<Partial<AgentState>> {
-  // The last AI message is the response
-  return {
-    shouldContinue: false,
-  };
 }
 
 // ============================================================================
 // Routing
 // ============================================================================
 
-/**
- * Route after agent node
- */
-function routeAfterAgent(state: AgentState): "tools" | "confirm" | "respond" {
-  const route = shouldConfirm(state);
-  console.log("[Router] After agent, routing to:", route);
-  return route;
+function routeAfterAgent(state: AgentState): "tools" | typeof END {
+  return toolCallsOf(state.messages[state.messages.length - 1]).length > 0 ? "tools" : END;
 }
 
-/**
- * Route after tools node - check if we should continue
- */
-function routeAfterTools(state: AgentState): "agent" | "respond" {
-  const { messages } = state;
-  const lastMessage = messages[messages.length - 1];
-
-  // If the last message is a tool message, continue to agent
-  // Use both instanceof and structural check for robustness with deserialized messages
-  const msgType = lastMessage?._getType?.();
-  if (lastMessage instanceof ToolMessage || msgType === "tool") {
-    console.log("[Router] After tools, routing back to agent");
-    return "agent";
-  }
-
-  console.log("[Router] After tools, routing to respond");
-  return "respond";
+function routeAfterTools(state: AgentState): "agent" | "wrapUp" | typeof END {
+  if (state.awaitingUser) return END;
+  if (state.toolRounds >= MAX_TOOL_ROUNDS) return "wrapUp";
+  return "agent";
 }
 
 // ============================================================================
 // Graph Definition
 // ============================================================================
 
-/**
- * Build the agent graph
- */
 export function buildAgentGraph() {
-  console.log("[Graph] Building agent graph with tools:", ALL_TOOLS.map(t => t.name).join(", "));
-
-  const graph = new StateGraph(AgentStateAnnotation)
-    // Add nodes
+  return new StateGraph(AgentStateAnnotation)
     .addNode("agent", agentNode)
     .addNode("tools", toolsNode)
-    .addNode("confirm", confirmationNode)
-    .addNode("respond", respondNode)
-
-    // Add edges
+    .addNode("wrapUp", wrapUpNode)
     .addEdge(START, "agent")
-    .addConditionalEdges("agent", routeAfterAgent, {
-      tools: "tools",
-      confirm: "confirm",
-      respond: "respond",
-    })
-    .addConditionalEdges("tools", routeAfterTools, {
-      agent: "agent",
-      respond: "respond",
-    })
-    .addEdge("confirm", END)
-    .addEdge("respond", END);
-
-  return graph.compile();
-}
-
-// ============================================================================
-// Helper to run the graph
-// ============================================================================
-
-export interface RunGraphInput {
-  messages: BaseMessage[];
-  userId: string;
-  authHeader: string;
-  modelProvider?: ModelProvider;
+    .addConditionalEdges("agent", routeAfterAgent, { tools: "tools", [END]: END })
+    .addConditionalEdges("tools", routeAfterTools, { agent: "agent", wrapUp: "wrapUp", [END]: END })
+    .addEdge("wrapUp", END)
+    .compile();
 }
 
 // Re-export for consumers
 export type { ModelProvider };
-
-export interface RunGraphOutput {
-  messages: BaseMessage[];
-  pendingConfirmation: {
-    toolName: string;
-    toolCallId: string;
-    args: Record<string, unknown>;
-  } | null;
-}
-
-/**
- * Run the agent graph
- */
-export async function runAgentGraph(input: RunGraphInput): Promise<RunGraphOutput> {
-  const graph = buildAgentGraph();
-
-  const result = await graph.invoke({
-    messages: input.messages,
-    userId: input.userId,
-    authHeader: input.authHeader,
-    modelProvider: input.modelProvider || "anthropic",
-    pendingConfirmation: null,
-    shouldContinue: true,
-  });
-
-  return {
-    messages: result.messages,
-    pendingConfirmation: result.pendingConfirmation,
-  };
-}
-
-/**
- * Continue the graph after user confirmation
- */
-export async function continueAfterConfirmation(
-  input: RunGraphInput & {
-    confirmed: boolean;
-    pendingToolCall: {
-      toolName: string;
-      toolCallId: string;
-      args: Record<string, unknown>;
-    };
-  }
-): Promise<RunGraphOutput> {
-  const graph = buildAgentGraph();
-
-  // If confirmed, add a tool result message and continue
-  // If not confirmed, add a message saying the action was cancelled
-  let additionalMessages: BaseMessage[] = [];
-
-  if (input.confirmed) {
-    // Execute the tool
-    // Only tools that pause for confirmation are ever resumed here; anything
-    // else would be a way to run a tool the model did not propose.
-    const tool = TOOLS_REQUIRING_CONFIRMATION.includes(input.pendingToolCall.toolName)
-      ? ALL_TOOLS.find((t) => t.name === input.pendingToolCall.toolName)
-      : undefined;
-    if (tool) {
-      try {
-
-        const result = await (tool as any).invoke(input.pendingToolCall.args, {
-          configurable: {
-            userId: input.userId,
-            authHeader: input.authHeader,
-          },
-        });
-
-        additionalMessages = [
-          new ToolMessage({
-            tool_call_id: input.pendingToolCall.toolCallId,
-            content: typeof result === "string" ? result : JSON.stringify(result),
-          }),
-        ];
-      } catch (error) {
-        additionalMessages = [
-          new ToolMessage({
-            tool_call_id: input.pendingToolCall.toolCallId,
-            content: JSON.stringify({
-              error: error instanceof Error ? error.message : "Tool execution failed",
-            }),
-          }),
-        ];
-      }
-    }
-  } else {
-    additionalMessages = [
-      new ToolMessage({
-        tool_call_id: input.pendingToolCall.toolCallId,
-        content: JSON.stringify({
-          cancelled: true,
-          message: "User cancelled this action",
-        }),
-      }),
-    ];
-  }
-
-  const result = await graph.invoke({
-    messages: [...input.messages, ...additionalMessages],
-    userId: input.userId,
-    authHeader: input.authHeader,
-    pendingConfirmation: null,
-    shouldContinue: true,
-  });
-
-  return {
-    messages: result.messages,
-    pendingConfirmation: result.pendingConfirmation,
-  };
-}

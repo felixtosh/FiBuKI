@@ -5,9 +5,9 @@ import { createContext, useContext, useState, useCallback, useMemo, useEffect, u
 import { useRouter } from "next/navigation";
 import { useChat as useVercelChat } from "@ai-sdk/react";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
-import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession, ModelProvider, ChatMessage } from "@/types/chat";
+import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession, ChatMessage, ChoiceClick, AnsweredChoices, TurnRatings } from "@/types/chat";
 import { AutoActionNotification } from "@/types/notification";
-import { requiresConfirmation } from "@/lib/chat/confirmation-config";
+import { callFunction } from "@/lib/firebase/callable";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useChatPersistence } from "@/hooks/use-chat-persistence";
 import { useChatSessions } from "@/hooks/use-chat-sessions";
@@ -89,14 +89,17 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(initialState.isSidebarOpen);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
-  const [pendingConfirmations, setPendingConfirmations] = useState<ToolCall[]>([]);
+  // Choice cards answered in this view (token -> option id), and thumbs given (turnId -> rating).
+  const [answeredChoices, setAnsweredChoices] = useState(() => new Map() as AnsweredChoices);
+  const [turnRatings, setTurnRatings] = useState(() => new Map() as TurnRatings);
+  // The turn the next assistant message answers: names its trace (lib/agent/trace.ts).
+  const pendingTurnIdRef = useRef(null as string | null);
+  const turnIdByMessageIdRef = useRef(new Map() as AnsweredChoices);
   const [activeTab, setActiveTabState] = useState<ChatTab>(initialState.activeTab);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("chat");
   const [chatViewMode, setChatViewMode] = useState<ChatViewMode>(
     initialState.isSidebarOpen ? "draft" : "closed"
   );
-  // Default to gemini (cheaper), fall back to anthropic if needed
-  const [modelProvider, setModelProvider] = useState<ModelProvider>("gemini");
 
   // Track entity IDs with active wand searches (workers)
   const [activeWandTargets, setActiveWandTargets] = useState<Set<string>>(new Set());
@@ -167,21 +170,6 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
   const chatHook = (useVercelChat as any)({
     api: "/api/chat",
-    onToolCall: ({ toolCall }: { toolCall: any }) => {
-      // Check if this tool requires confirmation
-      if (requiresConfirmation(toolCall.toolName)) {
-        setPendingConfirmations((prev) => [
-          ...prev,
-          {
-            id: toolCall.toolCallId,
-            name: toolCall.toolName,
-            args: toolCall.args as Record<string, unknown>,
-            status: "pending",
-            requiresConfirmation: true,
-          },
-        ]);
-      }
-    },
     onFinish: (message: any) => {
       // Handle UI actions from tool results
       if (message.toolInvocations) {
@@ -210,7 +198,6 @@ export function ChatProvider({ children }: ChatProviderProps) {
     // Leaving chat should reset visible conversation context.
     if (tab !== "chat") {
       setMessages([]);
-      setPendingConfirmations([]);
       lastSavedMessageCount.current = 0;
     }
   }, [activeTab, chatViewMode, setMessages, debugChat]);
@@ -286,15 +273,19 @@ export function ChatProvider({ children }: ChatProviderProps) {
         }
 
         // Save message with tool invocations (only include fields with values - Firestore rejects undefined)
+        const turnId = turnIdByMessageIdRef.current.get(msg.id) ?? pendingTurnIdRef.current ?? undefined;
+        if (turnId) turnIdByMessageIdRef.current.set(msg.id, turnId);
         const messageToSave: {
           role: "assistant";
           content: string;
+          turnId?: string;
           parts?: Array<{ type: "text"; text: string } | { type: "tool"; toolCallId: string; toolName: string }>;
           toolCalls?: ToolCall[];
           toolResults?: { toolCallId: string; result: unknown }[];
         } = {
           role: "assistant",
           content: textContent,
+          ...(turnId ? { turnId } : {}),
         };
 
         // Include parts for chronological ordering in history
@@ -400,48 +391,60 @@ export function ChatProvider({ children }: ChatProviderProps) {
     [uiActions]
   );
 
-  // Send message using the SDK's sendMessage with explicit auth headers
-  const sendMessage = useCallback(
-    async (content: string) => {
+  // Send a message with explicit auth headers. The body says which page is
+  // open (the model's "this transaction"), which turn this is (its trace) and,
+  // for a click on a choice card, the click. The server picks the model.
+  const sendTurn = useCallback(
+    async (content: string, choice?: Omit<ChoiceClick, "label">) => {
       // Save user message to Firestore
       saveMessage({
         role: "user",
         content,
       }).catch((err) => console.error("Failed to save user message:", err));
 
+      const turnId = crypto.randomUUID();
+      pendingTurnIdRef.current = turnId;
+      const selectedId = new URLSearchParams(window.location.search).get("id");
+      const page = { path: window.location.pathname, ...(selectedId ? { selectedId } : {}) };
+
       // Get fresh auth headers for this request
       const headers = await getAuthHeaders();
       await sdkSendMessage(
         { role: "user", content },
-        { headers, body: { modelProvider } }
+        {
+          headers,
+          body: {
+            page,
+            turnId,
+            sessionId: currentSessionIdRef.current,
+            ...(choice ? { choice } : {}),
+          },
+        }
       );
     },
-    [sdkSendMessage, saveMessage, getAuthHeaders, modelProvider]
+    [sdkSendMessage, saveMessage, getAuthHeaders]
   );
 
-  // Approve tool call (for confirmation flow)
-  const approveToolCall = useCallback(async (toolCallId: string) => {
-    setPendingConfirmations((prev) =>
-      prev.map((tc) => (tc.id === toolCallId ? { ...tc, status: "approved" } : tc))
-    );
+  const sendMessage = useCallback((content: string) => sendTurn(content), [sendTurn]);
 
-    // The tool will be executed by the AI SDK
-    // Remove from pending after a short delay
-    setTimeout(() => {
-      setPendingConfirmations((prev) => prev.filter((tc) => tc.id !== toolCallId));
-    }, 1000);
-  }, []);
+  // A click on a choice card or a confirmation: the server runs what it stored
+  // for that card's token, and the turn continues from the User's choice.
+  const chooseOption = useCallback(
+    async ({ token, optionId, label, feedback }: ChoiceClick) => {
+      setAnsweredChoices((prev) => new Map(prev).set(token, optionId) as AnsweredChoices);
+      const content = feedback ? `${label}: ${feedback}` : label;
+      await sendTurn(content, { token, optionId, ...(feedback ? { feedback } : {}) });
+    },
+    [sendTurn]
+  );
 
-  // Reject tool call
-  const rejectToolCall = useCallback((toolCallId: string) => {
-    setPendingConfirmations((prev) =>
-      prev.map((tc) => (tc.id === toolCallId ? { ...tc, status: "rejected" } : tc))
-    );
-
-    // Remove from pending
-    setTimeout(() => {
-      setPendingConfirmations((prev) => prev.filter((tc) => tc.id !== toolCallId));
-    }, 500);
+  const rateTurn = useCallback(async (turnId: string, rating: "up" | "down", comment?: string) => {
+    setTurnRatings((prev) => new Map(prev).set(turnId, rating) as TurnRatings);
+    try {
+      await callFunction("submitChatFeedback", { turnId, rating, ...(comment ? { comment } : {}) });
+    } catch (err) {
+      console.error("Failed to send chat feedback:", err);
+    }
   }, []);
 
   // Start new session (clear messages)
@@ -452,7 +455,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     // Reset to a draft conversation; actual session is created lazily on first message.
     await switchSession(null);
     setMessages([]);
-    setPendingConfirmations([]);
+    setAnsweredChoices(new Map() as AnsweredChoices);
     setActiveTab("chat");
     setSidebarMode("chat");
     setChatViewMode("draft");
@@ -470,7 +473,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     setActiveTabState("chat");
     setChatViewMode("loadingSession");
     setMessages([]);
-    setPendingConfirmations([]);
+    setAnsweredChoices(new Map() as AnsweredChoices);
 
     try {
       // Bind the target session immediately so UI can track worker progress even before messages load.
@@ -507,7 +510,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
       // Update the chat state
       setMessages(sdkMessages);
-      setPendingConfirmations([]);
+      setAnsweredChoices(new Map() as AnsweredChoices);
       setChatViewMode("session");
       debugChat("load_session_success", { sessionId, requestId, messageCount: sdkMessages.length });
     } catch (error) {
@@ -593,7 +596,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
       loadSessionRequestIdRef.current += 1; // Cancel any in-flight manual session load.
       await switchSession(null);
       setMessages([]);
-      setPendingConfirmations([]);
+      setAnsweredChoices(new Map() as AnsweredChoices);
       lastSavedMessageCount.current = 0;
       setChatViewMode("loadingSession");
 
@@ -875,7 +878,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
   const value: ChatContextValue = useMemo(
     () => ({
-      messages: messages.map((m: any) => {
+      messages: messages.map((m: any, index: number) => {
         // AI SDK v6 uses 'parts' array - preserve order for chronological rendering
         const orderedParts: Array<{ type: "text"; text: string } | { type: "tool"; toolCall: NonNullable<ChatContextValue["messages"][0]["toolCalls"]>[0] }> = [];
         let fullTextContent = "";
@@ -927,7 +930,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
                     args: ti.args || {},
                     result: ti.result,
                     status: ti.state === "result" || ti.result !== undefined ? "executed" : "pending",
-                    requiresConfirmation: requiresConfirmation(ti.toolName),
+                    requiresConfirmation: false,
                   },
                 });
               }
@@ -949,7 +952,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
                 args: ti.args || {},
                 result: ti.result,
                 status: ti.state === "result" || ti.result !== undefined ? "executed" : "pending",
-                requiresConfirmation: requiresConfirmation(ti.toolName),
+                requiresConfirmation: false,
               },
             });
           }
@@ -992,8 +995,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
                   ? ("executed" as const)
                   : toolCall.state === "input-available" || toolCall.state === "input-streaming"
                   ? ("pending" as const)
-                  : pendingConfirmations.find((pc) => pc.id === toolCall.id)?.status || ("pending" as const),
-              requiresConfirmation: requiresConfirmation(toolCall.name),
+                  : ("pending" as const),
+              requiresConfirmation: false,
             },
           });
 
@@ -1061,11 +1064,20 @@ export function ChatProvider({ children }: ChatProviderProps) {
           }
         }
 
+        // The turn this reply answered: stored with it, or this view's last turn.
+        const turnId =
+          m.role === "assistant"
+            ? m.turnId ??
+              turnIdByMessageIdRef.current.get(m.id) ??
+              (index === messages.length - 1 ? pendingTurnIdRef.current ?? undefined : undefined)
+            : undefined;
+
         return {
           id: m.id,
           role: m.role as "user" | "assistant" | "system",
           content: fullTextContent,
           createdAt: m.createdAt instanceof Date ? m.createdAt : new Date(),
+          ...(turnId ? { turnId } : {}),
           parts: orderedParts,
           toolCalls: orderedParts
             .filter((p): p is { type: "tool"; toolCall: NonNullable<ChatContextValue["messages"][0]["toolCalls"]>[0] } => p.type === "tool")
@@ -1077,10 +1089,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
       currentSession: sessions.find((s) => s.id === currentSessionId) || null,
       sessions,
       currentSessionId,
-      pendingConfirmations,
       sendMessage,
-      approveToolCall,
-      rejectToolCall,
+      chooseOption,
+      answeredChoices,
+      rateTurn,
+      turnRatings,
       startNewSession,
       loadSession,
       uiActions,
@@ -1105,17 +1118,15 @@ export function ChatProvider({ children }: ChatProviderProps) {
       // Sidebar mode
       sidebarMode,
       setSidebarMode,
-      // Model selection
-      modelProvider,
-      setModelProvider,
     }),
     [
       messages,
       isLoading,
-      pendingConfirmations,
       sendMessage,
-      approveToolCall,
-      rejectToolCall,
+      chooseOption,
+      answeredChoices,
+      rateTurn,
+      turnRatings,
       startNewSession,
       loadSession,
       uiActions,
@@ -1138,7 +1149,6 @@ export function ChatProvider({ children }: ChatProviderProps) {
       sidebarMode,
       sessions,
       currentSessionId,
-      modelProvider,
     ]
   );
 

@@ -18,7 +18,7 @@ import { WorkerType, WorkerMessage, WorkerRun, WorkerTriggerContext } from "@/ty
 import { ToolCallSummary } from "@/types/notification";
 import { TOOL_LABELS, SKIP_TOOLS, parseToolResult, cleanToolSummary } from "@/lib/tool-summary";
 import { activityEntry, logActivity } from "@/functions/src/utils/activity";
-import { ModelProvider } from "@/lib/agent/model";
+import { resolveChatProvider } from "@/lib/agent/model";
 import { chatMailIntegrations } from "@/lib/agent/tools/mail-integrations";
 
 const db = getAdminDb();
@@ -41,7 +41,6 @@ interface WorkerRequest {
   triggerContext?: WorkerTriggerContext;
   workerRequestId?: string;
   triggeredBy?: "auto" | "user";
-  modelProvider?: ModelProvider;
 }
 
 interface WorkerExecutionResponse {
@@ -1124,8 +1123,9 @@ export async function POST(req: Request) {
       triggerContext,
       workerRequestId,
       triggeredBy = "user",
-      modelProvider = "gemini",
     } = body;
+    // The deployment's provider, never the browser's (lib/agent/model.ts).
+    const modelProvider = resolveChatProvider();
 
     // Guard: initialPrompt must be a non-empty string (new HumanMessage(undefined) crashes)
     const initialPrompt = rawPrompt || `Run ${workerType} worker`;

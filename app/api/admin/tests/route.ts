@@ -1,9 +1,9 @@
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // 5 min — tests run sequentially against /api/chat
+export const maxDuration = 800; // the golden set runs one real chat turn after another
 
 import { NextRequest, NextResponse } from "next/server";
 import { getServerUserIdWithFallback, isServerUserAdmin, unauthorizedResponse } from "@/lib/auth/get-server-user";
-import { runChatTests } from "@/lib/testing/chat-test-runner";
+import { runBukiEvals } from "@/lib/agent/evals/runner";
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { category, tags } = body;
+    const { category, includeWrites } = body;
 
     const authToken = request.headers.get("Authorization")?.replace("Bearer ", "") || "";
 
@@ -27,13 +27,13 @@ export async function POST(request: NextRequest) {
     const host = request.headers.get("host") || "localhost:3000";
     const baseUrl = `${proto}://${host}`;
 
-    const result = await runChatTests({
+    // BuKI's golden set, scored with the rubric (docs/buki-rubric.md).
+    const result = await runBukiEvals({
       baseUrl,
       authToken,
       userId,
-      category: category || undefined,
-      tags: tags || undefined,
-      logToLangfuse: true,
+      category: category && category !== "all" ? category : undefined,
+      includeWrites: includeWrites === true,
     });
 
     // Serialize dates for JSON response

@@ -4,22 +4,40 @@ export const dynamic = "force-dynamic";
  *
  * Uses LangGraph for agent orchestration with:
  * - @ai-sdk/langchain adapter for streaming
- * - LangFuse tracing
+ * - Our own trace per turn (chatTraces, lib/agent/trace.ts)
  * - Vercel AI SDK compatible response format
+ *
+ * The request carries the session's messages, the page the User has open
+ * (`page`), the turn's id (`turnId`, which names its trace) and, when the User
+ * clicked a choice card, the click (`choice`, lib/agent/choices.ts). The model
+ * is the deployment's (lib/agent/model.ts), never the browser's.
  */
 
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { Timestamp } from "firebase-admin/firestore";
+import { randomUUID } from "crypto";
 
 // Dynamic imports to avoid build-time analysis issues
 const getAI = async () => import("ai");
 const getLangchainAdapter = async () => import("@ai-sdk/langchain");
 const getAgentGraph = async () => import("@/lib/agent/graph");
 const getAgentModel = async () => import("@/lib/agent/model");
-const getLangfuse = async () => import("@/lib/agent/langfuse");
 const getUiMessages = async () => import("@/lib/agent/ui-messages");
 const getUsageTracker = async () => import("@/lib/agent/usage-tracker");
+const getTurnSupport = async () => {
+  const [history, context, choices, runner, trace, rubric, tools, messages] = await Promise.all([
+    import("@/lib/agent/history"),
+    import("@/lib/agent/context"),
+    import("@/lib/agent/choices"),
+    import("@/lib/agent/choice-runner"),
+    import("@/lib/agent/trace"),
+    import("@/lib/agent/rubric"),
+    import("@/lib/agent/tools"),
+    import("@langchain/core/messages"),
+  ]);
+  return { history, context, choices, runner, trace, rubric, tools, messages };
+};
 
 const db = getAdminDb();
 
@@ -31,19 +49,27 @@ function sanitizeForLog(value: unknown): string {
   return raw.replace(/\n|\r/g, "");
 }
 
-// AI Usage Logging is now inline in POST handler to use dynamic imports
+/** The client's turn id when it is a plausible one; it names the trace, under the User's id. */
+function turnIdFrom(raw: unknown): string {
+  return typeof raw === "string" && /^[\w-]{8,64}$/.test(raw) ? raw : randomUUID();
+}
+
+function sessionIdFrom(raw: unknown): string | null {
+  return typeof raw === "string" && /^[\w-]{1,128}$/.test(raw) ? raw : null;
+}
 
 // ============================================================================
 // API Handler
 // ============================================================================
 
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   // Dynamic imports at runtime
   const { createUIMessageStreamResponse } = await getAI();
   const { toUIMessageStream } = await getLangchainAdapter();
-  const { buildAgentGraph } = await getAgentGraph();
-  const { getModelId, calculateCost } = await getAgentModel();
-  const { createLangfuseHandler, flushLangfuse } = await getLangfuse();
+  const { buildAgentGraph, RECURSION_LIMIT } = await getAgentGraph();
+  const { getModelId, calculateCost, resolveChatProvider } = await getAgentModel();
+  const { history, context, choices, runner, trace, rubric, tools, messages: lc } = await getTurnSupport();
 
   const authHeader = req.headers.get("Authorization") || "";
   let userId: string;
@@ -54,182 +80,170 @@ export async function POST(req: Request) {
     if (unauthorized) return unauthorized;
     throw error;
   }
-  const { messages: rawMessages, modelProvider: requestedProvider } = await req.json();
+  const body = await req.json();
+  const rawMessages = Array.isArray(body?.messages) ? body.messages : [];
+  const turnId = turnIdFrom(body?.turnId);
+  const sessionId = sessionIdFrom(body?.sessionId);
+  const page = context.parsePageContext(body?.page);
+  const choice = choices.parseChoiceRequest(body?.choice);
+  const modelProvider = resolveChatProvider();
 
-  // Determine model provider (default to anthropic for tool-call reliability; gemini opt-in)
-  const modelProvider: "anthropic" | "gemini" = requestedProvider || "anthropic";
-
-  console.log(`[Chat API] Starting LangGraph agent with ${sanitizeForLog(modelProvider)}, ${sanitizeForLog(rawMessages.length)} messages`);
+  console.log(`[Chat API] ${sanitizeForLog(modelProvider)}, ${sanitizeForLog(rawMessages.length)} messages${choice ? ", with a choice" : ""}`);
 
   // Convert messages to LangChain format. The agent graph owns the system
   // prompt (agentNode strips foreign SystemMessages and prepends its own).
   const { convertToLangChainMessages } = await getUiMessages();
-  const messages = convertToLangChainMessages(rawMessages);
+  const messages = history.trimHistory(convertToLangChainMessages(rawMessages));
 
-  // Create Langfuse handler for tracing
-  const langfuseHandler = createLangfuseHandler({
-    userId,
-    metadata: {
-      messageCount: messages.length,
-    },
-  });
+  // What the User wrote, for the trace: before a click's note is added to it.
+  const lastHuman = [...messages].reverse().find((m) => m instanceof lc.HumanMessage);
+  const userMessage = lastHuman ? trace.textOf(lastHuman) : "";
 
-  // Build the graph
+  // A click on a choice card runs what the server stored for it, then the
+  // model reads what happened as part of the User's message.
+  let choiceOutcome: Awaited<ReturnType<typeof runner.runChoice>> | null = null;
+  if (choice) {
+    choiceOutcome = await runner.runChoice({ userId, authHeader, choice, tools: tools.CHAT_TOOLS as never });
+    const last = messages[messages.length - 1];
+    if (last instanceof lc.HumanMessage) {
+      messages[messages.length - 1] = new lc.HumanMessage(`${trace.textOf(last)}\n\n${choiceOutcome.note}`);
+    } else {
+      messages.push(new lc.HumanMessage(choiceOutcome.note));
+    }
+  }
+
   const graph = buildAgentGraph();
 
   // Token usage, counted when each model call ends (see lib/agent/usage-tracker.ts).
   const { createUsageTracker } = await getUsageTracker();
   const usage = createUsageTracker();
 
-  // Use graph.stream with messages streamMode for best compatibility with toUIMessageStream
+  // "values" carries the graph state after each step: the last one is the
+  // turn's trace. Only "messages" goes on to the browser.
   const graphStream = await graph.stream(
     {
       messages,
       userId,
       authHeader,
       modelProvider,
-      pendingConfirmation: null,
-      shouldContinue: true,
+      context: context.buildContextBlock({ now: new Date(), page }),
+      toolRounds: 0,
+      awaitingUser: false,
     },
     {
-      streamMode: ["messages"] as const,
-      callbacks: langfuseHandler ? [usage.handler, langfuseHandler] : [usage.handler],
+      streamMode: ["messages", "values"] as const,
+      recursionLimit: RECURSION_LIMIT,
+      callbacks: [usage.handler],
     }
   );
 
-  // Wrap stream to capture token usage while preserving the langgraph format
-  // The graphStream with streamMode: ["messages"] yields tuples: ["messages", [messageChunk, metadata]]
-  // We must yield the FULL tuple for toUIMessageStream to detect it as langgraph format
+  let finalState: { messages?: unknown[]; toolRounds?: number } | null = null;
+  let streamError: string | null = null;
 
-  async function* trackUsage(): AsyncGenerator<any> {
+  async function* trackUsage(): AsyncGenerator<unknown> {
     // The try/catch is the point of this wrapper as much as the usage tracking is.
     //
     // Anything thrown while iterating the graph — a model call that fails, a tool
-    // that rejects, a recursion limit — happens AFTER the response headers are
-    // already on the wire, so it cannot become an HTTP error. Without a handler the
-    // generator simply stops: the client sees the assistant's opening sentence and
-    // then silence, and the server logs NOTHING. That is precisely how a broken tool
-    // loop presented ("Let me check your Amazon transactions..." then nothing), and
-    // the absence of any log is what made it hard to place.
-    //
-    // Rethrowing preserves the existing behaviour for the caller; the log is what
-    // turns a silent stall into something diagnosable.
+    // that rejects — happens AFTER the response headers are already on the wire,
+    // so it cannot become an HTTP error. Without a handler the generator simply
+    // stops: the client sees the assistant's opening sentence and then silence,
+    // and the server logs NOTHING. Rethrowing preserves that behaviour for the
+    // caller; the log and the trace's error are what make it diagnosable.
     try {
-      yield* streamChunks();
+      for await (const chunk of graphStream) {
+        if (Array.isArray(chunk) && chunk[0] === "values") {
+          finalState = chunk[1] as typeof finalState;
+          continue;
+        }
+        // Yield the FULL ["messages", [chunk, metadata]] tuple: toUIMessageStream
+        // detects the langgraph format from it.
+        yield chunk;
+      }
     } catch (error) {
+      streamError = error instanceof Error ? error.message : String(error);
       console.error(
-        "[Chat API] Stream failed mid-response — the client will see a truncated " +
-          "answer with no error:",
+        "[Chat API] Stream failed mid-response — the client will see a truncated answer with no error:",
         error instanceof Error ? (error.stack ?? error.message) : String(error),
       );
       throw error;
     }
   }
 
-  async function* streamChunks(): AsyncGenerator<any> {
-    for await (const chunk of graphStream) {
-      // Format: ["messages", [messageChunk, metadata]]
-      if (!Array.isArray(chunk) || chunk[0] !== "messages") {
-        // Pass through non-messages chunks
-        yield chunk;
-        continue;
-      }
-
-
-      const msgData = chunk[1] as [any, unknown];
-      if (!Array.isArray(msgData)) {
-        yield chunk;
-        continue;
-      }
-
-      const msgChunk = msgData[0];
-      if (msgChunk) {
-        const chunkObj = msgChunk as any;
-        const kwargs = chunkObj.kwargs || chunkObj;
-        // Log content for debugging (from kwargs for serialized format)
-        const content = kwargs.content;
-        if (Array.isArray(content) && content.length > 0) {
-          const textBlocks = content.filter((c: { type: string }) => c.type === "text");
-          if (textBlocks.length > 0) {
-            const text = textBlocks.map((c: { text: string }) => c.text || "").join("");
-            if (text) {
-              console.log("[Stream] Text:", JSON.stringify(text.slice(0, 50)));
-            }
-          }
-          // Log tool calls
-          const toolBlocks = content.filter((c: { type: string }) => c.type === "tool_use");
-          if (toolBlocks.length > 0) {
-            console.log("[Stream] Tool call:", JSON.stringify(toolBlocks[0]));
-          }
-        }
-
-        // Log tool_call_chunks if present
-        const toolCallChunks = kwargs.tool_call_chunks;
-        if (toolCallChunks && toolCallChunks.length > 0) {
-          console.log("[Stream] Tool chunks:", JSON.stringify(toolCallChunks));
-        }
-      }
-
-      // Yield the FULL chunk (preserves langgraph format for toUIMessageStream)
-      yield chunk;
-    }
-  }
-
-  // Convert to UI message stream using official adapter
-  // By yielding the full ["messages", [chunk, metadata]] format, the adapter
-  // will detect this as langgraph format and properly handle serialized LC objects
-  // Create a wrapper to log what chunks are being sent to the frontend
-  const wrappedStream = new TransformStream({
-    transform(chunk, controller) {
-      // Log the chunk type
-      if (chunk && typeof chunk === "object" && "type" in chunk) {
-        const c = chunk as { type: string; [key: string]: unknown };
-        if (c.type.includes("tool")) {
-          console.log("[UI Chunk] Tool chunk:", JSON.stringify(c).slice(0, 200));
-        }
-      }
-      controller.enqueue(chunk);
-    },
-  });
-
-  const uiStream = toUIMessageStream(trackUsage(), {
-    onText: (text) => {
-      console.log("[UI Stream] onText:", JSON.stringify(text.slice(0, 50)));
-    },
+  const uiStream = toUIMessageStream(trackUsage() as never, {
     onFinal: async () => {
-      console.log("[Stream] Complete, tokens:", usage.totals);
+      const model = getModelId(modelProvider);
+      const cost = calculateCost(modelProvider, usage.totals.input, usage.totals.output);
 
-      // Log AI usage inline
       if (userId && (usage.totals.input > 0 || usage.totals.output > 0)) {
-        const cost = calculateCost(modelProvider, usage.totals.input, usage.totals.output);
         try {
           await db.collection("aiUsage").add({
             userId,
             function: "chat",
-            model: getModelId(modelProvider),
+            model,
             inputTokens: usage.totals.input,
             outputTokens: usage.totals.output,
             estimatedCost: cost,
             createdAt: Timestamp.now(),
             metadata: null,
           });
-          console.log(`[AI Usage] chat`, {
-            model: getModelId(modelProvider),
-            inputTokens: usage.totals.input,
-            outputTokens: usage.totals.output,
-            estimatedCost: `$${cost.toFixed(4)}`,
-          });
         } catch (error) {
           console.error("[AI Usage] Failed to log usage:", error);
         }
       }
 
-      // Flush Langfuse
-      await flushLangfuse();
+      // The turn's trace, scored with the rubric (docs/buki-rubric.md).
+      try {
+        const state = finalState as { messages?: unknown[]; toolRounds?: number } | null;
+        const all = (state?.messages ?? []) as typeof messages;
+        const { steps, finalText, silentRounds } = trace.traceSteps(all.slice(messages.length));
+        const view = {
+          userMessage,
+          steps,
+          finalText,
+          silentRounds,
+          hitStepLimit: (state?.toolRounds ?? 0) >= (await getAgentGraph()).MAX_TOOL_ROUNDS,
+        };
+        const verdicts = rubric.scoreTrace(view);
+        await db
+          .collection("chatTraces")
+          .doc(`${userId}_${turnId}`)
+          .set({
+            userId,
+            turnId,
+            sessionId,
+            createdAt: Timestamp.now(),
+            durationMs: Date.now() - startedAt,
+            provider: modelProvider,
+            model,
+            page: page ?? null,
+            userMessage: userMessage.slice(0, 4000),
+            choice: choice
+              ? {
+                  optionId: choice.optionId,
+                  feedback: choice.feedback ?? null,
+                  ran: choiceOutcome?.ran
+                    ? { tool: choiceOutcome.ran.tool, result: JSON.stringify(choiceOutcome.ran.result ?? null).slice(0, 2000) }
+                    : null,
+                }
+              : null,
+            steps,
+            finalText,
+            silentRounds,
+            toolRounds: state?.toolRounds ?? 0,
+            hitStepLimit: view.hitStepLimit,
+            inputTokens: usage.totals.input,
+            outputTokens: usage.totals.output,
+            estimatedCost: cost,
+            error: streamError,
+            verdicts,
+            passRate: rubric.passRate(verdicts),
+            feedback: null,
+          });
+      } catch (error) {
+        console.error("[Chat API] Failed to store the trace:", error);
+      }
     },
   });
 
-  // Pipe through the logging wrapper
-  const loggedStream = uiStream.pipeThrough(wrappedStream);
-  return createUIMessageStreamResponse({ stream: loggedStream });
+  return createUIMessageStreamResponse({ stream: uiStream });
 }

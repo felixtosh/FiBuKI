@@ -57,6 +57,10 @@ export {
   listBenchmarkVersionsCallable as listBenchmarkVersions,
   deleteBenchmarkVersionCallable as deleteBenchmarkVersion,
 } from "./benchmark/benchmarkCallables";
+export {
+  submitChatFeedbackCallable as submitChatFeedback,
+  listChatTracesCallable as listChatTraces,
+} from "./chat/chatTraceCallables";
 
 // Export import functions
 export { matchColumns } from "./import/matchColumns";

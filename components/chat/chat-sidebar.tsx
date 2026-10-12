@@ -10,7 +10,6 @@ import { cn } from "@/lib/utils";
 import { useTranslations } from "next-intl";
 import { useChat } from "./chat-provider";
 import { MessageBubble } from "./message-bubble";
-import { ConfirmationCard } from "./confirmation-card";
 import { ChatTabs } from "./chat-tabs";
 import { NotificationsList } from "./notifications-list";
 import { OnboardingSidebar } from "@/components/onboarding";
@@ -27,7 +26,6 @@ export function ChatSidebar() {
   const {
     messages,
     isLoading,
-    pendingConfirmations,
     sendMessage,
     startNewSession,
     loadSession,
@@ -165,7 +163,7 @@ export function ChatSidebar() {
     if (!userScrolledRef.current) {
       queueMicrotask(() => scrollToBottom());
     }
-  }, [messages, pendingConfirmations, showThinkingIndicator, scrollToBottom]);
+  }, [messages, showThinkingIndicator, scrollToBottom]);
 
   // When switching to another chat session (e.g. "View in chat"), reset follow mode
   // and jump to the latest message so live worker progress starts from the bottom.
@@ -317,13 +315,6 @@ export function ChatSidebar() {
                             <MessageBubble key={message.id} message={message} />
                           ))
                         )}
-
-                        {/* Pending confirmations */}
-                        {pendingConfirmations
-                          .filter((tc) => tc.status === "pending")
-                          .map((toolCall) => (
-                            <ConfirmationCard key={toolCall.id} toolCall={toolCall} />
-                          ))}
 
                         {/* Loading indicator */}
                         {showThinkingIndicator && (

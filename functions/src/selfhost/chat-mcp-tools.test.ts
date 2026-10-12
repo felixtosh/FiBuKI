@@ -205,6 +205,8 @@ describe("chat tools with an MCP twin answer exactly what MCP answers", () => {
     ["listPartners", { search: "amzn" }],
     ["getPartner", { partnerId: "p-amazon-old" }],
     ["listCategories", {}],
+    ["getCorrection", { fileId: "f-amazon" }],
+    ["getReceiptLink", { fileId: "f-amazon" }],
   ];
 
   for (const [name, args] of cases) {
@@ -896,35 +898,13 @@ describe("the caller context is the server's (#665)", () => {
 });
 
 describe("guard: a chat tool with an MCP twin never touches the database itself", () => {
-  /**
-   * Chat tools whose name is an MCP tool's but which keep their own body:
-   * each delegates its write to its own callable, and some still read a
-   * record first. Wrapping them is not part of #616; this list only shrinks.
-   */
-  const NOT_YET_WRAPPED = new Set([
-    "createPartner",
-    "dismissSplitSuggestion",
-    "getCorrection",
-    "getReceiptLink",
-    "linkCorrection",
-    "linkReceipt",
-    "makeFileTheOriginal",
-    "markFileAsCopy",
-    "splitFile",
-    "unlinkCorrection",
-    "unlinkReceipt",
-    "unmarkFileAsCopy",
-  ]);
   const snake = (s: string) => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 
-  it("every chat tool named like an MCP tool is a wrapper or knowingly not yet one", async () => {
+  it("every chat tool named like an MCP tool is its wrapper", async () => {
     const { TOOL_NAMES } = await import("../tools/definitions");
     const mcp = new Set(TOOL_NAMES);
-    const unclassified = [...tools.keys()].filter(
-      (n) => mcp.has(snake(n)) && !(n in wrapped) && !NOT_YET_WRAPPED.has(n)
-    );
-    expect(unclassified).toEqual([]);
-    for (const n of NOT_YET_WRAPPED) expect(tools.has(n), `${n} no longer exists: drop it from the list`).toBe(true);
+    const unwrapped = [...tools.keys()].filter((n) => mcp.has(snake(n)) && !(n in wrapped));
+    expect(unwrapped).toEqual([]);
   });
 
   it("every twin in the agent's tool list is the wrapper, and names a real MCP tool", async () => {
@@ -958,11 +938,30 @@ describe("guard: a chat tool with an MCP twin never touches the database itself"
       assignPartnerToFile: { fileId: "f-coffee", partnerId: "p-amazon" },
       updatePartner: { partnerId: "p-amazon", website: "https://amazon.example" },
       connectFileToTransaction: { fileId: "f-coffee", transactionId: "t-fee", skipValidation: true },
+      createPartner: { name: "Probe GmbH" },
+      markFileAsCopy: { fileId: "f-coffee", originalFileId: "f-amazon" },
+      unmarkFileAsCopy: { fileId: "f-coffee" },
+      makeFileTheOriginal: { fileId: "f-coffee" },
+      linkCorrection: { fileId: "f-coffee", originalFileId: "f-amazon" },
+      unlinkCorrection: { fileId: "f-coffee" },
+      getCorrection: { fileId: "f-amazon" },
+      linkReceipt: { fileId: "f-coffee", invoiceFileId: "f-amazon" },
+      unlinkReceipt: { fileId: "f-coffee" },
+      getReceiptLink: { fileId: "f-amazon" },
+      splitFile: { fileId: "f-amazon", ranges: [{ from: 1, to: 1 }, { from: 2, to: 2 }] },
+      dismissSplitSuggestion: { fileId: "f-amazon" },
     };
+    // Writes whose refusal of these fixtures is the shared tool's own answer
+    // (a coffee receipt is no Copy of an Amazon invoice, a one-page PDF does
+    // not split): the point here is that none of them reached the database.
+    const mayRefuse = new Set([
+      "markFileAsCopy", "unmarkFileAsCopy", "makeFileTheOriginal", "linkCorrection", "unlinkCorrection",
+      "linkReceipt", "unlinkReceipt", "splitFile", "dismissSplitSuggestion",
+    ]);
     for (const t of wrappedTools) {
       const res = JSON.stringify(await t.invoke(own[t.name] ?? {}, CONFIG));
       expect(res, t.name).not.toContain("touched the database");
-      expect(res, t.name).not.toContain('"error"');
+      if (!mayRefuse.has(t.name)) expect(res, t.name).not.toContain('"error"');
     }
   });
 });
