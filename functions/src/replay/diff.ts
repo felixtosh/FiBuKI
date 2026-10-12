@@ -66,6 +66,48 @@ export interface SheetDiff {
   files: { total: number; unchanged: number; rows: FileDiffRow[] };
   transactions: { total: number; unchanged: number; rows: TransactionDiffRow[] };
   counts: Record<Verdict, number>;
+  /**
+   * What a person reads instead of an id: every Transaction a File row names
+   * ("HETZNER ONLINE · 2025-11-19 · -49.90"), every Partner a Transaction row
+   * names. An id the sheets do not know is left out; readers show the id.
+   */
+  labels: { transactions: Record<string, string>; partners: Record<string, string> };
+}
+
+/** "name · date · amount" for a Transaction the sheets hold. */
+function transactionLabel(row: TransactionSheetRow | undefined): string | null {
+  if (!row) return null;
+  const amount = row.amount == null ? "?" : (row.amount / 100).toFixed(2);
+  return [row.name || "(no name)", row.date ?? "?", amount].join(" · ");
+}
+
+function buildLabels(base: Sheet, head: Sheet, fileRows: FileDiffRow[], txRows: TransactionDiffRow[]): SheetDiff["labels"] {
+  const transactions: Record<string, string> = {};
+  const add = (id: string) => {
+    if (transactions[id]) return;
+    const label = transactionLabel(head.transactions[id]) ?? transactionLabel(base.transactions[id]);
+    if (label) transactions[id] = label;
+  };
+  for (const r of fileRows) {
+    for (const id of [...r.before.autoConnect, ...r.before.suggestions, ...r.after.autoConnect, ...r.after.suggestions,
+      ...r.truth.manualConnections, ...r.truth.automatedConnections, ...r.truth.rejected]) add(id);
+  }
+  const partners: Record<string, string> = {};
+  for (const sheet of [base, head]) {
+    for (const row of Object.values(sheet.transactions)) {
+      if (!row.top?.partnerName) continue;
+      partners[row.top.partnerId] ??= row.top.partnerName;
+      // The assignment is the top candidate, resolved to the User's own copy.
+      if (row.wouldAssign) partners[row.wouldAssign] ??= row.top.partnerName;
+    }
+  }
+  const usedPartners: Record<string, string> = {};
+  for (const r of txRows) {
+    for (const id of [r.before.wouldAssign, r.before.top, r.after.wouldAssign, r.after.top, r.truth.partnerId]) {
+      if (id && partners[id]) usedPartners[id] = partners[id];
+    }
+  }
+  return { transactions, partners: usedPartners };
 }
 
 const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
@@ -198,11 +240,18 @@ export function diffSheets(base: Sheet, head: Sheet): SheetDiff {
     files: { total: fileIds.size, unchanged: filesUnchanged, rows: fileRows },
     transactions: { total: txIds.size, unchanged: txUnchanged, rows: txRows },
     counts,
+    labels: buildLabels(base, head, fileRows, txRows),
   };
 }
 
 const cents = (n: number | null) => (n == null ? "?" : (n / 100).toFixed(2));
 const list = (ids: string[]) => (ids.length === 0 ? "none" : ids.join(", "));
+/** Ids replaced by what a person reads, wherever the diff knows a label. */
+function readable(text: string, labels: Record<string, string>): string {
+  let out = text;
+  for (const [id, label] of Object.entries(labels)) out = out.split(id).join(label);
+  return out;
+}
 
 /** The diff as Markdown: the summary first, then every changed row, worst first. */
 export function renderDiffMarkdown(diff: SheetDiff, maxRows = 200): string {
@@ -248,10 +297,11 @@ export function renderDiffMarkdown(diff: SheetDiff, maxRows = 200): string {
           : r.truth.rejected.length > 0
             ? `rejected ${list(r.truth.rejected)}`
             : "none";
+      const tx = diff.labels?.transactions ?? {};
       lines.push(
-        `| ${VERDICT_MARK[r.verdict]} | ${r.name} (${r.id}) | ${cents(r.amount)} | ${r.date ?? "?"} | ` +
-          `${list(r.before.autoConnect)} → ${list(r.after.autoConnect)} | ` +
-          `${list(r.before.suggestions)} → ${list(r.after.suggestions)} | ${hand} | ${r.because} |`
+        `| ${VERDICT_MARK[r.verdict]} | ${r.name} | ${cents(r.amount)} | ${r.date ?? "?"} | ` +
+          readable(`${list(r.before.autoConnect)} → ${list(r.after.autoConnect)} | `, tx) +
+          readable(`${list(r.before.suggestions)} → ${list(r.after.suggestions)} | ${hand} | ${r.because} |`, tx)
       );
     }
     lines.push("");
@@ -265,10 +315,14 @@ export function renderDiffMarkdown(diff: SheetDiff, maxRows = 200): string {
     lines.push("|---|---|---:|---|---|---|---|---|");
     for (const r of txRows) {
       const stored = r.truth.partnerId ? `${r.truth.partnerId} (${r.truth.partnerMatchedBy ?? "?"})` : "none";
+      const pl = diff.labels?.partners ?? {};
       lines.push(
-        `| ${VERDICT_MARK[r.verdict]} | ${r.name} (${r.id}) | ${cents(r.amount)} | ${r.date ?? "?"} | ` +
-          `${r.before.wouldAssign ?? "none"} → ${r.after.wouldAssign ?? "none"} | ` +
-          `${r.before.top ?? "none"} → ${r.after.top ?? "none"} | ${stored} | ${r.because} |`
+        `| ${VERDICT_MARK[r.verdict]} | ${r.name} | ${cents(r.amount)} | ${r.date ?? "?"} | ` +
+          readable(
+            `${r.before.wouldAssign ?? "none"} → ${r.after.wouldAssign ?? "none"} | ` +
+              `${r.before.top ?? "none"} → ${r.after.top ?? "none"} | ${stored} | ${r.because} |`,
+            pl
+          )
       );
     }
     lines.push("");

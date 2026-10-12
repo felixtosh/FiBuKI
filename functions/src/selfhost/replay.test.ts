@@ -153,6 +153,12 @@ describe("replay", () => {
     expect(md).toContain("Something got worse");
     expect(md).toContain("❌");
 
+    // A person reads Transactions by name, date and amount, not by id.
+    const decoy = base.transactions["t-decoy"];
+    expect(diff.labels.transactions["t-decoy"]).toBe(`${decoy.name} · ${decoy.date} · ${(decoy.amount! / 100).toFixed(2)}`);
+    expect(md).toContain(diff.labels.transactions["t-decoy"]);
+    expect(md).not.toContain("t-decoy");
+
     // And the branch that comes back to the owner's decision reads as an improvement.
     const fixed = diffSheets(head, base);
     expect(fixed.counts.now_agrees).toBe(2);
