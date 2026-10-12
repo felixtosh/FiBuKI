@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Download, Loader2, Repeat } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useAuth } from "@/components/auth";
 import { pushQuery } from "@/lib/navigation/query-url";
 import { BenchmarkVersionsCard } from "@/components/admin/benchmark-versions-card";
+
+/** Readable names by id. An interface, not a Record, so the UI-string check reads no generic as text. */
+interface Labels {
+  [id: string]: string;
+}
 
 type Verdict = "now_agrees" | "now_disagrees" | "contradicts" | "unverified";
 type Counts = Record<Verdict, number>;
@@ -63,6 +69,8 @@ interface Diff {
   files: { total: number; unchanged: number; rows: FileRow[] };
   transactions: { total: number; unchanged: number; rows: TransactionRow[] };
   counts: Counts;
+  /** Readable names for ids; absent on reports from before they existed. */
+  labels?: { transactions: Labels; partners: Labels };
 }
 
 const MARK: Record<Verdict, string> = {
@@ -243,6 +251,8 @@ function RunsTable({
 }
 
 function DiffView({ diff, t }: { diff: Diff; t: T }) {
+  const txLabels = diff.labels?.transactions ?? {};
+  const partnerLabels = diff.labels?.partners ?? {};
   const worse = diff.counts.contradicts + diff.counts.now_disagrees !== 0;
   const changed = diff.files.rows.length + diff.transactions.rows.length !== 0;
   const verdictKey = worse ? "worse" : changed ? "ok" : "none";
@@ -300,15 +310,20 @@ function DiffView({ diff, t }: { diff: Diff; t: T }) {
                   <TableRow key={r.id}>
                     <TableCell>{MARK[r.verdict]}</TableCell>
                     <TableCell>
-                      <div>{r.name}</div>
-                      <div className="font-mono text-xs text-muted-foreground">{r.id}</div>
+                      <Link href={`/files?id=${r.id}`} className="hover:underline" title={r.id}>
+                        {r.name}
+                      </Link>
                     </TableCell>
                     <TableCell className="text-right">{formatCents(r.amount)}</TableCell>
                     <TableCell>{r.date ?? "?"}</TableCell>
-                    <TableCell className="font-mono text-xs">{idList(r.before.autoConnect)} → {idList(r.after.autoConnect)}</TableCell>
-                    <TableCell className="font-mono text-xs">{idList(r.before.suggestions)} → {idList(r.after.suggestions)}</TableCell>
-                    <TableCell className="font-mono text-xs">{fileHand(r, t)}</TableCell>
-                    <TableCell className="text-xs">{r.because}</TableCell>
+                    <TableCell className="text-xs">
+                      <TxList ids={r.before.autoConnect} labels={txLabels} /> → <TxList ids={r.after.autoConnect} labels={txLabels} />
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      <TxList ids={r.before.suggestions} labels={txLabels} /> → <TxList ids={r.after.suggestions} labels={txLabels} />
+                    </TableCell>
+                    <TableCell className="text-xs">{fileHand(r, t, txLabels)}</TableCell>
+                    <TableCell className="text-xs">{readable(r.because, txLabels)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -341,15 +356,16 @@ function DiffView({ diff, t }: { diff: Diff; t: T }) {
                   <TableRow key={r.id}>
                     <TableCell>{MARK[r.verdict]}</TableCell>
                     <TableCell>
-                      <div>{r.name}</div>
-                      <div className="font-mono text-xs text-muted-foreground">{r.id}</div>
+                      <Link href={`/transactions?id=${r.id}`} className="hover:underline" title={r.id}>
+                        {r.name}
+                      </Link>
                     </TableCell>
                     <TableCell className="text-right">{formatCents(r.amount)}</TableCell>
                     <TableCell>{r.date ?? "?"}</TableCell>
-                    <TableCell className="font-mono text-xs">{r.before.wouldAssign ?? "–"} → {r.after.wouldAssign ?? "–"}</TableCell>
-                    <TableCell className="font-mono text-xs">{r.before.top ?? "–"} → {r.after.top ?? "–"}</TableCell>
-                    <TableCell className="font-mono text-xs">{transactionHand(r)}</TableCell>
-                    <TableCell className="text-xs">{r.because}</TableCell>
+                    <TableCell className="text-xs">{partnerName(r.before.wouldAssign, partnerLabels)} → {partnerName(r.after.wouldAssign, partnerLabels)}</TableCell>
+                    <TableCell className="text-xs">{partnerName(r.before.top, partnerLabels)} → {partnerName(r.after.top, partnerLabels)}</TableCell>
+                    <TableCell className="text-xs">{transactionHand(r, partnerLabels)}</TableCell>
+                    <TableCell className="text-xs">{readable(r.because, partnerLabels)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -362,16 +378,42 @@ function DiffView({ diff, t }: { diff: Diff; t: T }) {
 }
 
 const shortSha = (sha: string | null) => (sha ? sha.slice(0, 7) : "?");
-const idList = (ids: string[]) => (ids.length === 0 ? "–" : ids.join(", "));
+/** Transactions by what a person reads, each opening the Transaction; the id only when no label is known. */
+function TxList({ ids, labels }: { ids: string[]; labels: Labels }) {
+  return ids.length === 0 ? (
+    <span>–</span>
+  ) : (
+    <span>
+      {ids.map((id, i) => (
+        <span key={id}>
+          {i > 0 ? ", " : null}
+          <Link href={`/transactions?id=${id}`} className="hover:underline" title={id}>
+            {labels[id] ?? id}
+          </Link>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+const partnerName = (id: string | null, labels: Labels) => (id ? labels[id] ?? id : "–");
+
+/** Ids in a sentence replaced by their labels. */
+function readable(text: string, labels: Labels): string {
+  let out = text;
+  for (const [id, label] of Object.entries(labels)) out = out.split(id).join(label);
+  return out;
+}
 const formatCents = (n: number | null) => (n == null ? "?" : (n / 100).toFixed(2));
 const formatWhen = (iso: string) => (iso ? new Date(iso).toLocaleString() : "?");
 
-function fileHand(r: FileRow, t: T): string {
-  if (r.truth.manualConnections.length > 0) return t("hand.connected", { ids: r.truth.manualConnections.join(", ") });
-  if (r.truth.rejected.length > 0) return t("hand.rejected", { ids: r.truth.rejected.join(", ") });
+function fileHand(r: FileRow, t: T, labels: Labels): string {
+  const names = (ids: string[]) => ids.map((id) => labels[id] ?? id).join(", ");
+  if (r.truth.manualConnections.length > 0) return t("hand.connected", { ids: names(r.truth.manualConnections) });
+  if (r.truth.rejected.length > 0) return t("hand.rejected", { ids: names(r.truth.rejected) });
   return "–";
 }
 
-function transactionHand(r: TransactionRow): string {
-  return r.truth.partnerId ? `${r.truth.partnerId} (${r.truth.partnerMatchedBy ?? "?"})` : "–";
+function transactionHand(r: TransactionRow, labels: Labels): string {
+  return r.truth.partnerId ? `${labels[r.truth.partnerId] ?? r.truth.partnerId} (${r.truth.partnerMatchedBy ?? "?"})` : "–";
 }
