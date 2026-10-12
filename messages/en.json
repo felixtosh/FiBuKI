@@ -1,8 +1,8 @@
 {
   "landing": {
     "hero": {
-      "title": "Bank Access for AI-natives",
-      "subtitle": "Connect your European Bank to Claude, ChatGPT or OpenClaw with custom skills, MCP and API. Let AI handle your budgeting, invoice matching and bookkeeping.",
+      "title": "Your bookkeeping works while you sleep",
+      "subtitle": "FiBuKI learns from every action and handles your pre-accounting automatically, so you can focus on your business.",
       "ctaLogin": "Go to Dashboard",
       "ctaGetStarted": "Get Started"
     },
