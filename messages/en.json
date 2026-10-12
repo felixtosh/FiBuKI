@@ -1163,7 +1163,9 @@
       "reconciled": "Reconciled",
       "reconciliation_suggested": "Reconciliation suggested",
       "ruling_recorded": "Ruling recorded",
-      "ruling_revoked": "Ruling revoked"
+      "ruling_revoked": "Ruling revoked",
+      "partner_search": "Partner search (agent)",
+      "transaction_search": "Transaction search (agent)"
     },
     "summary": {
       "ran": "{n, plural, =0 {Never ran} one {Ran once} other {Ran # times}}",

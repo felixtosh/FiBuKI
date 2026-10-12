@@ -17,6 +17,7 @@ import { getWorkerConfig } from "@/lib/agent/worker-configs";
 import { WorkerType, WorkerMessage, WorkerRun, WorkerTriggerContext } from "@/types/worker";
 import { ToolCallSummary } from "@/types/notification";
 import { TOOL_LABELS, SKIP_TOOLS, parseToolResult, cleanToolSummary } from "@/lib/tool-summary";
+import { activityEntry, logActivity } from "@/functions/src/utils/activity";
 import { ModelProvider } from "@/lib/agent/model";
 import { chatMailIntegrations } from "@/lib/agent/tools/mail-integrations";
 
@@ -1031,6 +1032,45 @@ async function updateWorkerNotification(
   await db.collection(`users/${userId}/notifications`).doc(notificationId).update(updateData);
 }
 
+/**
+ * The log line a Magic run someone started leaves on the item it ran for
+ * (#752), so the automation ladder counts every run, also one that found
+ * nothing. What the agent changed logs its own lines (an AI assignment, a
+ * connection). Runs the system queued log themselves where they are queued
+ * (runReceiptSearchForTransaction, the company check).
+ */
+const AGENT_RUN_TARGET: Partial<Record<WorkerType, { type: string; on: "transactions" | "files" }>> = {
+  partner_matching: { type: "partner_search", on: "transactions" },
+  receipt_search: { type: "receipt_search", on: "transactions" },
+  file_partner_matching: { type: "partner_search", on: "files" },
+  file_matching: { type: "transaction_search", on: "files" },
+};
+
+async function logAgentRunOnItem(
+  workerType: WorkerType,
+  triggerContext: WorkerTriggerContext | undefined,
+  runId: string,
+  outcome: { status: "completed" | "failed"; text: string }
+): Promise<void> {
+  const target = AGENT_RUN_TARGET[workerType];
+  if (!target) return;
+  const itemId = target.on === "transactions" ? triggerContext?.transactionId : triggerContext?.fileId;
+  if (!itemId) return;
+  const text = outcome.text.length > 200 ? `${outcome.text.slice(0, 197)}...` : outcome.text;
+  await db.collection(target.on).doc(itemId).update(
+    logActivity(
+      activityEntry({
+        type: target.type,
+        actor: "ai",
+        level: "info",
+        status: outcome.status,
+        workerRunId: runId,
+        summary: outcome.status === "completed" ? `Agent search: ${text}` : `Agent search failed: ${text}`,
+      })
+    )
+  );
+}
+
 // ============================================================================
 // API Handler
 // ============================================================================
@@ -1363,6 +1403,18 @@ export async function POST(req: Request) {
           }
         }
 
+        if (triggeredBy === "user") {
+          try {
+            const toolSummary = buildToolSummary(transcript);
+            await logAgentRunOnItem(workerType, effectiveTriggerContext, runId, {
+              status: "completed",
+              text: buildCompactMessage(toolSummary),
+            });
+          } catch (err) {
+            console.error("[Worker API] Failed to log the run on its item:", err);
+          }
+        }
+
         console.log(`[Worker API] ${sanitizeForLog(workerType)} worker completed: ${sanitizeForLog(runId)}`);
 
         return {
@@ -1424,6 +1476,14 @@ export async function POST(req: Request) {
             }, sessionId);
           } catch (err) {
             console.error("[Worker API] Failed to update failure notification:", err);
+          }
+        }
+
+        if (triggeredBy === "user" && !isReauthError) {
+          try {
+            await logAgentRunOnItem(workerType, effectiveTriggerContext, runId, { status: "failed", text: errorMessage });
+          } catch (err) {
+            console.error("[Worker API] Failed to log the failed run on its item:", err);
           }
         }
 

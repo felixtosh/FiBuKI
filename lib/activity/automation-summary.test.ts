@@ -44,10 +44,13 @@ describe("automationMethodOf", () => {
     expect(automationMethodOf(assigned('Partner "A" auto-assigned'), "transactionPartner")).toBe("rules");
     expect(automationMethodOf(assigned('Partner "A" taken from the connected File "x.pdf"'), "transactionPartner")).toBe("file");
     expect(automationMethodOf(entry({ type: "company_check", actor: "auto" }), "transactionPartner")).toBe("magic");
+    expect(automationMethodOf(entry({ type: "partner_search", actor: "ai" }), "transactionPartner")).toBe("magic");
+    expect(automationMethodOf(entry({ type: "partner_search", actor: "ai" }), "filePartner")).toBe("magic");
   });
 
   it("puts the receipt search and the AI with the agent on connections", () => {
     expect(automationMethodOf(entry({ type: "receipt_search", actor: "auto" }), "connection")).toBe("magic");
+    expect(automationMethodOf(entry({ type: "transaction_search", actor: "ai" }), "connection")).toBe("magic");
     expect(automationMethodOf(entry({ type: "file_connected", actor: "ai" }), "connection")).toBe("magic");
     expect(automationMethodOf(entry({ type: "transaction_suggested", actor: "auto" }), "connection")).toBe("rules");
     expect(automationMethodOf(entry({ type: "file_connected", actor: "manual" }), "connection")).toBe("manual");

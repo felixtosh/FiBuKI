@@ -32,6 +32,7 @@ const PARTNER_TYPES = new Set([
   "partner_removed",
   "partner_suggested",
   "company_check",
+  "partner_search",
 ]);
 
 const CONNECTION_TYPES = new Set([
@@ -43,6 +44,7 @@ const CONNECTION_TYPES = new Set([
   "connection_confirmed",
   "file_matching",
   "receipt_search",
+  "transaction_search",
 ]);
 
 /** The entries that set the match, as opposed to suggesting or removing one. */

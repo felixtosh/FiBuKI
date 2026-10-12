@@ -1163,7 +1163,9 @@
       "reconciled": "Abgeglichen",
       "reconciliation_suggested": "Abgleich vorgeschlagen",
       "ruling_recorded": "Entscheidung erfasst",
-      "ruling_revoked": "Entscheidung widerrufen"
+      "ruling_revoked": "Entscheidung widerrufen",
+      "partner_search": "Partnersuche (Agent)",
+      "transaction_search": "Transaktionssuche (Agent)"
     },
     "summary": {
       "ran": "{n, plural, =0 {Nie gelaufen} one {Einmal gelaufen} other {# Mal gelaufen}}",
