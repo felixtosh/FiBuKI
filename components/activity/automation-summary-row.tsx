@@ -60,7 +60,7 @@ export function AutomationSummaryRow({
         const cellClass = cn(
           "inline-flex w-9 items-center justify-center gap-1 text-xs tabular-nums",
           isMatch
-            ? "bg-complete-row text-amount-positive"
+            ? "bg-complete-soft text-amount-positive"
             : count !== 0
               ? "text-foreground/80"
               : "text-muted-foreground/50",

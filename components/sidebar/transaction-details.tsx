@@ -185,42 +185,43 @@ export function TransactionDetails({
     currency: transaction.currency || "EUR",
   }).format(transaction.amount / 100);
 
+  // Rows as tight as the File panel's: 8px apart, no padding of their own
   return (
-    <div className="space-y-3">
-      <FieldRow label="Date" labelWidth="w-32">
+    <div className="space-y-2 [&_.field-row-responsive]:py-0">
+      <FieldRow label="Date" labelWidth="w-28">
         {format(toDate(transaction.date), "MMM d, yyyy")}
       </FieldRow>
 
-      <FieldRow label="Amount" labelWidth="w-32">
+      <FieldRow label="Amount" labelWidth="w-28">
         <span className={cn("tabular-nums", transaction.amount < 0 ? "text-amount-negative" : "text-amount-positive")}>
           {formattedAmount}
         </span>
       </FieldRow>
 
       {transaction.partner && (
-        <FieldRow label="Counterparty" labelWidth="w-32">
+        <FieldRow label="Counterparty" labelWidth="w-28">
           {transaction.partner}
         </FieldRow>
       )}
 
       {transaction.partnerIban && (
-        <FieldRow label="IBAN" labelWidth="w-32">
+        <FieldRow label="IBAN" labelWidth="w-28">
           <span className="font-mono text-xs">{transaction.partnerIban}</span>
         </FieldRow>
       )}
 
-      <FieldRow label="Description" labelWidth="w-32">
+      <FieldRow label="Description" labelWidth="w-28">
         {transaction.name}
       </FieldRow>
 
       {transaction.reference && (
-        <FieldRow label="Reference" labelWidth="w-32">
+        <FieldRow label="Reference" labelWidth="w-28">
           <span className="font-mono text-xs">{transaction.reference}</span>
         </FieldRow>
       )}
 
       {source && (
-        <FieldRow label="Account" labelWidth="w-32">
+        <FieldRow label="Account" labelWidth="w-28">
           <Link
             href={`/sources/${source.id}`}
             className="text-primary hover:underline inline-flex items-center gap-1"
@@ -232,7 +233,7 @@ export function TransactionDetails({
       )}
 
       {/* Show More / Metadata Toggle */}
-      <FieldRow label="" labelWidth="w-32">
+      <FieldRow label="" labelWidth="w-28">
         <ShowMoreButton
           expanded={showMetadata}
           onToggle={() => setShowMetadata(!showMetadata)}
@@ -241,26 +242,26 @@ export function TransactionDetails({
 
       {/* Metadata Section (collapsible) */}
       {showMetadata && (
-        <div className="space-y-3 pt-2 pb-1 animate-in slide-in-from-top-2 duration-200">
-          <FieldRow label="Dedupe Hash" labelWidth="w-32">
+        <div className="space-y-2 pt-1 animate-in slide-in-from-top-2 duration-200">
+          <FieldRow label="Dedupe Hash" labelWidth="w-28">
             <span className="font-mono text-xs truncate max-w-[200px]" title={transaction.dedupeHash}>
               {transaction.dedupeHash.slice(0, 16)}...
             </span>
           </FieldRow>
 
           {transaction.importJobId && (
-            <FieldRow label="Import Job" labelWidth="w-32">
+            <FieldRow label="Import Job" labelWidth="w-28">
               <span className="font-mono text-xs">
                 {transaction.importJobId.slice(0, 8)}...
               </span>
             </FieldRow>
           )}
 
-          <FieldRow label="Created" labelWidth="w-32">
+          <FieldRow label="Created" labelWidth="w-28">
             {format(toDate(transaction.createdAt), "MMM d, yyyy HH:mm")}
           </FieldRow>
 
-          <FieldRow label="Updated" labelWidth="w-32">
+          <FieldRow label="Updated" labelWidth="w-28">
             {format(toDate(transaction.updatedAt), "MMM d, yyyy HH:mm")}
           </FieldRow>
         </div>
@@ -289,7 +290,7 @@ export function TransactionDetails({
           </div>
         </div>
 
-        <FieldRow label="Connect" labelWidth="w-32">
+        <FieldRow label="Connect" labelWidth="w-28">
           {assignedPartner ? (
             <PartnerPill
               name={assignedPartner.name}
@@ -318,7 +319,7 @@ export function TransactionDetails({
 
         {/* Partner suggestions when no match */}
         {!assignedPartner && !isLoadingSuggestions && suggestions.length > 0 && (
-          <FieldRow label="Suggestions" labelWidth="w-32" className="mt-1">
+          <FieldRow label="Suggestions" labelWidth="w-28" className="mt-1">
             <div className="flex flex-wrap gap-1.5">
               {suggestions.slice(0, 3).map((suggestion) => (
                 <PartnerPill

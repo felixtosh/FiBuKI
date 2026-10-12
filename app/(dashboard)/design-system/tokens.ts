@@ -47,6 +47,7 @@ export const colorGroups: { title: string; tokens: ColorToken[] }[] = [
       { token: "--color-amount-negative", name: "Amount -", use: "Expense amounts" },
       { token: "--color-complete-row", name: "Complete row", use: "A finished Transaction" },
       { token: "--color-complete-row-selected", name: "Complete selected", use: "A finished, selected Transaction" },
+      { token: "--color-complete-soft", name: "Complete soft", use: "A small mark that succeeded: the automation that made the match" },
       { token: "--color-info", name: "Info", use: "Tips and suggestions" },
       { token: "--color-info-foreground", name: "Info FG", use: "Text on info" },
       { token: "--color-info-border", name: "Info border", use: "Outline of info boxes" },
