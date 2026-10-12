@@ -141,6 +141,14 @@ const REFERRAL = [
 ] as const;
 
 /**
+ * Signup attribution capture (UTM + referrer), GTM Phase 1. A self-host install
+ * has no marketing funnel to attribute and no admin go-to-market surface to read
+ * it, so this is cloud-tier-only like REFERRAL. The signupAttribution collection
+ * is correspondingly denied to self-host clients in data-policy.ts.
+ */
+const GROWTH = ["recordSignupAttribution"] as const;
+
+/**
  * Firebase-project-to-Firebase-project data migration. Dead on both tiers once
  * production no longer runs on Firebase — there is no source project to read.
  */
@@ -175,6 +183,7 @@ const SELFHOST_ONLY_EXCLUSIONS: readonly string[] = [
   ...BILLING,
   ...COUNTRY_EXPANSION,
   ...REFERRAL,
+  ...GROWTH,
 ];
 
 /**

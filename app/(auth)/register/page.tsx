@@ -19,6 +19,12 @@ import { AlertCircle, CheckCircle, Info, Loader2, Gift, Sparkles } from "lucide-
 import { FibukiMascot } from "@/components/ui/fibuki-mascot";
 import { logoFont } from "@/app/fonts";
 import { callFunction } from "@/lib/firebase/callable";
+import {
+  captureSignupAttribution,
+  readSignupAttribution,
+  clearSignupAttribution,
+  type SignupAttribution,
+} from "@/lib/attribution/signup-attribution";
 import { githubSignInEnabled } from "@/lib/auth/social-providers";
 import { consumeSocialAccessRequest } from "@/lib/auth/social-access-request";
 import { AccessRequestedNotice } from "@/components/auth/access-requested-notice";
@@ -35,6 +41,7 @@ export default function RegisterPage() {
   });
   const [referralApplied, setReferralApplied] = useState(false);
   const [hasReferral, setHasReferral] = useState(false);
+  const [attributionFlushed, setAttributionFlushed] = useState(false);
   const openSeats = useOpenSeats();
   // Self-host: a non-invited Google sign-in bounces back here via the auth
   // client's errorCallbackURL (the host already recorded the request). Show the
@@ -56,6 +63,12 @@ export default function RegisterPage() {
     } else if (typeof window !== "undefined" && localStorage.getItem("fibuki_referral_code")) {
       setHasReferral(true);
     }
+  }, [searchParams]);
+
+  // Capture first-touch signup attribution (UTM + referrer + landing path) into
+  // localStorage, the same way the referral code above survives the OAuth round-trip.
+  useEffect(() => {
+    captureSignupAttribution(searchParams);
   }, [searchParams]);
 
   const handleLogoClick = () => {
@@ -108,6 +121,28 @@ export default function RegisterPage() {
         localStorage.removeItem("fibuki_referral_code");
       });
   }, [user, referralApplied]);
+
+  // After successful registration, record first-touch signup attribution. Same
+  // place and shape as the referral flush above.
+  useEffect(() => {
+    if (!user || attributionFlushed) return;
+    const attribution = readSignupAttribution();
+    if (!attribution) return;
+
+    callFunction<{ attribution: SignupAttribution }, { recorded: boolean }>(
+      "recordSignupAttribution",
+      { attribution }
+    )
+      .then(() => {
+        setAttributionFlushed(true);
+        clearSignupAttribution();
+      })
+      .catch(() => {
+        // Self-host excludes this callable (GROWTH tier), and a transient error
+        // is not worth a retry loop: drop it the way the referral flush does.
+        clearSignupAttribution();
+      });
+  }, [user, attributionFlushed]);
 
   const handleGoogleSignUp = async () => {
     setError("");
