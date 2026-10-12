@@ -16,7 +16,8 @@ import { TransactionSource } from "@/types/source";
 import { TransactionDetails } from "@/components/sidebar/transaction-details";
 import { TransactionFilesSection } from "@/components/transactions/transaction-files-section";
 import { TransactionCorrectionRelated } from "./transaction-correction-related";
-import { TransactionHistory } from "@/components/sidebar/transaction-history";
+import { ActivityLogOverlay } from "@/components/activity/activity-log-overlay";
+import { AutomationSummaryRow } from "@/components/activity/automation-summary-row";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
@@ -145,10 +146,13 @@ export function TransactionDetailPanel({
     (notification) =>
       notification.type === "worker_activity" &&
       notification.context.workerStatus === "running" &&
-      notification.context.transactionId === transaction.id
+      notification.context.transactionId === transaction.id &&
+      notification.context.workerType === "receipt_search"
   );
+  // Between the click and the notification, the click here says it is ours.
+  const [startedHere, setStartedHere] = useState(false);
   const isReceiptSearchRunning =
-    activeWandTargets.has(transaction.id) || isReceiptSearchRunningFromNotification;
+    (startedHere && activeWandTargets.has(transaction.id)) || isReceiptSearchRunningFromNotification;
 
   // Precision search hook (kept for status tracking)
   const {
@@ -160,6 +164,7 @@ export function TransactionDetailPanel({
   // Agentic search trigger - runs receipt search worker
   const triggerSearch = useCallback(() => {
     if (isReceiptSearchRunning) return;
+    setStartedHere(true);
     startReceiptSearch(transaction.id);
   }, [startReceiptSearch, transaction.id, isReceiptSearchRunning]);
 
@@ -328,7 +333,6 @@ export function TransactionDetailPanel({
               transaction={transaction}
               isSearching={isSearching || isReceiptSearchRunning}
               searchLabel={strategyLabel}
-              onTriggerSearch={triggerSearch}
               onOpenConnectFile={onOpenConnectFile}
               onPreviewSuggestedFile={onPreviewSuggestedFile}
               isConnectFileOpen={isConnectFileOpen}
@@ -338,6 +342,19 @@ export function TransactionDetailPanel({
               partnerName={partnerName}
               partnerWebsite={partnerWebsite}
               extensionInstalled={extensionInstalled}
+              headerAction={
+                <AutomationSummaryRow
+                  entries={transaction.automationHistory}
+                  ladder="connection"
+                  matched={(transaction.fileIds?.length ?? 0) > 0}
+                  onMagic={
+                    (transaction.fileIds?.length ?? 0) === 0 && !transaction.noReceiptCategoryId
+                      ? triggerSearch
+                      : undefined
+                  }
+                  magicBusy={isSearching || isReceiptSearchRunning}
+                />
+              }
             />
           </div>
         </div>
@@ -366,18 +383,10 @@ export function TransactionDetailPanel({
 
       {/* Full-panel Activity Log overlay */}
       {showHistoryPanel && (
-        <div className="absolute inset-0 z-40 bg-background flex flex-col">
-          <PanelHeader
-            title="Activity Log"
-            onClose={() => setShowHistoryPanel(false)}
-          />
-          <ScrollArea className="flex-1 px-4 py-4">
-            <TransactionHistory
-              transaction={transaction}
-              expandedByDefault
-            />
-          </ScrollArea>
-        </div>
+        <ActivityLogOverlay
+          entries={transaction.automationHistory}
+          onClose={() => setShowHistoryPanel(false)}
+        />
       )}
     </div>
   );

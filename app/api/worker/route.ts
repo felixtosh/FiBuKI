@@ -17,6 +17,7 @@ import { getWorkerConfig } from "@/lib/agent/worker-configs";
 import { WorkerType, WorkerMessage, WorkerRun, WorkerTriggerContext } from "@/types/worker";
 import { ToolCallSummary } from "@/types/notification";
 import { TOOL_LABELS, SKIP_TOOLS, parseToolResult, cleanToolSummary } from "@/lib/tool-summary";
+import { activityEntry, logActivity } from "@/functions/src/utils/activity";
 import { ModelProvider } from "@/lib/agent/model";
 import { chatMailIntegrations } from "@/lib/agent/tools/mail-integrations";
 
@@ -1031,6 +1032,82 @@ async function updateWorkerNotification(
   await db.collection(`users/${userId}/notifications`).doc(notificationId).update(updateData);
 }
 
+/**
+ * The log line every agent run leaves on the item it ran for (#752), whoever
+ * started it, so the automation ladder counts every run, also one that found
+ * nothing. This is the one place a run's outcome is logged. What the agent
+ * changed logs its own lines (an assignment, a connection); a Partner it
+ * created is named here (`forPartnerId`), because whoever assigns that
+ * Partner afterwards, the agent is why it exists.
+ */
+const AGENT_RUN_TARGET: Partial<Record<WorkerType, { type: string; on: "transactions" | "files" }>> = {
+  partner_matching: { type: "partner_search", on: "transactions" },
+  receipt_search: { type: "receipt_search", on: "transactions" },
+  file_partner_matching: { type: "partner_search", on: "files" },
+  file_matching: { type: "transaction_search", on: "files" },
+};
+
+async function logAgentRunOnItem(
+  workerType: WorkerType,
+  triggerContext: WorkerTriggerContext | undefined,
+  runId: string,
+  outcome: { status: "completed" | "failed"; text: string; created?: CreatedByRun }
+): Promise<void> {
+  const target = AGENT_RUN_TARGET[workerType];
+  if (!target) return;
+  const itemId = target.on === "transactions" ? triggerContext?.transactionId : triggerContext?.fileId;
+  if (!itemId) return;
+  const text = outcome.text.length > 200 ? `${outcome.text.slice(0, 197)}...` : outcome.text;
+  await db.collection(target.on).doc(itemId).update(
+    logActivity(
+      activityEntry({
+        type: target.type,
+        actor: "ai",
+        level: "info",
+        status: outcome.status,
+        workerRunId: runId,
+        forPartnerId: outcome.created?.partnerId ?? null,
+        fileId: outcome.created?.fileId ?? null,
+        summary: outcome.status === "completed" ? `Agent search: ${text}` : `Agent search failed: ${text}`,
+      })
+    )
+  );
+}
+
+interface CreatedByRun {
+  partnerId: string | null;
+  fileId: string | null;
+}
+
+/** The first Partner the run created and the first File it downloaded, from its tool results. */
+function createdIn(transcript: WorkerMessage[]): CreatedByRun {
+  const created: CreatedByRun = { partnerId: null, fileId: null };
+  for (const msg of transcript) {
+    for (const part of msg.parts ?? []) {
+      if (part.type !== "tool" || !("toolCall" in part)) continue;
+      const tc = (part as { toolCall: { name: string; result?: unknown } }).toolCall;
+      if (!tc) continue;
+      let result = tc.result;
+      if (typeof result === "string") {
+        try {
+          result = JSON.parse(result);
+        } catch {
+          continue;
+        }
+      }
+      const r = (result ?? {}) as { partnerId?: unknown; fileId?: unknown; fileIds?: unknown };
+      if (tc.name === "createPartner" && !created.partnerId && typeof r.partnerId === "string") {
+        created.partnerId = r.partnerId;
+      }
+      if ((tc.name === "downloadGmailAttachment" || tc.name === "convertEmailToPdf") && !created.fileId) {
+        const first = Array.isArray(r.fileIds) ? r.fileIds[0] : r.fileId;
+        if (typeof first === "string" && first) created.fileId = first;
+      }
+    }
+  }
+  return created;
+}
+
 // ============================================================================
 // API Handler
 // ============================================================================
@@ -1291,10 +1368,12 @@ export async function POST(req: Request) {
         }
 
         // Update WorkerRun with results
+        // No summary when the agent ended without a closing sentence: the
+        // store refuses undefined, which failed a run that had finished.
         const completedRun: Partial<WorkerRun> = {
           status: "completed",
           messages: transcript,
-          summary,
+          ...(summary ? { summary } : {}),
           actionsPerformed: latestActionsPerformed,
           completedAt: Timestamp.now(),
         };
@@ -1363,6 +1442,16 @@ export async function POST(req: Request) {
           }
         }
 
+        try {
+          await logAgentRunOnItem(workerType, effectiveTriggerContext, runId, {
+            status: "completed",
+            text: buildCompactMessage(buildToolSummary(transcript)),
+            created: createdIn(transcript),
+          });
+        } catch (err) {
+          console.error("[Worker API] Failed to log the run on its item:", err);
+        }
+
         console.log(`[Worker API] ${sanitizeForLog(workerType)} worker completed: ${sanitizeForLog(runId)}`);
 
         return {
@@ -1424,6 +1513,14 @@ export async function POST(req: Request) {
             }, sessionId);
           } catch (err) {
             console.error("[Worker API] Failed to update failure notification:", err);
+          }
+        }
+
+        if (!isReauthError) {
+          try {
+            await logAgentRunOnItem(workerType, effectiveTriggerContext, runId, { status: "failed", text: errorMessage });
+          } catch (err) {
+            console.error("[Worker API] Failed to log the failed run on its item:", err);
           }
         }
 

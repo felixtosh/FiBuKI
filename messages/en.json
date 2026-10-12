@@ -411,7 +411,16 @@
       "vatDeductible": "VAT deductible",
       "whyVatDeductible": "Why the VAT is or is not deductible",
       "vatDeductibleYes": "Yes",
-      "vatDeductibleNo": "No, ask the supplier for an invoice"
+      "vatDeductibleNo": "No",
+      "clickToView": "Click to view",
+      "clickToClose": "Click to close",
+      "download": "Download",
+      "more": "More",
+      "activityLog": "Activity log",
+      "delete": "Delete",
+      "restore": "Restore",
+      "edit": "Edit",
+      "vatDeductibleNoAction": "Ask the supplier for an invoice: without one, the VAT is not deductible."
     },
     "source": {
       "gmail": "Gmail",
@@ -563,7 +572,10 @@
       "chooseInvoice": "Choose the invoice this Receipt pays",
       "noCandidates": "No other File of this Partner",
       "link": "Link",
-      "failed": "That did not work: {message}"
+      "failed": "That did not work: {message}",
+      "dialogTitle": "Receipt for an invoice",
+      "alreadyLinked": "This File is already linked. Unlink it in the panel first.",
+      "cancel": "Cancel"
     },
     "split": {
       "suggestionTitle": "Looks like {count} separate invoices or Receipts",
@@ -1022,7 +1034,6 @@
       "foreignRecipient": "This File is addressed to someone else, so it is not matched. Confirm the recipient to match it."
     }
   },
-
   "admin": {
     "benchmark": {
       "title": "Benchmark",
@@ -1156,7 +1167,54 @@
       "reconciled": "Reconciled",
       "reconciliation_suggested": "Reconciliation suggested",
       "ruling_recorded": "Ruling recorded",
-      "ruling_revoked": "Ruling revoked"
+      "ruling_revoked": "Ruling revoked",
+      "partner_search": "Partner search (agent)",
+      "transaction_search": "Transaction search (agent)"
+    },
+    "summary": {
+      "ran": "{n, plural, =0 {Never ran} one {Ran once} other {Ran # times}}",
+      "madeMatch": "made the current match",
+      "runMagic": "Click to start the AI agent",
+      "magicRunning": "The AI agent is running",
+      "step": "Step {n}: {label}",
+      "methods": {
+        "rules": {
+          "label": "Rules",
+          "description": {
+            "filePartner": "No AI: VAT ID (your Partners, the global list, the EU registry), IBAN, website, email domain and name. When nothing else found it, the name printed on the document.",
+            "transactionPartner": "No AI: IBAN, VAT ID, website, name and learned patterns against your Partners and the global list, or the Partner of the connected Files.",
+            "connection": "No AI: amount, date, Partner and reference, scored; a sure match connects on its own."
+          }
+        },
+        "llm": {
+          "label": "LLM",
+          "description": {
+            "filePartner": "A model looks the company up when the rules found nothing."
+          }
+        },
+        "magic": {
+          "label": "Magic",
+          "description": {
+            "filePartner": "The AI agent searches on its own. Runs when everything before it failed, or when you start it here.",
+            "transactionPartner": "The AI agent searches on its own. Runs for company names the rules missed, or when you start it here.",
+            "connection": "The AI agent searches mail and the web for the receipt. Runs on its own, or when you start it here."
+          }
+        },
+        "manual": {
+          "label": "Manual",
+          "description": {
+            "filePartner": "You: your own pick, or a suggestion you clicked.",
+            "transactionPartner": "You: your own pick, or a suggestion you clicked.",
+            "connection": "You: your own pick, or a suggestion you accepted."
+          }
+        }
+      },
+      "ruleSteps": {
+        "vat": "Found by its VAT ID.",
+        "rules": "Found by IBAN, website, email domain, name or a learned pattern.",
+        "name": "A new Partner from the name printed on the document.",
+        "file": "Taken from the connected Files."
+      }
     }
   }
 }

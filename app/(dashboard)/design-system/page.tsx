@@ -22,7 +22,6 @@ import { colorGroups } from "./tokens";
 const FOUNDATIONS = [
   { id: "colors", title: "Colors" },
   { id: "typography", title: "Typography" },
-  { id: "motion", title: "Motion" },
 ];
 
 const TYPE_ROLES = [
@@ -108,6 +107,8 @@ export default function DesignSystemPage() {
                 </NavGroup>
               ) : null
             )}
+            {/* Motion sits last, after the components it animates */}
+            <NavGroup title="Motion">{navItem("motion", "Motion")}</NavGroup>
           </div>
           <div className="border-t p-3">
             <Link
@@ -153,9 +154,13 @@ export default function DesignSystemPage() {
               </div>
             </Section>
 
+            {rest.map((group) => (
+              <GroupSection key={group.id} group={group} />
+            ))}
+
             <Section id="motion" title="Motion" intro="Every animation the app actually runs, with its real classes and curve.">
-              <Button asChild size="sm" variant="outline">
-                <Link href="/design-system/motion-lab">Open the motion lab: tune how list rows arrive, change and leave</Link>
+              <Button asChild size="sm">
+                <Link href="/design-system/motion-lab">Try it in the motion lab: tune how list rows arrive, change and leave</Link>
               </Button>
               {motionGroups.map((group) => (
                 <div key={group.title} className="space-y-3">
@@ -171,10 +176,6 @@ export default function DesignSystemPage() {
                 </div>
               ))}
             </Section>
-
-            {rest.map((group) => (
-              <GroupSection key={group.id} group={group} />
-            ))}
           </div>
         </div>
       </div>

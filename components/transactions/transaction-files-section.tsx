@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useEffect } from "react";
+import { useMemo, useEffect, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { format } from "date-fns";
 import {
@@ -73,11 +73,11 @@ function FieldRow({
   return (
     <div
       className={cn(
-        "flex items-baseline gap-4 min-w-0 field-row-responsive",
+        "flex items-baseline gap-3 min-w-0 field-row-responsive",
         className
       )}
     >
-      <span className="text-sm text-muted-foreground shrink-0 w-32 field-row-label">
+      <span className="text-sm text-muted-foreground shrink-0 w-28 field-row-label">
         {label}
       </span>
       <span className="text-sm flex-1 min-w-0 field-row-value">{children}</span>
@@ -93,6 +93,8 @@ interface TransactionFilesSectionProps {
   searchLabel?: string;
   /** Trigger a precision search */
   onTriggerSearch?: () => void;
+  /** Shown right after the heading, e.g. the automation summary. */
+  headerAction?: ReactNode;
   /** Open the connect file overlay (lifted to page level) */
   onOpenConnectFile?: () => void;
   /**
@@ -460,6 +462,7 @@ export function TransactionFilesSection({
   isSearching = false,
   searchLabel,
   onTriggerSearch,
+  headerAction,
   onOpenConnectFile,
   onPreviewSuggestedFile,
   isConnectFileOpen = false,
@@ -726,9 +729,12 @@ export function TransactionFilesSection({
     <TooltipProvider>
       <div className="space-y-3" data-onboarding="files-section">
         {/* Section Header with Search and History Buttons */}
-        <div className="flex items-center justify-between relative z-10">
-          <h3 className="text-sm font-medium">File</h3>
-          <div className="flex items-center gap-1">
+        <div className="@container flex items-start justify-between gap-2 @sm:items-center relative z-10">
+          <div className="flex flex-1 flex-col items-start gap-1 @sm:flex-row @sm:items-center @sm:gap-2">
+            <h3 className="text-sm font-semibold">File</h3>
+            {headerAction ? <div className="@sm:ml-auto">{headerAction}</div> : null}
+          </div>
+          <div className="flex items-center gap-1 empty:hidden">
             {/* Browser replay button — shown when recipe exists + extension installed + no files */}
             {!hasFiles && !transaction.noReceiptCategoryId && extensionInstalled && transaction.partnerId && replayMode && partnerRecipes && partnerRecipes.length > 0 && (
               <Tooltip>

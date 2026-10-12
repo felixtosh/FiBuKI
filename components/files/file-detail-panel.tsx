@@ -32,10 +32,10 @@ import {
   Trash2,
   Plus,
   RotateCcw,
-  Loader2,
-  Info,
-  Search,
   Scissors,
+  History,
+  MoreHorizontal,
+  ReceiptText,
 } from "lucide-react";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
@@ -44,15 +44,18 @@ import { useAuthenticatedDownload } from "@/hooks/use-authenticated-download";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { PanelHeader, FieldRow } from "@/components/ui/detail-panel-primitives";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
-import { ActivityHistory } from "@/components/activity/activity-history";
+import { ActivityLogOverlay } from "@/components/activity/activity-log-overlay";
+import { AutomationSummaryRow } from "@/components/activity/automation-summary-row";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { FileCopySection, type CopyAct, type MarkCopyAct } from "./file-copy-section";
 import { FileCorrectionSection } from "./file-correction-section";
 import { FileReceiptLinkSection } from "./file-receipt-link-section";
@@ -191,6 +194,8 @@ function FileDetailPanelInner({
   const { userId } = useAuth();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
   const [isSplitOpen, setIsSplitOpen] = useState(false);
+  const [showActivityLog, setShowActivityLog] = useState(false);
+  const [isReceiptPickerOpen, setIsReceiptPickerOpen] = useState(false);
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
   const [isRetryingExtraction, setIsRetryingExtraction] = useState(false);
   const [isUpdatingExtractedFields, setIsUpdatingExtractedFields] = useState(false);
@@ -205,6 +210,13 @@ function FileDetailPanelInner({
       notification.context.fileId === file.id
   );
   const isWandActive = activeWandTargets.has(file.id) || hasRunningWorkerNotification;
+  // Each section's Magic spins for its own run only: the notification names
+  // the worker; between the click and the notification, the click does.
+  const runningWorkerTypes = runningWorkerTypesFor(notifications, file.id);
+  const [startedMagic, setStartedMagic] = useState(NO_MAGIC_STARTED);
+  const clickedMagic = activeWandTargets.has(file.id) ? startedMagic : null;
+  const isPartnerMagicBusy = runningWorkerTypes.has("file_partner_matching") || clickedMagic === "partner";
+  const isConnectionMagicBusy = runningWorkerTypes.has("file_matching") || clickedMagic === "connection";
 
   const ctx: OperationsContext = useMemo(
     () => ({ db, userId: userId ?? "" }),
@@ -437,7 +449,7 @@ function FileDetailPanelInner({
 
   return (
     <>
-      <div className="h-full flex flex-col">
+      <div className="h-full flex flex-col relative">
         {/* Header */}
         <PanelHeader
           title={fileDisplayName(file)}
@@ -452,7 +464,8 @@ function FileDetailPanelInner({
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-6">
             {/* Preview thumbnail - 25% width, click to toggle viewer */}
-            <div className="flex gap-4 file-preview-section">
+            {/* mb-4 (over space-y-6): the line below sits 16px under the preview, like the header line above it */}
+            <div className="flex gap-4 file-preview-section mb-4">
               <div className="w-1/4 flex-shrink-0 file-preview-thumb">
                 <FilePreview
                   downloadUrl={file.downloadUrl}
@@ -460,10 +473,8 @@ function FileDetailPanelInner({
                   fileName={file.fileName}
                   onClick={onOpenViewer}
                   active={viewerOpen}
+                  hint={viewerOpen ? t("clickToClose") : t("clickToView")}
                 />
-                <p className="text-xs text-muted-foreground text-center mt-1">
-                  {viewerOpen ? "Click to close" : "Click to view"}
-                </p>
               </div>
               <div className="flex-1 space-y-2">
                 {/* Quick file info - fixed label width for alignment */}
@@ -518,15 +529,8 @@ function FileDetailPanelInner({
                   {/* The § 11 verdict as its consequence, on Expenses only (#519) */}
                   {showVatDeductible && (
                     <div className="flex items-start gap-3 file-meta-row">
-                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label flex items-center gap-1">
+                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label">
                         {t("vatDeductible")}
-                        <InfoPopover label={t("whyVatDeductible")}>
-                          <Section11Reasoning
-                            documentType={file.documentType}
-                            basis={file.documentTypeBasis}
-                            missingElements={file.documentTypeMissingElements}
-                          />
-                        </InfoPopover>
                       </span>
                       {receiptInvoice ? (
                         // The pair counts as its invoice (#571): nothing is
@@ -535,14 +539,28 @@ function FileDetailPanelInner({
                           {tReceipt("receiptForInvoice", { invoice: fileDisplayName(receiptInvoice) })}
                         </span>
                       ) : (
-                        <span
-                          className={cn(
-                            "flex-1 text-right file-meta-value",
-                            vatDeductible.tone === "no" && "text-amber-600 dark:text-amber-500",
-                            vatDeductible.tone === "unknown" && "text-muted-foreground"
-                          )}
-                        >
-                          {vatDeductible.text}
+                        <span className="flex-1 flex items-center justify-end gap-1 file-meta-value">
+                          <span
+                            className={cn(
+                              vatDeductible.tone === "no" && "text-amber-600 dark:text-amber-500",
+                              vatDeductible.tone === "unknown" && "text-muted-foreground"
+                            )}
+                          >
+                            {vatDeductible.text}
+                          </span>
+                          {/* The short answer here; the why and what to do behind the icon */}
+                          <InfoPopover label={t("whyVatDeductible")}>
+                            <div className="space-y-2">
+                              {vatDeductible.tone === "no" ? (
+                                <p className="text-xs font-medium">{t("vatDeductibleNoAction")}</p>
+                              ) : null}
+                              <Section11Reasoning
+                                documentType={file.documentType}
+                                basis={file.documentTypeBasis}
+                                missingElements={file.documentTypeMissingElements}
+                              />
+                            </div>
+                          </InfoPopover>
                         </span>
                       )}
                     </div>
@@ -568,72 +586,24 @@ function FileDetailPanelInner({
 
             {/* Partner Assignment Section */}
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium">Partner</h3>
-                <div className="flex items-center gap-1">
-                  {/* Search button to trigger AI partner search */}
-                  {!assignedPartner && file.extractionComplete && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={() => startFilePartnerSearch(file.id)}
-                      disabled={isWandActive}
-                      title="Search for partner"
-                    >
-                      {isWandActive ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Search className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  )}
-                  {/* Debug info button */}
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-6 w-6">
-                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                      </Button>
-                    </PopoverTrigger>
-                  <PopoverContent className="w-80 text-xs" align="end">
-                    <div className="space-y-2">
-                      <p className="font-medium">Partner Match Debug</p>
-                      <div className="space-y-1 text-muted-foreground">
-                        <p><span className="font-medium text-foreground">Matched By:</span> {file.partnerMatchedBy || "none"}</p>
-                        <p><span className="font-medium text-foreground">Confidence:</span> {file.partnerMatchConfidence ?? "—"}%</p>
-                        <p><span className="font-medium text-foreground">Partner ID:</span> {file.partnerId || "none"}</p>
-                        <p><span className="font-medium text-foreground">Partner Type:</span> {file.partnerType || "none"}</p>
-                      </div>
-                      {file.partnerSuggestions && file.partnerSuggestions.length > 0 && (
-                        <>
-                          <Separator className="my-2" />
-                          <p className="font-medium">Suggestions ({file.partnerSuggestions.length})</p>
-                          <div className="space-y-1.5">
-                            {file.partnerSuggestions.map((s, i) => (
-                              <div key={i} className="text-muted-foreground bg-muted/50 p-1.5 rounded">
-                                <p><span className="font-medium text-foreground">#{i+1}:</span> {s.partnerId}</p>
-                                <p>Confidence: {s.confidence}% | Source: {s.source}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                      {file.extractedPartner && (
-                        <>
-                          <Separator className="my-2" />
-                          <p className="font-medium">Extracted Data</p>
-                          <div className="space-y-1 text-muted-foreground">
-                            <p><span className="font-medium text-foreground">Partner:</span> {file.extractedPartner}</p>
-                            {file.extractedVatId && <p><span className="font-medium text-foreground">VAT ID:</span> {file.extractedVatId}</p>}
-                            {file.extractedIban && <p><span className="font-medium text-foreground">IBAN:</span> {file.extractedIban}</p>}
-                            {file.invoiceDirection && <p><span className="font-medium text-foreground">Direction:</span> {file.invoiceDirection}</p>}
-                            {file.matchedUserAccount && <p><span className="font-medium text-foreground">User Account:</span> {file.matchedUserAccount}</p>}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </PopoverContent>
-                </Popover>
+              <div className="@container flex items-start justify-between gap-2 @sm:items-center">
+                <div className="flex flex-1 flex-col items-start gap-1 @sm:flex-row @sm:items-center @sm:gap-2">
+                  <h3 className="text-sm font-semibold">Partner</h3>
+                  <AutomationSummaryRow
+                    className="@sm:ml-auto"
+                    entries={file.automationHistory}
+                    ladder="filePartner"
+                    matched={!!file.partnerId}
+                    onMagic={
+                      !assignedPartner && file.extractionComplete
+                        ? () => {
+                            setStartedMagic("partner");
+                            startFilePartnerSearch(file.id);
+                          }
+                        : undefined
+                    }
+                    magicBusy={isPartnerMagicBusy}
+                  />
                 </div>
               </div>
 
@@ -681,6 +651,7 @@ function FileDetailPanelInner({
                   </div>
                 </FieldRow>
               )}
+
             </div>
 
             <Separator />
@@ -705,7 +676,11 @@ function FileDetailPanelInner({
             <FileCorrectionSection file={file} />
 
             {/* The invoice this Receipt pays, or this invoice's Receipts (#571) */}
-            <FileReceiptLinkSection file={file} />
+            <FileReceiptLinkSection
+              file={file}
+              pickerOpen={isReceiptPickerOpen}
+              onPickerOpenChange={setIsReceiptPickerOpen}
+            />
 
             {/* Connected Transactions + Suggestions */}
             <FileConnectionsList
@@ -718,28 +693,35 @@ function FileDetailPanelInner({
               onDismissSuggestion={handleDismissTransactionSuggestion}
               onTriggerRematch={handleTriggerTransactionRematch}
               isRematching={isRematchingTransactions}
-              onAiSearch={() =>
-                startFileTransactionSearch(file.id, {
-                  fileName: file.fileName,
-                  amount: file.extractedAmount ?? undefined,
-                  currency: file.extractedCurrency ?? undefined,
-                  date: toDateSafe(file.extractedDate)?.toISOString().split("T")[0],
-                  partner: file.extractedPartner ?? undefined,
-                })
+              headerAction={
+                <AutomationSummaryRow
+                  entries={file.automationHistory}
+                  ladder="connection"
+                  matched={(file.transactionIds?.length ?? 0) > 0}
+                  onMagic={
+                    (file.transactionIds?.length ?? 0) === 0
+                      ? () => {
+                          setStartedMagic("connection");
+                          startFileTransactionSearch(file.id, {
+                            fileName: file.fileName,
+                            amount: file.extractedAmount ?? undefined,
+                            currency: file.extractedCurrency ?? undefined,
+                            date: toDateSafe(file.extractedDate)?.toISOString().split("T")[0],
+                            partner: file.extractedPartner ?? undefined,
+                          });
+                        }
+                      : undefined
+                  }
+                  magicBusy={isConnectionMagicBusy}
+                />
               }
-              isAiSearching={isWandActive}
             />
 
-            <Separator />
-
-            {/* Every change a person, the matcher or an AI made to this File (#752) */}
-            <ActivityHistory entries={file.automationHistory} />
           </div>
         </ScrollArea>
 
-        {/* Footer actions */}
+        {/* Footer: one row. Download, and the rest behind More */}
         <div className="p-4 border-t flex flex-col gap-2">
-          {/* Primary row: Download + Delete/Restore */}
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1" asChild>
               <a
@@ -749,45 +731,73 @@ function FileDetailPanelInner({
                 aria-busy={storedDownload.pending}
               >
                 <Download className="h-4 w-4 mr-2" />
-                Download
+                {t("download")}
               </a>
             </Button>
-            {file.deletedAt ? (
-              // Show restore for deleted files
-              onRestore && (
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={onRestore}
-                >
-                  <RotateCcw className="h-4 w-4 mr-2" />
-                  Restore
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="flex-1">
+                  <MoreHorizontal className="h-4 w-4 mr-2" />
+                  {t("more")}
                 </Button>
-              )
-            ) : (
-              // Show delete for non-deleted files
-              onDelete && (
-                <Button
-                  variant="outline"
-                  className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={onDelete}
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete
-                </Button>
-              )
-            )}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" side="top" className="w-56">
+                {canSplitFile(file) ? (
+                  <DropdownMenuItem onSelect={() => setIsSplitOpen(true)}>
+                    <Scissors />
+                    {tSplit("action")}
+                  </DropdownMenuItem>
+                ) : null}
+                {!file.isNotInvoice && !file.receiptLink ? (
+                  <DropdownMenuItem onSelect={() => setIsReceiptPickerOpen(true)}>
+                    <ReceiptText />
+                    {tReceipt("linkByHand")}
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem onSelect={() => setShowActivityLog(true)}>
+                  <History />
+                  {t("activityLog")}
+                  {file.automationHistory?.length ? (
+                    <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                      {file.automationHistory.length}
+                    </span>
+                  ) : null}
+                </DropdownMenuItem>
+                {file.deletedAt && onRestore ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={onRestore}>
+                      <RotateCcw />
+                      {t("restore")}
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+                {!file.deletedAt && onDelete ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={onDelete}
+                      className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                    >
+                      <Trash2 />
+                      {t("delete")}
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-          {canSplitFile(file) ? (
-            <Button variant="ghost" size="sm" onClick={() => setIsSplitOpen(true)}>
-              <Scissors className="h-4 w-4 mr-2" />
-              {tSplit("action")}
-            </Button>
-          ) : null}
           {storedDownload.error && (
             <p className="text-xs text-destructive">{storedDownload.error}</p>
           )}
         </div>
+
+        {showActivityLog && (
+          <ActivityLogOverlay
+            entries={file.automationHistory}
+            onClose={() => setShowActivityLog(false)}
+          />
+        )}
       </div>
 
       <SplitFileDialog file={file} open={isSplitOpen} onClose={() => setIsSplitOpen(false)} />
@@ -814,3 +824,18 @@ function FileDetailPanelInner({
     </>
   );
 }
+
+/** The worker types of the agent runs going on for a File right now. */
+function runningWorkerTypesFor(notifications: ReturnType<typeof useChat>["notifications"], fileId: string) {
+  const types = new Set<string | undefined>();
+  for (const n of notifications) {
+    if (n.type === "worker_activity" && n.context.workerStatus === "running" && n.context.fileId === fileId) {
+      types.add(n.context.workerType);
+    }
+  }
+  return types;
+}
+
+/** Which section's Magic was clicked here, until its run's notification arrives. */
+type MagicSection = "partner" | "connection" | null;
+const NO_MAGIC_STARTED = null as MagicSection;

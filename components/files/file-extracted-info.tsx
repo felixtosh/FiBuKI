@@ -476,7 +476,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium">Extracted Information</h3>
+        <h3 className="text-sm font-semibold">Extracted Information</h3>
         <div className="flex items-center gap-1.5">
           {file.extractionComplete ? (
             // Extraction done - show result or error
@@ -498,7 +498,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
               </>
             ) : (
               <>
-                <Badge variant="secondary" className="text-green-600 bg-green-50">
+                <Badge variant="secondary" className="bg-complete-row text-amount-positive hover:bg-complete-row">
                   {file.extractionConfidence != null && `${file.extractionConfidence}%`}
                 </Badge>
                 {/*

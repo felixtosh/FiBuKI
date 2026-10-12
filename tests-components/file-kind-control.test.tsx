@@ -67,7 +67,8 @@ describe("useVatDeductible", () => {
 
   it("says yes for a § 11 invoice and no for a payment confirmation", () => {
     expect(verdict("invoice")).toEqual({ text: "Yes", tone: "yes" });
-    expect(verdict("receipt")).toEqual({ text: "No, ask the supplier for an invoice", tone: "no" });
+    // The short answer; what to do about a No is in the info popover.
+    expect(verdict("receipt")).toEqual({ text: "No", tone: "no" });
   });
 
   it("says not determined for anything else", () => {

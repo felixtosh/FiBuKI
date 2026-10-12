@@ -93,6 +93,9 @@ export interface AutomationHistoryEntry {
     | "partner_matching"
     | "company_check"
     | "receipt_search"
+    // A Magic run someone started, on the item it ran for
+    | "partner_search"
+    | "transaction_search"
     | "partner_assigned"
     | "partner_removed"
     | "category_assigned"

@@ -50,6 +50,8 @@ const TYPE_STYLE: Record<string, { icon: typeof History; color: string }> = {
   category_removed: { icon: Tag, color: "text-orange-500" },
   category_matched: { icon: Zap, color: "text-purple-500" },
   receipt_search: { icon: Search, color: "text-blue-500" },
+  partner_search: { icon: Search, color: "text-blue-500" },
+  transaction_search: { icon: Search, color: "text-blue-500" },
   file_matching: { icon: Paperclip, color: "text-blue-500" },
   partner_matching: { icon: Bot, color: "text-blue-500" },
   company_check: { icon: Building2, color: "text-blue-500" },

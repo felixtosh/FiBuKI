@@ -164,7 +164,7 @@ const box = "rounded-md border bg-background px-3 py-2 text-sm";
 /** The list motions run on a real table; the lab is where to see and tune them. */
 function MotionLabLink() {
   return (
-    <Button asChild size="sm" variant="outline">
+    <Button asChild size="sm">
       <Link href="/design-system/motion-lab">Try it in the motion lab</Link>
     </Button>
   );

@@ -342,7 +342,7 @@
     },
     "viewer": {
       "passwordProtected": "Dieses PDF ist passwortgeschützt und kann nicht in der Vorschau angezeigt werden.",
-      "passwordProtectedShort": "Passwort\u00adgeschützt"
+      "passwordProtectedShort": "Passwort­geschützt"
     }
   },
   "settings": {
@@ -411,7 +411,16 @@
       "vatDeductible": "Vorsteuer abziehbar",
       "whyVatDeductible": "Warum die Vorsteuer abziehbar ist oder nicht",
       "vatDeductibleYes": "Ja",
-      "vatDeductibleNo": "Nein, beim Lieferanten eine Rechnung anfordern"
+      "vatDeductibleNo": "Nein",
+      "clickToView": "Klicken zum Ansehen",
+      "clickToClose": "Klicken zum Schließen",
+      "download": "Herunterladen",
+      "more": "Mehr",
+      "activityLog": "Aktivitätsprotokoll",
+      "delete": "Löschen",
+      "restore": "Wiederherstellen",
+      "edit": "Bearbeiten",
+      "vatDeductibleNoAction": "Bitte den Lieferanten um eine Rechnung: ohne sie ist die Vorsteuer nicht abziehbar."
     },
     "source": {
       "gmail": "Gmail",
@@ -563,7 +572,10 @@
       "chooseInvoice": "Rechnung wählen, die dieser Zahlungsbeleg bezahlt",
       "noCandidates": "Kein anderer Beleg dieses Partners",
       "link": "Verknüpfen",
-      "failed": "Das hat nicht geklappt: {message}"
+      "failed": "Das hat nicht geklappt: {message}",
+      "dialogTitle": "Beleg zu einer Rechnung",
+      "alreadyLinked": "Dieser Beleg ist schon verknüpft. Löse die Verknüpfung zuerst im Panel.",
+      "cancel": "Abbrechen"
     },
     "split": {
       "suggestionTitle": "Sieht aus wie {count} getrennte Rechnungen oder Zahlungsbelege",
@@ -1022,7 +1034,6 @@
       "foreignRecipient": "Dieser Beleg ist an jemand anderen adressiert und wird nicht zugeordnet. Bestätige den Empfänger, um ihn zuzuordnen."
     }
   },
-
   "admin": {
     "benchmark": {
       "title": "Benchmark",
@@ -1156,7 +1167,54 @@
       "reconciled": "Abgeglichen",
       "reconciliation_suggested": "Abgleich vorgeschlagen",
       "ruling_recorded": "Entscheidung erfasst",
-      "ruling_revoked": "Entscheidung widerrufen"
+      "ruling_revoked": "Entscheidung widerrufen",
+      "partner_search": "Partnersuche (Agent)",
+      "transaction_search": "Transaktionssuche (Agent)"
+    },
+    "summary": {
+      "ran": "{n, plural, =0 {Nie gelaufen} one {Einmal gelaufen} other {# Mal gelaufen}}",
+      "madeMatch": "hat die aktuelle Zuordnung gemacht",
+      "runMagic": "Klicken, um den KI-Agenten zu starten",
+      "magicRunning": "Der KI-Agent läuft",
+      "step": "Schritt {n}: {label}",
+      "methods": {
+        "rules": {
+          "label": "Regeln",
+          "description": {
+            "filePartner": "Ohne KI: UID (deine Partner, die globale Liste, das EU-Register), IBAN, Website, E-Mail-Domain und Name. Wenn sonst nichts passte, der Name auf dem Beleg.",
+            "transactionPartner": "Ohne KI: IBAN, UID, Website, Name und gelernte Muster gegen deine Partner und die globale Liste, oder der Partner der verknüpften Belege.",
+            "connection": "Ohne KI: Betrag, Datum, Partner und Referenz, bewertet; ein sicherer Treffer verknüpft von selbst."
+          }
+        },
+        "llm": {
+          "label": "LLM",
+          "description": {
+            "filePartner": "Ein Modell schlägt das Unternehmen nach, wenn die Regeln nichts gefunden haben."
+          }
+        },
+        "magic": {
+          "label": "Magic",
+          "description": {
+            "filePartner": "Der KI-Agent sucht selbstständig. Läuft, wenn alles davor scheiterte, oder wenn du ihn hier startest.",
+            "transactionPartner": "Der KI-Agent sucht selbstständig. Läuft für Firmennamen, die die Regeln nicht fanden, oder wenn du ihn hier startest.",
+            "connection": "Der KI-Agent sucht in Mails und im Web nach dem Beleg. Läuft von selbst oder wenn du ihn hier startest."
+          }
+        },
+        "manual": {
+          "label": "Manuell",
+          "description": {
+            "filePartner": "Du: deine eigene Wahl oder ein Vorschlag, den du angeklickt hast.",
+            "transactionPartner": "Du: deine eigene Wahl oder ein Vorschlag, den du angeklickt hast.",
+            "connection": "Du: deine eigene Wahl oder ein Vorschlag, den du angenommen hast."
+          }
+        }
+      },
+      "ruleSteps": {
+        "vat": "Über die UID gefunden.",
+        "rules": "Über IBAN, Website, E-Mail-Domain, Name oder ein gelerntes Muster gefunden.",
+        "name": "Ein neuer Partner aus dem Namen auf dem Beleg.",
+        "file": "Von den verknüpften Belegen übernommen."
+      }
     }
   }
 }
