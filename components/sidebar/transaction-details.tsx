@@ -265,7 +265,7 @@ export function TransactionDetails({
       {/* Partner section */}
       <div className="border-t pt-3 mt-3 -mx-4 px-4" data-onboarding="partner-section">
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-medium">Partner</h3>
+          <h3 className="text-sm font-semibold">Partner</h3>
         </div>
 
         <FieldRow label="Connect" labelWidth="w-32">

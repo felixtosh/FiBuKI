@@ -987,7 +987,7 @@ export function InvoiceDetailPanel({
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-6">
             {/* Preview thumbnail row — same layout as file-detail-panel. */}
-            <div className="flex gap-4 file-preview-section -mb-2">
+            <div className="flex gap-4 file-preview-section mb-4">
               <div className="w-1/4 flex-shrink-0 file-preview-thumb">
                 {previewSource ? (
                   <>
@@ -1398,7 +1398,7 @@ function ViewSections({
     <>
       {/* Information */}
       <div className="space-y-4">
-        <h3 className="text-sm font-medium">Information</h3>
+        <h3 className="text-sm font-semibold">Information</h3>
 
         <div className="space-y-2">
           <FieldRow label="Document Date" labelWidth="w-28" className="py-0">
@@ -1472,7 +1472,7 @@ function ViewSections({
 
       {/* Partner */}
       <div className="space-y-2">
-        <h3 className="text-sm font-medium">Partner</h3>
+        <h3 className="text-sm font-semibold">Partner</h3>
         <FieldRow label="Connect" labelWidth="w-28">
           {recipientPartner ? (
             <PartnerPill
@@ -1516,7 +1516,7 @@ function ViewSections({
         />
       ) : (
         <div className="space-y-2">
-          <h3 className="text-sm font-medium">Transaction</h3>
+          <h3 className="text-sm font-semibold">Transaction</h3>
           <FieldRow label="Connect" labelWidth="w-28">
             <span className="text-sm text-muted-foreground">
               Verfügbar, sobald die Rechnung ausgestellt wurde

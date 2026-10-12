@@ -224,7 +224,7 @@ export function FileTransactionSuggestions({
       <div className="space-y-2">
         <div className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-amber-500" />
-          <h3 className="text-sm font-medium">Suggested Transactions</h3>
+          <h3 className="text-sm font-semibold">Suggested Transactions</h3>
           <Badge
             variant="secondary"
             className={cn("text-xs", badgeBump && "animate-counter-bump")}

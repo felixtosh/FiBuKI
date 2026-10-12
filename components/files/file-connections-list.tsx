@@ -425,7 +425,7 @@ export function FileConnectionsList({
       <div className="space-y-2">
         {/* Header with title and action buttons */}
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium">Transaction</h3>
+          <h3 className="text-sm font-semibold">Transaction</h3>
           <div className="flex items-center gap-1">
             {/* Search button to trigger AI transaction search */}
             {onAiSearch && !hasTransactions && (

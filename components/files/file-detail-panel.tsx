@@ -461,8 +461,8 @@ function FileDetailPanelInner({
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-6">
             {/* Preview thumbnail - 25% width, click to toggle viewer */}
-            {/* -mb-2: the line below sits as far from the preview as the header's line above it */}
-            <div className="flex gap-4 file-preview-section -mb-2">
+            {/* mb-4 (over space-y-6): the line below sits 16px under the preview, like the header line above it */}
+            <div className="flex gap-4 file-preview-section mb-4">
               <div className="w-1/4 flex-shrink-0 file-preview-thumb">
                 <FilePreview
                   downloadUrl={file.downloadUrl}
@@ -577,7 +577,7 @@ function FileDetailPanelInner({
             {/* Partner Assignment Section */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium">Partner</h3>
+                <h3 className="text-sm font-semibold">Partner</h3>
                 <div className="flex items-center gap-1">
                   {/* Debug info button */}
                   <Popover>
