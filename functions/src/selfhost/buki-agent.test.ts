@@ -256,6 +256,20 @@ describe("the trace and the rubric", () => {
     expect(v["governance.partner-verified"]).toBe("fail");
   });
 
+  it("counts the tool rounds BuKI began without a word, and fails the narration check on one", () => {
+    const silent = traceSteps([
+      new AIMessage({ content: "Checking your files...", tool_calls: [{ id: "a", name: "listFiles", args: {} }] }),
+      result("a", { files: [] }),
+      new AIMessage({ content: "", tool_calls: [{ id: "b", name: "searchGmailEmails", args: {} }] }),
+      result("b", { emails: [] }),
+      new AIMessage("Nothing found."),
+    ]);
+    expect(silent.silentRounds).toBe(1);
+    const view: TraceView = { userMessage: "find it", steps: silent.steps, finalText: silent.finalText, hitStepLimit: false, silentRounds: 1 };
+    expect(scoreTrace(view)["experience.narrates"]).toBe("fail");
+    expect(scoreTrace({ ...view, silentRounds: 0 })["experience.narrates"]).toBe("pass");
+  });
+
   it("answers in the user's language, not the data's", () => {
     expect(looksGerman("Ich habe die Rechnung nicht gefunden, bitte lade sie hoch")).toBe(true);
     expect(looksGerman("I could not find the invoice for this transaction")).toBe(false);

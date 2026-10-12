@@ -31,6 +31,8 @@ export interface TraceView {
   steps: TraceStep[];
   finalText: string;
   hitStepLimit: boolean;
+  /** Tool rounds the model ran without a word to the User first. */
+  silentRounds?: number;
 }
 
 const MAX_FIELD = 2000;
@@ -55,17 +57,20 @@ export function textOf(m: BaseMessage): string {
 }
 
 /** The steps and the final reply of the messages one turn added. */
-export function traceSteps(turn: BaseMessage[]): { steps: TraceStep[]; finalText: string } {
+export function traceSteps(turn: BaseMessage[]): { steps: TraceStep[]; finalText: string; silentRounds: number } {
   const results = new Map<string, string>();
   for (const m of turn) {
     if (typeOf(m) === "tool") results.set((m as { tool_call_id?: string }).tool_call_id ?? "", textOf(m));
   }
   const steps: TraceStep[] = [];
   let finalText = "";
+  let silentRounds = 0;
   for (const m of turn) {
     if (typeOf(m) !== "ai") continue;
     const text = textOf(m).trim();
     if (text) finalText = text;
+    const calls = (m as { tool_calls?: unknown[] }).tool_calls ?? [];
+    if (calls.length > 0 && !text) silentRounds++;
     for (const tc of (m as { tool_calls?: Array<{ id?: string; name: string; args: unknown }> }).tool_calls ?? []) {
       const result = results.get(tc.id ?? "") ?? "";
       const step: TraceStep = { tool: tc.name, args: cut(JSON.stringify(tc.args ?? {})), result: cut(result) };
@@ -76,5 +81,5 @@ export function traceSteps(turn: BaseMessage[]): { steps: TraceStep[]; finalText
       steps.push(step);
     }
   }
-  return { steps, finalText: cut(finalText, 4000) };
+  return { steps, finalText: cut(finalText, 4000), silentRounds };
 }

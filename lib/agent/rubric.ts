@@ -153,6 +153,12 @@ export const RUBRIC_CHECKS: RubricCheck[] = [
     check: (t) => verdict(t.finalText.length > 0 || t.steps.some((s) => s.awaitingUser)),
   },
   {
+    id: "experience.narrates",
+    section: "experience",
+    description: "Every tool round starts with a short sentence of what BuKI is doing and why: no silent tool runs.",
+    check: (t) => (t.steps.length === 0 || t.silentRounds === undefined ? "n/a" : verdict(t.silentRounds === 0)),
+  },
+  {
     id: "experience.short",
     section: "experience",
     description: "The reply is short: the cards carry the details.",

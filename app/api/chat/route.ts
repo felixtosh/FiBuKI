@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
  *
  * Uses LangGraph for agent orchestration with:
  * - @ai-sdk/langchain adapter for streaming
- * - LangFuse tracing, when its keys are set
+ * - Our own trace per turn (chatTraces, lib/agent/trace.ts)
  * - Vercel AI SDK compatible response format
  *
  * The request carries the session's messages, the page the User has open
@@ -23,7 +23,6 @@ const getAI = async () => import("ai");
 const getLangchainAdapter = async () => import("@ai-sdk/langchain");
 const getAgentGraph = async () => import("@/lib/agent/graph");
 const getAgentModel = async () => import("@/lib/agent/model");
-const getLangfuse = async () => import("@/lib/agent/langfuse");
 const getUiMessages = async () => import("@/lib/agent/ui-messages");
 const getUsageTracker = async () => import("@/lib/agent/usage-tracker");
 const getTurnSupport = async () => {
@@ -70,7 +69,6 @@ export async function POST(req: Request) {
   const { toUIMessageStream } = await getLangchainAdapter();
   const { buildAgentGraph, RECURSION_LIMIT } = await getAgentGraph();
   const { getModelId, calculateCost, resolveChatProvider } = await getAgentModel();
-  const { createLangfuseHandler, flushLangfuse } = await getLangfuse();
   const { history, context, choices, runner, trace, rubric, tools, messages: lc } = await getTurnSupport();
 
   const authHeader = req.headers.get("Authorization") || "";
@@ -97,6 +95,10 @@ export async function POST(req: Request) {
   const { convertToLangChainMessages } = await getUiMessages();
   const messages = history.trimHistory(convertToLangChainMessages(rawMessages));
 
+  // What the User wrote, for the trace: before a click's note is added to it.
+  const lastHuman = [...messages].reverse().find((m) => m instanceof lc.HumanMessage);
+  const userMessage = lastHuman ? trace.textOf(lastHuman) : "";
+
   // A click on a choice card runs what the server stored for it, then the
   // model reads what happened as part of the User's message.
   let choiceOutcome: Awaited<ReturnType<typeof runner.runChoice>> | null = null;
@@ -109,16 +111,6 @@ export async function POST(req: Request) {
       messages.push(new lc.HumanMessage(choiceOutcome.note));
     }
   }
-  const lastHuman = [...messages].reverse().find((m) => m instanceof lc.HumanMessage);
-  const userMessage = lastHuman ? trace.textOf(lastHuman) : "";
-
-  // Create Langfuse handler for tracing
-  const langfuseHandler = createLangfuseHandler({
-    userId,
-    metadata: {
-      messageCount: messages.length,
-    },
-  });
 
   const graph = buildAgentGraph();
 
@@ -141,7 +133,7 @@ export async function POST(req: Request) {
     {
       streamMode: ["messages", "values"] as const,
       recursionLimit: RECURSION_LIMIT,
-      callbacks: langfuseHandler ? [usage.handler, langfuseHandler] : [usage.handler],
+      callbacks: [usage.handler],
     }
   );
 
@@ -203,11 +195,12 @@ export async function POST(req: Request) {
       try {
         const state = finalState as { messages?: unknown[]; toolRounds?: number } | null;
         const all = (state?.messages ?? []) as typeof messages;
-        const { steps, finalText } = trace.traceSteps(all.slice(messages.length));
+        const { steps, finalText, silentRounds } = trace.traceSteps(all.slice(messages.length));
         const view = {
           userMessage,
           steps,
           finalText,
+          silentRounds,
           hitStepLimit: (state?.toolRounds ?? 0) >= (await getAgentGraph()).MAX_TOOL_ROUNDS,
         };
         const verdicts = rubric.scoreTrace(view);
@@ -235,6 +228,7 @@ export async function POST(req: Request) {
               : null,
             steps,
             finalText,
+            silentRounds,
             toolRounds: state?.toolRounds ?? 0,
             hitStepLimit: view.hitStepLimit,
             inputTokens: usage.totals.input,
@@ -248,8 +242,6 @@ export async function POST(req: Request) {
       } catch (error) {
         console.error("[Chat API] Failed to store the trace:", error);
       }
-
-      await flushLangfuse();
     },
   });
 

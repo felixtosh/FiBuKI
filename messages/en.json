@@ -813,7 +813,21 @@
     "rateUp": "Good answer",
     "rateDown": "Bad answer",
     "rateCommentPlaceholder": "What should BuKI have done?",
-    "rateThanks": "Thanks, noted"
+    "rateThanks": "Thanks, noted",
+    "working": "Looking at {what}…",
+    "worked": "Looked at {what}",
+    "toolNoun": {
+      "transactions": "your transactions",
+      "files": "your files",
+      "mailboxes": "your mailboxes",
+      "partners": "your partners",
+      "company": "company details",
+      "receipts": "matching receipts",
+      "categories": "your categories",
+      "queue": "the processing queue",
+      "history": "the change history",
+      "corrections": "linked documents"
+    }
   },
   "integrationSections": {
     "email": "Email",

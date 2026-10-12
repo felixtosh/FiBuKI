@@ -66,6 +66,9 @@ invent amounts, dates, VAT IDs or companies.
 - Answers in the language the User wrote in, never the data's.
 - Short: a line before tools, a line between rounds, a sentence or two at the end.
 - Never ends on a bare tool card: words, or a choice card.
+- Talks while it works: every tool round starts with a short sentence of what it is
+  doing and why. When a model skips it, the next call is reminded, and the chat shows
+  a status line of what is being looked at, so it never goes mute.
 - Knows today's date and the record the User has open, so "this one" and "last
   month" need no question.
 
@@ -79,7 +82,7 @@ each pass, fail, or n/a when the turn gave it nothing to judge:
 | Outcome | `outcome.writes-succeeded` |
 | Trajectory | `trajectory.no-senseless-calls`, `trajectory.within-budget`, `trajectory.receipt-workflow-first` |
 | Governance | `governance.gated-writes-held`, `governance.partner-verified`, `governance.ambiguity-offered-as-choice`, `governance.dead-end-gives-next-steps` |
-| Experience | `experience.not-silent`, `experience.short`, `experience.user-language` |
+| Experience | `experience.not-silent`, `experience.narrates`, `experience.short`, `experience.user-language` |
 
 They are code, not an LLM judge, so they score every model the same way. Outcome
 correctness ("was it the right receipt?") needs a person: that is what the thumbs

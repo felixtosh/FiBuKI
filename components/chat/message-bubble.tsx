@@ -2,7 +2,7 @@
 
 import { Wrench, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { RuntimeChatMessage, MessagePart, ToolCall } from "@/types/chat";
 import { Badge } from "@/components/ui/badge";
@@ -34,9 +34,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     <div className="flex flex-col gap-2 max-w-[95%]">
       {message.parts && message.parts.length > 0 ? (
         // Render parts in chronological order
-        message.parts.map((part, index) => (
-          <MessagePartRenderer key={index} part={part} />
-        ))
+        withRunStatus(message.parts).map(renderItem)
       ) : (
         // Fallback to content string
         message.content && (
@@ -177,4 +175,94 @@ function toolResultFailed(result: unknown): boolean {
   if (!value) return false;
   const r = value as { success?: unknown; error?: unknown };
   return r.success === false || (typeof r.error === "string" && r.error.length > 0);
+}
+
+/** What a read or search tool looks at, for the status line of a silent tool run. */
+const TOOL_NOUN: { [tool: string]: NounKey } = {
+  listTransactions: "transactions",
+  getTransaction: "transactions",
+  listFiles: "files",
+  getFile: "files",
+  searchLocalFiles: "files",
+  waitForFileExtraction: "files",
+  searchGmailAttachments: "mailboxes",
+  searchGmailEmails: "mailboxes",
+  analyzeEmail: "mailboxes",
+  listPartners: "partners",
+  getPartner: "partners",
+  getPartnerReceiptHints: "partners",
+  lookupCompanyInfo: "company",
+  validateVatId: "company",
+  findReceiptForTransaction: "receipts",
+  generateSearchSuggestions: "receipts",
+  listCategories: "categories",
+  getQueueStatus: "queue",
+  getTransactionHistory: "history",
+  getCorrection: "corrections",
+  getReceiptLink: "corrections",
+};
+
+type NounKey =
+  | "transactions"
+  | "files"
+  | "mailboxes"
+  | "partners"
+  | "company"
+  | "receipts"
+  | "categories"
+  | "queue"
+  | "history"
+  | "corrections";
+
+type RenderItem =
+  | { kind: "part"; part: MessagePart }
+  | { kind: "status"; tools: string[]; running: boolean };
+
+/**
+ * The parts with a status line before each run of tool calls that BuKI began
+ * without a word (docs/buki-rubric.md, Experience): whatever the model, the
+ * User sees what is being looked at instead of a silent row of cards.
+ */
+function withRunStatus(parts: MessagePart[]): RenderItem[] {
+  const out: RenderItem[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    const part = parts[i];
+    if (part.type !== "tool") {
+      out.push({ kind: "part", part });
+      i++;
+      continue;
+    }
+    const run: MessagePart[] = [];
+    while (i < parts.length && parts[i].type === "tool") run.push(parts[i++]);
+    const prev = out[out.length - 1];
+    const saidSomething = prev?.kind === "part" && prev.part.type === "text" && prev.part.text.trim() !== "";
+    const tools = run.map((p) => (p.type === "tool" ? p.toolCall.name : ""));
+    if (!saidSomething && tools.some((name) => name in TOOL_NOUN)) {
+      const running = run.some((p) => p.type === "tool" && p.toolCall.status === "pending");
+      out.push({ kind: "status", tools, running });
+    }
+    for (const p of run) out.push({ kind: "part", part: p });
+  }
+  return out;
+}
+
+function renderItem(item: RenderItem, index: number) {
+  if (item.kind === "status") {
+    return <ToolRunStatus key={`s${index}`} tools={item.tools} running={item.running} />;
+  }
+  return <MessagePartRenderer key={index} part={item.part} />;
+}
+
+function ToolRunStatus({ tools, running }: { tools: string[]; running: boolean }) {
+  const t = useTranslations("chat");
+  const locale = useLocale();
+  const nouns = [...new Set(tools.map((name) => TOOL_NOUN[name]).filter(Boolean))].map((key) => t(`toolNoun.${key}`));
+  const what = new Intl.ListFormat(locale, { style: "long", type: "conjunction" }).format(nouns);
+  return (
+    <div className="flex items-center gap-1.5 text-xs italic text-muted-foreground">
+      {running ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+      {running ? t("working", { what }) : t("worked", { what })}
+    </div>
+  );
 }

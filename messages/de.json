@@ -813,7 +813,21 @@
     "rateUp": "Gute Antwort",
     "rateDown": "Schlechte Antwort",
     "rateCommentPlaceholder": "Was hätte BuKI tun sollen?",
-    "rateThanks": "Danke, notiert"
+    "rateThanks": "Danke, notiert",
+    "working": "Schaue mir {what} an…",
+    "worked": "Angesehen: {what}",
+    "toolNoun": {
+      "transactions": "deine Transaktionen",
+      "files": "deine Belege",
+      "mailboxes": "deine Postfächer",
+      "partners": "deine Partner",
+      "company": "Firmendaten",
+      "receipts": "passende Belege",
+      "categories": "deine Kategorien",
+      "queue": "die Warteschlange",
+      "history": "den Änderungsverlauf",
+      "corrections": "verknüpfte Dokumente"
+    }
   },
   "integrationSections": {
     "email": "E-Mail",

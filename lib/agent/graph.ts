@@ -100,8 +100,33 @@ async function getModel(provider: ModelProvider, answerOnly = false) {
   return modelCache.get(key)!;
 }
 
+const NARRATE_REMINDER =
+  "Reminder: your last tool call came with no words to the user. Start this message with one short sentence: " +
+  "what you just found and what you do next.";
+
+/** The model's last tool round said nothing to the User (docs/buki-rubric.md, Experience). */
+function lastRoundWasSilent(messages: BaseMessage[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m instanceof HumanMessage) return false;
+    if (toolCallsOf(m).length > 0) {
+      const c = m.content;
+      const text = typeof c === "string" ? c : Array.isArray(c) ? c.map((b) => (typeof b === "object" && b && "text" in b ? String(b.text ?? "") : "")).join("") : "";
+      return text.trim() === "";
+    }
+  }
+  return false;
+}
+
+/**
+ * The prompt plus the moment's context, and a reminder when the last tool
+ * round went silent: a nudge in the next call costs nothing, unlike a retry.
+ */
 function systemMessage(state: AgentState): SystemMessage {
-  return new SystemMessage(state.context ? `${SYSTEM_PROMPT}\n\n${state.context}` : SYSTEM_PROMPT);
+  const parts = [SYSTEM_PROMPT];
+  if (state.context) parts.push(state.context);
+  if (lastRoundWasSilent(state.messages)) parts.push(NARRATE_REMINDER);
+  return new SystemMessage(parts.join("\n\n"));
 }
 
 /** The graph owns the system prompt: any SystemMessage in state (client-injected or stale) is dropped. */

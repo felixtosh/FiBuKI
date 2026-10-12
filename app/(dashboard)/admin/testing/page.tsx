@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,7 +49,6 @@ interface TestCaseResult {
     details: string[];
   };
   error?: string;
-  langfuseTraceId?: string;
 }
 
 interface TestRunResult {
@@ -60,7 +60,6 @@ interface TestRunResult {
   failedTests: number;
   passRate: number;
   results: TestCaseResult[];
-  langfuseUrl?: string;
 }
 
 // BuKI's golden set, by rubric section (docs/buki-rubric.md).
@@ -74,6 +73,7 @@ const chatTestCategories = [
   { id: "experience" as TestCategory, label: "Experience", icon: MessageCircle },
 ];
 
+const TRACES_LINK_LABEL = "Chat traces";
 const INCLUDE_WRITES_LABEL = "Include scenarios that change data (test account only)";
 
 export default function TestingPage() {
@@ -277,17 +277,10 @@ export default function TestingPage() {
                         {(result.passRate * 100).toFixed(0)}%
                       </span>
                     </div>
-                    {result.langfuseUrl && (
-                      <a
-                        href={result.langfuseUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-primary hover:underline ml-auto"
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                        LangFuse
-                      </a>
-                    )}
+                    <Link href="/admin/chat-traces" className="ml-auto flex items-center gap-1 text-primary hover:underline">
+                      <ExternalLink className="h-3 w-3" />
+                      {TRACES_LINK_LABEL}
+                    </Link>
                   </div>
 
                   {/* Results Table */}
@@ -397,7 +390,7 @@ export default function TestingPage() {
                 <div className="text-center py-12 text-muted-foreground">
                   <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p className="text-sm">Select a test category and click the play button to run tests.</p>
-                  <p className="text-xs mt-1">Results are logged to LangFuse for detailed analysis.</p>
+                  <p className="text-xs mt-1">Each scenario&apos;s full trace is in Admin, Chat traces.</p>
                 </div>
               )}
 

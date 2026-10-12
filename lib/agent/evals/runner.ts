@@ -88,6 +88,7 @@ async function readTrace(userId: string, turnId: string): Promise<TraceView & { 
         steps: Array.isArray(d.steps) ? d.steps : [],
         finalText: String(d.finalText ?? ""),
         hitStepLimit: !!d.hitStepLimit,
+        silentRounds: typeof d.silentRounds === "number" ? d.silentRounds : undefined,
         error: d.error ?? null,
       };
     }
