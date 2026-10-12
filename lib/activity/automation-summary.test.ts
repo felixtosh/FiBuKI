@@ -77,6 +77,25 @@ describe("summarizeAutomations", () => {
     expect(summarizeAutomations(log, "filePartner", false).matchedBy).toBeNull();
   });
 
+  it("credits Magic when the agent created the Partner someone else then assigned", () => {
+    const ikea = [
+      entry({ type: "partner_assigned", actor: "auto", forPartnerId: "p1", summary: 'Partner "IKEA" assigned', ranAt: at("2026-10-01T09:01:00Z") }),
+      entry({ type: "partner_search", actor: "ai", forPartnerId: "p1", summary: "Agent search: created Partner", ranAt: at("2026-10-01T09:02:00Z") }),
+    ];
+    const s = summarizeAutomations(ikea, "filePartner", true);
+    expect(s.matchedBy).toBe("magic");
+    expect(s.counts).toMatchObject({ rules: 1, magic: 1 });
+  });
+
+  it("does not count a queue marker as a run", () => {
+    const queued = [
+      entry({ type: "receipt_search", actor: "auto", status: "pending", summary: "Receipt search queued" }),
+      entry({ type: "company_check", actor: "auto", summary: "Queued partner search" }),
+    ];
+    expect(summarizeAutomations(queued, "connection", false).counts.magic).toBe(0);
+    expect(summarizeAutomations(queued, "transactionPartner", false).counts.magic).toBe(0);
+  });
+
   it("ignores a failed match", () => {
     const failed = [entry({ type: "partner_assigned", actor: "auto", status: "failed" })];
     expect(summarizeAutomations(failed, "filePartner", true).matchedBy).toBeNull();

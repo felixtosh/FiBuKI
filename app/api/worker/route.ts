@@ -1033,11 +1033,12 @@ async function updateWorkerNotification(
 }
 
 /**
- * The log line a Magic run someone started leaves on the item it ran for
- * (#752), so the automation ladder counts every run, also one that found
- * nothing. What the agent changed logs its own lines (an AI assignment, a
- * connection). Runs the system queued log themselves where they are queued
- * (runReceiptSearchForTransaction, the company check).
+ * The log line every agent run leaves on the item it ran for (#752), whoever
+ * started it, so the automation ladder counts every run, also one that found
+ * nothing. This is the one place a run's outcome is logged. What the agent
+ * changed logs its own lines (an assignment, a connection); a Partner it
+ * created is named here (`forPartnerId`), because whoever assigns that
+ * Partner afterwards, the agent is why it exists.
  */
 const AGENT_RUN_TARGET: Partial<Record<WorkerType, { type: string; on: "transactions" | "files" }>> = {
   partner_matching: { type: "partner_search", on: "transactions" },
@@ -1050,7 +1051,7 @@ async function logAgentRunOnItem(
   workerType: WorkerType,
   triggerContext: WorkerTriggerContext | undefined,
   runId: string,
-  outcome: { status: "completed" | "failed"; text: string }
+  outcome: { status: "completed" | "failed"; text: string; createdPartnerId?: string | null }
 ): Promise<void> {
   const target = AGENT_RUN_TARGET[workerType];
   if (!target) return;
@@ -1065,10 +1066,33 @@ async function logAgentRunOnItem(
         level: "info",
         status: outcome.status,
         workerRunId: runId,
+        forPartnerId: outcome.createdPartnerId ?? null,
         summary: outcome.status === "completed" ? `Agent search: ${text}` : `Agent search failed: ${text}`,
       })
     )
   );
+}
+
+/** The Partner the run created with its createPartner tool, if any. */
+function partnerCreatedIn(transcript: WorkerMessage[]): string | null {
+  for (const msg of transcript) {
+    for (const part of msg.parts ?? []) {
+      if (part.type !== "tool" || !("toolCall" in part)) continue;
+      const tc = (part as { toolCall: { name: string; result?: unknown } }).toolCall;
+      if (tc?.name !== "createPartner") continue;
+      let result = tc.result;
+      if (typeof result === "string") {
+        try {
+          result = JSON.parse(result);
+        } catch {
+          continue;
+        }
+      }
+      const id = (result as { partnerId?: unknown } | null)?.partnerId;
+      if (typeof id === "string" && id) return id;
+    }
+  }
+  return null;
 }
 
 // ============================================================================
@@ -1331,10 +1355,12 @@ export async function POST(req: Request) {
         }
 
         // Update WorkerRun with results
+        // No summary when the agent ended without a closing sentence: the
+        // store refuses undefined, which failed a run that had finished.
         const completedRun: Partial<WorkerRun> = {
           status: "completed",
           messages: transcript,
-          summary,
+          ...(summary ? { summary } : {}),
           actionsPerformed: latestActionsPerformed,
           completedAt: Timestamp.now(),
         };
@@ -1403,16 +1429,14 @@ export async function POST(req: Request) {
           }
         }
 
-        if (triggeredBy === "user") {
-          try {
-            const toolSummary = buildToolSummary(transcript);
-            await logAgentRunOnItem(workerType, effectiveTriggerContext, runId, {
-              status: "completed",
-              text: buildCompactMessage(toolSummary),
-            });
-          } catch (err) {
-            console.error("[Worker API] Failed to log the run on its item:", err);
-          }
+        try {
+          await logAgentRunOnItem(workerType, effectiveTriggerContext, runId, {
+            status: "completed",
+            text: buildCompactMessage(buildToolSummary(transcript)),
+            createdPartnerId: partnerCreatedIn(transcript),
+          });
+        } catch (err) {
+          console.error("[Worker API] Failed to log the run on its item:", err);
         }
 
         console.log(`[Worker API] ${sanitizeForLog(workerType)} worker completed: ${sanitizeForLog(runId)}`);
@@ -1479,7 +1503,7 @@ export async function POST(req: Request) {
           }
         }
 
-        if (triggeredBy === "user" && !isReauthError) {
+        if (!isReauthError) {
           try {
             await logAgentRunOnItem(workerType, effectiveTriggerContext, runId, { status: "failed", text: errorMessage });
           } catch (err) {

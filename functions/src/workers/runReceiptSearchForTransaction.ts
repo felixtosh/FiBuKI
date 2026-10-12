@@ -323,19 +323,8 @@ export async function queueReceiptSearchForTransaction(
   const directResult = await callWorkerApiDirectly(userId, "receipt_search", initialPrompt, triggerContext);
 
   if (directResult) {
-    // Direct execution succeeded
-    await db.collection("transactions").doc(transactionId).update({
-      automationHistory: FieldValue.arrayUnion({
-        type: "receipt_search",
-        ranAt: Timestamp.now(),
-        status: directResult.status,
-        actor: "auto",
-        level: "info" as const,
-        forPartnerId: partnerId || null,
-        workerRunId: directResult.runId,
-        summary: directResult.summary || "Receipt search completed",
-      }),
-    });
+    // Direct execution succeeded. The worker route logged the run on the
+    // Transaction, as it does every agent run (#752).
 
     console.log(`[QueueReceiptSearch] Direct execution completed: ${directResult.runId}`);
 

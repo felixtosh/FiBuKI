@@ -47,6 +47,9 @@ const CONNECTION_TYPES = new Set([
   "transaction_search",
 ]);
 
+/** Agent runs, logged once per run by the worker route; `forPartnerId` names a Partner the run created. */
+const AGENT_RUN_TYPES = new Set(["partner_search", "receipt_search", "transaction_search"]);
+
 /** The entries that set the match, as opposed to suggesting or removing one. */
 const MATCH_TYPES = new Set(["partner_assigned", "file_connected", "transaction_connected"]);
 
@@ -105,8 +108,13 @@ export function summarizeAutomations(
   let matchEntry: AutomationHistoryEntry | null = null;
   let matchTime = -Infinity;
 
+  const agentCreatedPartners = new Set<string>();
+
   for (const entry of entries ?? []) {
     if (!types.has(entry.type)) continue;
+    if (AGENT_RUN_TYPES.has(entry.type) && entry.forPartnerId) agentCreatedPartners.add(entry.forPartnerId);
+    // A queue marker is not a run: the run logs itself when it ends.
+    if (entry.status === "pending" || entry.type === "company_check") continue;
     const method = automationMethodOf(entry, ladder);
     counts[method] = (counts[method] ?? 0) + 1;
     if (!MATCH_TYPES.has(entry.type) || entry.status === "failed") continue;
@@ -117,6 +125,12 @@ export function summarizeAutomations(
     }
   }
 
-  const matchedBy = matched && matchEntry ? automationMethodOf(matchEntry, ladder) : null;
+  // A Partner the agent created for this item is the agent's match, whoever
+  // assigned it afterwards (the rules on the new Partner, an open panel).
+  const matchedBy = !matched || !matchEntry
+    ? null
+    : ladder !== "connection" && matchEntry.forPartnerId && agentCreatedPartners.has(matchEntry.forPartnerId)
+      ? "magic"
+      : automationMethodOf(matchEntry, ladder);
   return { methods, counts, matchedBy };
 }

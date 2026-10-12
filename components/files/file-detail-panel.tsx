@@ -208,6 +208,13 @@ function FileDetailPanelInner({
       notification.context.fileId === file.id
   );
   const isWandActive = activeWandTargets.has(file.id) || hasRunningWorkerNotification;
+  // Each section's Magic spins for its own run only: the notification names
+  // the worker; between the click and the notification, the click does.
+  const runningWorkerTypes = runningWorkerTypesFor(notifications, file.id);
+  const [startedMagic, setStartedMagic] = useState(NO_MAGIC_STARTED);
+  const clickedMagic = activeWandTargets.has(file.id) ? startedMagic : null;
+  const isPartnerMagicBusy = runningWorkerTypes.has("file_partner_matching") || clickedMagic === "partner";
+  const isConnectionMagicBusy = runningWorkerTypes.has("file_matching") || clickedMagic === "connection";
 
   const ctx: OperationsContext = useMemo(
     () => ({ db, userId: userId ?? "" }),
@@ -580,10 +587,13 @@ function FileDetailPanelInner({
                     matched={!!file.partnerId}
                     onMagic={
                       !assignedPartner && file.extractionComplete
-                        ? () => startFilePartnerSearch(file.id)
+                        ? () => {
+                            setStartedMagic("partner");
+                            startFilePartnerSearch(file.id);
+                          }
                         : undefined
                     }
-                    magicBusy={isWandActive}
+                    magicBusy={isPartnerMagicBusy}
                   />
                 </div>
               </div>
@@ -677,17 +687,19 @@ function FileDetailPanelInner({
                   matched={(file.transactionIds?.length ?? 0) > 0}
                   onMagic={
                     (file.transactionIds?.length ?? 0) === 0
-                      ? () =>
+                      ? () => {
+                          setStartedMagic("connection");
                           startFileTransactionSearch(file.id, {
                             fileName: file.fileName,
                             amount: file.extractedAmount ?? undefined,
                             currency: file.extractedCurrency ?? undefined,
                             date: toDateSafe(file.extractedDate)?.toISOString().split("T")[0],
                             partner: file.extractedPartner ?? undefined,
-                          })
+                          });
+                        }
                       : undefined
                   }
-                  magicBusy={isWandActive}
+                  magicBusy={isConnectionMagicBusy}
                 />
               }
             />
@@ -793,3 +805,18 @@ function FileDetailPanelInner({
     </>
   );
 }
+
+/** The worker types of the agent runs going on for a File right now. */
+function runningWorkerTypesFor(notifications: ReturnType<typeof useChat>["notifications"], fileId: string) {
+  const types = new Set<string | undefined>();
+  for (const n of notifications) {
+    if (n.type === "worker_activity" && n.context.workerStatus === "running" && n.context.fileId === fileId) {
+      types.add(n.context.workerType);
+    }
+  }
+  return types;
+}
+
+/** Which section's Magic was clicked here, until its run's notification arrives. */
+type MagicSection = "partner" | "connection" | null;
+const NO_MAGIC_STARTED = null as MagicSection;

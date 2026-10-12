@@ -66,13 +66,17 @@ export function TransactionDetails({
 
   // Chat hook for agentic partner search
   const { startPartnerSearch, activeWandTargets, notifications } = useChat();
+  // The Partner section's Magic spins for a Partner run only (#752).
   const hasRunningWorkerNotification = notifications.some(
     (notification) =>
       notification.type === "worker_activity" &&
       notification.context.workerStatus === "running" &&
-      notification.context.transactionId === transaction.id
+      notification.context.transactionId === transaction.id &&
+      notification.context.workerType === "partner_matching"
   );
-  const isWandActive = activeWandTargets.has(transaction.id) || hasRunningWorkerNotification;
+  // Between the click and the notification, the click here says it is ours.
+  const [startedHere, setStartedHere] = useState(false);
+  const isWandActive = hasRunningWorkerNotification || (startedHere && activeWandTargets.has(transaction.id));
 
   // Get partner suggestions and assigned partner (all from server-side data)
   const suggestions = usePartnerSuggestions(transaction, userPartners, globalPartners);
@@ -272,7 +276,14 @@ export function TransactionDetails({
               entries={transaction.automationHistory}
               ladder="transactionPartner"
               matched={!!transaction.partnerId}
-              onMagic={!assignedPartner ? () => startPartnerSearch(transaction.id) : undefined}
+              onMagic={
+                !assignedPartner
+                  ? () => {
+                      setStartedHere(true);
+                      startPartnerSearch(transaction.id);
+                    }
+                  : undefined
+              }
               magicBusy={isWandActive}
             />
           </div>

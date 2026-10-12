@@ -146,10 +146,13 @@ export function TransactionDetailPanel({
     (notification) =>
       notification.type === "worker_activity" &&
       notification.context.workerStatus === "running" &&
-      notification.context.transactionId === transaction.id
+      notification.context.transactionId === transaction.id &&
+      notification.context.workerType === "receipt_search"
   );
+  // Between the click and the notification, the click here says it is ours.
+  const [startedHere, setStartedHere] = useState(false);
   const isReceiptSearchRunning =
-    activeWandTargets.has(transaction.id) || isReceiptSearchRunningFromNotification;
+    (startedHere && activeWandTargets.has(transaction.id)) || isReceiptSearchRunningFromNotification;
 
   // Precision search hook (kept for status tracking)
   const {
@@ -161,6 +164,7 @@ export function TransactionDetailPanel({
   // Agentic search trigger - runs receipt search worker
   const triggerSearch = useCallback(() => {
     if (isReceiptSearchRunning) return;
+    setStartedHere(true);
     startReceiptSearch(transaction.id);
   }, [startReceiptSearch, transaction.id, isReceiptSearchRunning]);
 
