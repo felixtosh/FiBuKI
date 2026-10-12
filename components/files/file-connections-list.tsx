@@ -427,10 +427,10 @@ export function FileConnectionsList({
     <TooltipProvider>
       <div className="space-y-2">
         {/* Header with title and action buttons */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex flex-1 items-center gap-2">
+        <div className="@container flex items-start justify-between gap-2 @sm:items-center">
+          <div className="flex flex-1 flex-col items-start gap-1 @sm:flex-row @sm:items-center @sm:gap-2">
             <h3 className="text-sm font-semibold">Transaction</h3>
-            {headerAction ? <div className="ml-auto">{headerAction}</div> : null}
+            {headerAction ? <div className="@sm:ml-auto">{headerAction}</div> : null}
           </div>
           <div className="flex items-center gap-1 empty:hidden">
             {/* Search button to trigger AI transaction search */}

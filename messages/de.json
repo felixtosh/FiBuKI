@@ -1168,38 +1168,59 @@
     "summary": {
       "ran": "{n, plural, =0 {Nie gelaufen} one {Einmal gelaufen} other {# Mal gelaufen}}",
       "madeMatch": "hat die aktuelle Zuordnung gemacht",
-      "kinds": {
-        "auto": {
-          "label": "Auto",
+      "runMagic": "Klicken, um den KI-Agenten zu starten",
+      "magicRunning": "Der KI-Agent läuft",
+      "step": "Schritt {n}: {label}",
+      "methods": {
+        "vat": {
+          "label": "UID",
           "description": {
-            "partner": "Der regelbasierte Abgleich: IBAN, UID, Website und Name gegen deine Partner und die globale Liste.",
-            "connection": "Der regelbasierte Abgleich: Betrag, Datum, Partner und Referenz."
+            "filePartner": "Die UID auf dem Beleg, gegen deine Partner, dann die globale Liste, dann das EU-Register (VIES)."
+          }
+        },
+        "rules": {
+          "label": "Regeln",
+          "description": {
+            "filePartner": "IBAN, Website, E-Mail-Domain und Name gegen deine Partner und die globale Liste.",
+            "transactionPartner": "IBAN, UID, Website, Name und gelernte Muster gegen deine Partner und die globale Liste.",
+            "connection": "Betrag, Datum, Partner und Referenz, bewertet; ein sicherer Treffer verknüpft von selbst."
           }
         },
         "llm": {
           "label": "LLM",
           "description": {
-            "partner": "Ein Modell hat das Unternehmen selbstständig nachgeschlagen, ohne dass du es gestartet hast.",
-            "connection": "Ein Modell hat selbstständig nach dem Beleg gesucht, ohne dass du es gestartet hast."
+            "filePartner": "Ein Modell schlägt das Unternehmen nach, wenn die Regeln nichts gefunden haben."
+          }
+        },
+        "name": {
+          "label": "Name",
+          "description": {
+            "filePartner": "Wenn auch die Suche nichts fand: ein neuer Partner aus dem Namen auf dem Beleg."
+          }
+        },
+        "file": {
+          "label": "Beleg",
+          "description": {
+            "transactionPartner": "Der Partner der verknüpften Belege, wenn alle denselben nennen."
           }
         },
         "magic": {
           "label": "Magic",
           "description": {
-            "partner": "Der KI-Agent, gestartet über diesen Button oder den Chat.",
-            "connection": "Der KI-Agent, gestartet über diesen Button oder den Chat."
+            "filePartner": "Der KI-Agent sucht selbstständig. Läuft, wenn alles davor scheiterte, oder wenn du ihn hier startest.",
+            "transactionPartner": "Der KI-Agent sucht selbstständig. Läuft für Firmennamen, die die Regeln nicht fanden, oder wenn du ihn hier startest.",
+            "connection": "Der KI-Agent sucht in Mails und im Web nach dem Beleg. Läuft von selbst oder wenn du ihn hier startest."
           }
         },
         "manual": {
           "label": "Manuell",
           "description": {
-            "partner": "Du: deine eigene Wahl oder ein Vorschlag, den du angeklickt hast.",
+            "filePartner": "Du: deine eigene Wahl oder ein Vorschlag, den du angeklickt hast.",
+            "transactionPartner": "Du: deine eigene Wahl oder ein Vorschlag, den du angeklickt hast.",
             "connection": "Du: deine eigene Wahl oder ein Vorschlag, den du angenommen hast."
           }
         }
-      },
-      "runMagic": "Klicken, um den KI-Agenten zu starten",
-      "magicRunning": "Der KI-Agent läuft"
+      }
     }
   }
 }

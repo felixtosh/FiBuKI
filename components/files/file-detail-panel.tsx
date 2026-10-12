@@ -570,13 +570,13 @@ function FileDetailPanelInner({
 
             {/* Partner Assignment Section */}
             <div className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex flex-1 items-center gap-2">
+              <div className="@container flex items-start justify-between gap-2 @sm:items-center">
+                <div className="flex flex-1 flex-col items-start gap-1 @sm:flex-row @sm:items-center @sm:gap-2">
                   <h3 className="text-sm font-semibold">Partner</h3>
                   <AutomationSummaryRow
-                    className="ml-auto"
+                    className="@sm:ml-auto"
                     entries={file.automationHistory}
-                    area="partner"
+                    ladder="filePartner"
                     matched={!!file.partnerId}
                     onMagic={
                       !assignedPartner && file.extractionComplete
@@ -673,7 +673,7 @@ function FileDetailPanelInner({
               headerAction={
                 <AutomationSummaryRow
                   entries={file.automationHistory}
-                  area="connection"
+                  ladder="connection"
                   matched={(file.transactionIds?.length ?? 0) > 0}
                   onMagic={
                     (file.transactionIds?.length ?? 0) === 0

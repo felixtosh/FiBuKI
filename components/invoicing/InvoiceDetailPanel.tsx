@@ -1509,7 +1509,7 @@ function ViewSections({
           headerAction={
             <AutomationSummaryRow
               entries={issuedFile.automationHistory}
-              area="connection"
+              ladder="connection"
               matched={(issuedFile.transactionIds?.length ?? 0) > 0}
             />
           }

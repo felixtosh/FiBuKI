@@ -1168,38 +1168,59 @@
     "summary": {
       "ran": "{n, plural, =0 {Never ran} one {Ran once} other {Ran # times}}",
       "madeMatch": "made the current match",
-      "kinds": {
-        "auto": {
-          "label": "Auto",
+      "runMagic": "Click to start the AI agent",
+      "magicRunning": "The AI agent is running",
+      "step": "Step {n}: {label}",
+      "methods": {
+        "vat": {
+          "label": "VAT ID",
           "description": {
-            "partner": "The rule-based matcher: IBAN, VAT ID, website and name against your Partners and the global list.",
-            "connection": "The rule-based matcher: amount, date, Partner and reference."
+            "filePartner": "The VAT ID on the document, against your Partners, then the global list, then the EU VAT registry (VIES)."
+          }
+        },
+        "rules": {
+          "label": "Rules",
+          "description": {
+            "filePartner": "IBAN, website, email domain and name against your Partners and the global list.",
+            "transactionPartner": "IBAN, VAT ID, website, name and learned patterns against your Partners and the global list.",
+            "connection": "Amount, date, Partner and reference, scored; a sure match connects on its own."
           }
         },
         "llm": {
           "label": "LLM",
           "description": {
-            "partner": "A model looked the company up on its own, without you starting it.",
-            "connection": "A model searched for the receipt on its own, without you starting it."
+            "filePartner": "A model looks the company up when the rules found nothing."
+          }
+        },
+        "name": {
+          "label": "Name",
+          "description": {
+            "filePartner": "When the lookup found nothing either: a new Partner from the name printed on the document."
+          }
+        },
+        "file": {
+          "label": "File",
+          "description": {
+            "transactionPartner": "The Partner of the connected Files, when they all name the same one."
           }
         },
         "magic": {
           "label": "Magic",
           "description": {
-            "partner": "The AI agent, started from this button or the chat.",
-            "connection": "The AI agent, started from this button or the chat."
+            "filePartner": "The AI agent searches on its own. Runs when everything before it failed, or when you start it here.",
+            "transactionPartner": "The AI agent searches on its own. Runs for company names the rules missed, or when you start it here.",
+            "connection": "The AI agent searches mail and the web for the receipt. Runs on its own, or when you start it here."
           }
         },
         "manual": {
           "label": "Manual",
           "description": {
-            "partner": "You: your own pick, or a suggestion you clicked.",
+            "filePartner": "You: your own pick, or a suggestion you clicked.",
+            "transactionPartner": "You: your own pick, or a suggestion you clicked.",
             "connection": "You: your own pick, or a suggestion you accepted."
           }
         }
-      },
-      "runMagic": "Click to start the AI agent",
-      "magicRunning": "The AI agent is running"
+      }
     }
   }
 }

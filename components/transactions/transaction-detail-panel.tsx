@@ -341,7 +341,7 @@ export function TransactionDetailPanel({
               headerAction={
                 <AutomationSummaryRow
                   entries={transaction.automationHistory}
-                  area="connection"
+                  ladder="connection"
                   matched={(transaction.fileIds?.length ?? 0) > 0}
                   onMagic={
                     (transaction.fileIds?.length ?? 0) === 0 && !transaction.noReceiptCategoryId
