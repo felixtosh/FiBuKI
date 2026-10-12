@@ -14,7 +14,6 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn, toDateSafe } from "@/lib/utils";
 import { useEcbConverter } from "@/lib/currency";
-import { useDocumentLabel } from "@/hooks/use-document-label";
 import { InfoPopover } from "@/components/ui/info-popover";
 import {
   Tooltip,
@@ -35,10 +34,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  describeDirectionReview,
-  describeForeignRecipient,
-  describeRepairAmbiguity,
-  describeRksvCodeReview,
   describeInvoiceDirection,
 } from "@/lib/documents/document-type-presentation";
 import { fileDocumentAmount, fileDocumentVatAmount } from "@/lib/files/document-amount";
@@ -151,12 +146,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
   const convert = useEcbConverter();
   const tx = useTranslations("files.extracted");
   const tDetail = useTranslations("files.detail");
-  const documentLabel = useDocumentLabel();
   const directionPresentation = describeInvoiceDirection(file.invoiceDirection);
-  const directionReview = describeDirectionReview(file);
-  const foreignRecipient = describeForeignRecipient(file.foreignRecipient);
-  const repairAmbiguity = describeRepairAmbiguity(file);
-  const rksvCodeReview = describeRksvCodeReview(file);
   const [showMore, setShowMore] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   // Why the last save did not land, shown until the next attempt (#342).
@@ -562,67 +552,9 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
         </div>
       )}
 
-      {/* Findings that change what the document is worth, before its figures */}
-      {foreignRecipient && (
-        <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 space-y-1">
-          <Badge variant="outline" className="text-xs">
-            {foreignRecipient.label}
-          </Badge>
-          <p className="text-xs text-muted-foreground">{foreignRecipient.text}</p>
-        </div>
-      )}
-
-      {/* A silent rewrite of extracted text is a finding, so it keeps its box. */}
-      {repairAmbiguity && (
-        <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 space-y-1">
-          <Badge variant="outline" className="text-xs">
-            {repairAmbiguity.label}
-          </Badge>
-          <p className="text-xs text-muted-foreground">{repairAmbiguity.text}</p>
-        </div>
-      )}
-
-      {/* Two readings of the same split that disagree (#166). */}
-      {rksvCodeReview && (
-        <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 space-y-1">
-          <Badge variant="outline" className="text-xs">
-            {tx("rksvCodeReview.label")}
-          </Badge>
-          <p className="text-xs text-muted-foreground">
-            {tx("rksvCodeReview.text", { rates: formatRates(rksvCodeReview.rates) })}
-          </p>
-        </div>
-      )}
-
-      {/*
-        Only a CONFLICT still gets a callout of its own. A conflict is a
-        finding: the document contradicts a transaction it is attached to, one
-        of the two is wrong, and it was audited as producing only true
-        positives. "No direction was ever established" is not a finding, it is
-        an explanation, and it applied to a large minority of a real file set —
-        so as a permanent bordered box above the figures it was noise on most
-        files. It now hangs off the Direction label's info icon, where it is
-        one click from the field it is about.
-      */}
-      {directionReview && directionReview.reason === "conflict" && (
-        <div
-          className={cn(
-            "rounded border p-2 space-y-1",
-            directionReview.tone === "warning"
-              ? "border-amber-500/40 bg-amber-500/10"
-              : "border-border bg-muted/40"
-          )}
-        >
-          <Badge variant="outline" className="text-xs">
-            {documentLabel(directionReview)}
-          </Badge>
-          <p className="text-xs text-muted-foreground">
-            {directionReview.text}
-            {directionReview.suggestion ? ` ${directionReview.suggestion}` : ""}
-          </p>
-        </div>
-      )}
-
+      {/* The findings (§ 12 recipient, RKSV rates, a direction conflict, a
+          transcription repair) are in their own section below Transaction:
+          FileTaxEligibilitySection. */}
 
       {/* Fields - only show for invoices (not-invoice toggle is in Quick Info now) */}
       {file.extractionComplete && !file.extractionError && !file.isNotInvoice && (
@@ -1205,9 +1137,4 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
       )}
     </div>
   );
-}
-
-/** "10%, 13%": the rates a review names, in the order it stored them. */
-function formatRates(rates: number[]): string {
-  return rates.map((rate) => `${rate}%`).join(", ");
 }

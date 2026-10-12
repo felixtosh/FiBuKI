@@ -10,6 +10,7 @@ export { updateFileCallable } from "./updateFile";
 export { assignPartnerToFileCallable, removePartnerFromFileCallable } from "./filePartner";
 export { updateFileExtractedFieldsCallable } from "./updateFileExtractedFields";
 export { deleteFileCallable } from "./deleteFile";
+export { confirmFileRecipientIsUserCallable } from "./confirmFileRecipient";
 export { restoreFileCallable } from "./restoreFile";
 export { purgeFilesCallable } from "./purgeFiles";
 export { splitFileCallable, dismissSplitSuggestionCallable } from "./splitFile";

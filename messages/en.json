@@ -625,6 +625,17 @@
       "marked": "{count, plural, one {Marked # File as an invoice.} other {Marked # Files as invoices.}}",
       "skipped": "{skipped, plural, one {# skipped: it has your corrections. Open it to extract again.} other {# skipped: they have your corrections. Open them to extract again.}}",
       "failed": "{failed, plural, one {# failed.} other {# failed.}}"
+    },
+    "taxEligibility": {
+      "title": "Tax eligibility",
+      "why": "Why",
+      "failed": "That did not work: {message}",
+      "foreignRecipient": {
+        "title": "Not addressed to you",
+        "text": "This document names a different recipient, so its VAT is not deductible for you (§ 12 Abs 1 Z 1 UStG). It stays out of the UVA and is not suggested for your Transactions.",
+        "question": "Is the recipient you under another name, such as a maiden name or a c/o address?",
+        "confirm": "Yes, that's me"
+      }
     }
   },
   "progress": {

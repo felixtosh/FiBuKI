@@ -59,6 +59,7 @@ import {
 import { FileCopySection, type CopyAct, type MarkCopyAct } from "./file-copy-section";
 import { FileCorrectionSection } from "./file-correction-section";
 import { FileReceiptLinkSection } from "./file-receipt-link-section";
+import { FileTaxEligibilitySection } from "./file-tax-eligibility-section";
 import { FileSplitSection, SplitFileDialog, canSplitFile } from "./file-split-section";
 import { useHandCorrectionGuard } from "./hand-correction-dialog";
 import { Section11Reasoning } from "@/components/documents/section-11-details";
@@ -716,6 +717,9 @@ function FileDetailPanelInner({
                 />
               }
             />
+
+            {/* What changes what the File is worth for tax (§ 12, RKSV, direction) */}
+            <FileTaxEligibilitySection file={file} />
 
           </div>
         </ScrollArea>

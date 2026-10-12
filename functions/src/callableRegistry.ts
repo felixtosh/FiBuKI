@@ -52,6 +52,7 @@ export const CALLABLE_NAMES = [
   "catchUpPartnerMatching",
   "checkMigrationStatus",
   "cleanupOrphanedTransactions",
+  "confirmFileRecipientIsUser",
   "confirmReconciliation",
   "connectFileToTransaction",
   "convertHtmlToPdf",

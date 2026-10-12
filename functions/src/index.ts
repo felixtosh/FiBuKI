@@ -201,6 +201,7 @@ export {
   removePartnerFromFileCallable as removePartnerFromFile,
   updateFileExtractedFieldsCallable as updateFileExtractedFields,
   deleteFileCallable as deleteFile,
+  confirmFileRecipientIsUserCallable as confirmFileRecipientIsUser,
   restoreFileCallable as restoreFile,
   purgeFilesCallable as purgeFiles,
   splitFileCallable as splitFile,

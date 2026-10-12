@@ -625,6 +625,17 @@
       "marked": "{count, plural, one {# Beleg als Rechnung markiert.} other {# Belege als Rechnung markiert.}}",
       "skipped": "{skipped, plural, one {# übersprungen, weil er deine Korrekturen enthält. Öffne ihn, um ihn neu zu extrahieren.} other {# übersprungen, weil sie deine Korrekturen enthalten. Öffne sie, um sie neu zu extrahieren.}}",
       "failed": "{failed, plural, one {# fehlgeschlagen.} other {# fehlgeschlagen.}}"
+    },
+    "taxEligibility": {
+      "title": "Steuerliche Anerkennung",
+      "why": "Warum",
+      "failed": "Das hat nicht geklappt: {message}",
+      "foreignRecipient": {
+        "title": "Nicht auf dich ausgestellt",
+        "text": "Auf diesem Beleg steht ein anderer Leistungsempfänger, daher ist die Vorsteuer für dich nicht abziehbar (§ 12 Abs 1 Z 1 UStG). Er bleibt aus der UVA und wird nicht für deine Transaktionen vorgeschlagen.",
+        "question": "Bist du der Empfänger unter einem anderen Namen, etwa einem Geburtsnamen oder einer c/o-Adresse?",
+        "confirm": "Ja, das bin ich"
+      }
     }
   },
   "progress": {
