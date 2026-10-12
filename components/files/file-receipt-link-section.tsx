@@ -4,8 +4,8 @@
  * The Receipt Link of a File in its detail panel (#571, ADR-0012): on a
  * Receipt, the invoice it pays with Unlink; on an invoice, its Receipts; the
  * suggested pairs with accept, decline and, at a tie, a choice of which File
- * is the Receipt; and a "Receipt for…" picker for a link by hand. Renders a
- * single quiet picker button for a File with none of these.
+ * is the Receipt. Renders nothing for a File with none of these. The
+ * "Receipt for…" link by hand is a dialog, opened from the panel's More menu.
  *
  * The view comes from the getReceiptLink callable, the same one the MCP and
  * chat tools read, so every surface shows the same link.
@@ -17,6 +17,14 @@ import { useTranslations } from "next-intl";
 import { Loader2, ReceiptText } from "lucide-react";
 import { TaxFile } from "@/types/file";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { callFunction } from "@/lib/firebase/callable";
 import { formatCurrency } from "@/lib/utils";
 import type { ReceiptLinkSetBy, ReceiptLinkView, ReceiptPairFileRef } from "@/types/receipt-link";
@@ -46,12 +54,19 @@ function refLabel(ref: ReceiptPairFileRef): string {
   return ref.invoiceNumber || ref.fileName || ref.fileId;
 }
 
-export function FileReceiptLinkSection({ file }: { file: TaxFile }) {
+interface FileReceiptLinkSectionProps {
+  file: TaxFile;
+  /** The "Receipt for…" dialog, opened from the panel's More menu. */
+  pickerOpen: boolean;
+  onPickerOpenChange: (open: boolean) => void;
+}
+
+export function FileReceiptLinkSection({ file, pickerOpen: picking, onPickerOpenChange }: FileReceiptLinkSectionProps) {
   const t = useTranslations("files.receiptLink");
   const [view, setView] = useState(null as ReceiptLinkView | null);
   const [busy, setBusy] = useState(null as string | null);
   const [error, setError] = useState(null as string | null);
-  const [picking, setPicking] = useState(false);
+  const setPicking = onPickerOpenChange;
   const [chosen, setChosen] = useState("");
 
   // Re-read whenever the stored link, the suggestions or the Connections change under the panel.
@@ -102,114 +117,120 @@ export function FileReceiptLinkSection({ file }: { file: TaxFile }) {
     callFunction("unlinkReceipt", otherFileId ? { fileId: file.id, otherFileId } : { fileId: file.id });
 
   if (!view || file.isNotInvoice) return null;
-  const hasPair = !!view.link || view.receipts.length > 0;
+  const hasPair = !!view.link || view.receipts.length !== 0;
   const quiet = !hasPair && view.suggestions.length === 0;
 
-  if (quiet && !picking) {
-    return (
-      <div className="flex justify-end" data-testid="file-receipt-link">
-        <Button size="sm" variant="ghost" className="text-xs text-muted-foreground" onClick={() => setPicking(true)}>
-          <ReceiptText className="h-3.5 w-3.5 mr-1.5" />
-          {t("linkByHand")}
-        </Button>
-      </div>
-    );
-  }
-
   return (
-    <section className="rounded-md border bg-muted/40 p-3 space-y-2" data-testid="file-receipt-link">
-      {view.link && view.invoice ? (
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm">
-            <ReceiptText className="h-4 w-4 text-muted-foreground shrink-0" />
-            <span className="text-muted-foreground">{t("receiptFor")}</span>
-            <Link href={`/files?id=${view.invoice.fileId}`} className="font-medium truncate hover:underline">
-              {refLabel(view.invoice)}
-            </Link>
-          </div>
-          <p className="text-xs text-muted-foreground">{t("countsOnce")}</p>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground flex-1">{t(SET_BY_KEY[view.link.setBy])}</span>
-            <Button size="sm" variant="ghost" disabled={busy !== null} onClick={run("unlink", () => unlink())}>
-              <Spinner on={busy === "unlink"} />
-              {t("unlink")}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      {view.receipts.length > 0 ? (
-        <div className="space-y-1">
-          <p className="text-xs font-medium">{t("receiptsTitle")}</p>
-          <ul className="space-y-0.5">
-            {view.receipts.map((r) => (
-              <li key={r.fileId} className="flex items-center gap-2 text-sm">
-                <ReceiptText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <Link href={`/files?id=${r.fileId}`} className="truncate hover:underline flex-1">
-                  {r.fileName || r.fileId}
-                </Link>
-                <Amount item={r} />
-                <Button size="sm" variant="ghost" disabled={busy !== null} onClick={run(`unlink-${r.fileId}`, () => unlink(r.fileId))}>
-                  <Spinner on={busy === `unlink-${r.fileId}`} />
-                  {t("unlink")}
-                </Button>
-              </li>
+    <>
+    <Dialog
+      open={picking}
+      onOpenChange={(open) => {
+        setPicking(open);
+        if (!open) setChosen("");
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t("dialogTitle")}</DialogTitle>
+          <DialogDescription>{t("countsOnce")}</DialogDescription>
+        </DialogHeader>
+        {hasPair ? (
+          <p className="text-sm text-muted-foreground">{t("alreadyLinked")}</p>
+        ) : (
+          <select
+            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+            value={chosen}
+            onChange={(e) => setChosen(e.target.value)}
+            aria-label={t("chooseInvoice")}
+          >
+            <option value="">{view.candidates.length > 0 ? t("chooseInvoice") : t("noCandidates")}</option>
+            {view.candidates.map((c) => (
+              <option key={c.fileId} value={c.fileId}>
+                {[refLabel(c), c.date, c.amount !== null ? formatCurrency(c.amount) : null].filter(Boolean).join(" · ")}
+              </option>
             ))}
-          </ul>
-          <p className="text-xs text-muted-foreground">{t("countsOnce")}</p>
-        </div>
-      ) : null}
-
-      {view.suggestions.length > 0 ? (
-        <div className="space-y-1">
-          <p className="text-xs font-medium">{t("suggestionsTitle")}</p>
-          <ul className="space-y-1.5">
-            {view.suggestions.map((s) => (
-              <Suggestion
-                key={s.fileId}
-                fileId={file.id}
-                suggestion={s}
-                busy={busy}
-                onLink={(receiptId, invoiceId) => run(`accept-${s.fileId}`, () => link(receiptId, invoiceId))()}
-                onDecline={run(`decline-${s.fileId}`, () => unlink(s.fileId))}
-              />
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {!hasPair ? (
-        picking ? (
-          <div className="flex items-center gap-2">
-            <select
-              className="h-8 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm"
-              value={chosen}
-              onChange={(e) => setChosen(e.target.value)}
-              aria-label={t("linkByHand")}
-            >
-              <option value="">{view.candidates.length > 0 ? t("chooseInvoice") : t("noCandidates")}</option>
-              {view.candidates.map((c) => (
-                <option key={c.fileId} value={c.fileId}>
-                  {[refLabel(c), c.date, c.amount !== null ? formatCurrency(c.amount) : null].filter(Boolean).join(" · ")}
-                </option>
-              ))}
-            </select>
-            <Button size="sm" variant="outline" disabled={!chosen || busy !== null} onClick={run("manual", () => link(file.id, chosen))}>
+          </select>
+        )}
+        {error ? <p className="text-xs text-destructive">{error}</p> : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setPicking(false)}>
+            {t("cancel")}
+          </Button>
+          {hasPair ? null : (
+            <Button disabled={!chosen || busy !== null} onClick={run("manual", () => link(file.id, chosen))}>
               <Spinner on={busy === "manual"} />
               {t("link")}
             </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    {quiet ? null : (
+      <section className="rounded-md border bg-muted/40 p-3 space-y-2" data-testid="file-receipt-link">
+        {view.link && view.invoice ? (
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm">
+              <ReceiptText className="h-4 w-4 text-muted-foreground shrink-0" />
+              <span className="text-muted-foreground">{t("receiptFor")}</span>
+              <Link href={`/files?id=${view.invoice.fileId}`} className="font-medium truncate hover:underline">
+                {refLabel(view.invoice)}
+              </Link>
+            </div>
+            <p className="text-xs text-muted-foreground">{t("countsOnce")}</p>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground flex-1">{t(SET_BY_KEY[view.link.setBy])}</span>
+              <Button size="sm" variant="ghost" disabled={busy !== null} onClick={run("unlink", () => unlink())}>
+                <Spinner on={busy === "unlink"} />
+                {t("unlink")}
+              </Button>
+            </div>
           </div>
-        ) : (
-          <div className="flex justify-end">
-            <Button size="sm" variant="ghost" className="text-xs text-muted-foreground" onClick={() => setPicking(true)}>
-              {t("linkByHand")}
-            </Button>
-          </div>
-        )
-      ) : null}
+        ) : null}
 
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
-    </section>
+        {view.receipts.length > 0 ? (
+          <div className="space-y-1">
+            <p className="text-xs font-medium">{t("receiptsTitle")}</p>
+            <ul className="space-y-0.5">
+              {view.receipts.map((r) => (
+                <li key={r.fileId} className="flex items-center gap-2 text-sm">
+                  <ReceiptText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <Link href={`/files?id=${r.fileId}`} className="truncate hover:underline flex-1">
+                    {r.fileName || r.fileId}
+                  </Link>
+                  <Amount item={r} />
+                  <Button size="sm" variant="ghost" disabled={busy !== null} onClick={run(`unlink-${r.fileId}`, () => unlink(r.fileId))}>
+                    <Spinner on={busy === `unlink-${r.fileId}`} />
+                    {t("unlink")}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-muted-foreground">{t("countsOnce")}</p>
+          </div>
+        ) : null}
+
+        {view.suggestions.length > 0 ? (
+          <div className="space-y-1">
+            <p className="text-xs font-medium">{t("suggestionsTitle")}</p>
+            <ul className="space-y-1.5">
+              {view.suggestions.map((s) => (
+                <Suggestion
+                  key={s.fileId}
+                  fileId={file.id}
+                  suggestion={s}
+                  busy={busy}
+                  onLink={(receiptId, invoiceId) => run(`accept-${s.fileId}`, () => link(receiptId, invoiceId))()}
+                  onDecline={run(`decline-${s.fileId}`, () => unlink(s.fileId))}
+                />
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {error && !picking ? <p className="text-xs text-destructive">{error}</p> : null}
+      </section>
+    )}
+    </>
   );
 }
 

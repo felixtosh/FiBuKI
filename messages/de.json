@@ -411,7 +411,7 @@
       "vatDeductible": "Vorsteuer abziehbar",
       "whyVatDeductible": "Warum die Vorsteuer abziehbar ist oder nicht",
       "vatDeductibleYes": "Ja",
-      "vatDeductibleNo": "Nein, beim Lieferanten eine Rechnung anfordern",
+      "vatDeductibleNo": "Nein",
       "clickToView": "Klicken zum Ansehen",
       "clickToClose": "Klicken zum Schließen",
       "download": "Herunterladen",
@@ -419,7 +419,8 @@
       "activityLog": "Aktivitätsprotokoll",
       "delete": "Löschen",
       "restore": "Wiederherstellen",
-      "edit": "Bearbeiten"
+      "edit": "Bearbeiten",
+      "vatDeductibleNoAction": "Bitte den Lieferanten um eine Rechnung: ohne sie ist die Vorsteuer nicht abziehbar."
     },
     "source": {
       "gmail": "Gmail",
@@ -571,7 +572,10 @@
       "chooseInvoice": "Rechnung wählen, die dieser Zahlungsbeleg bezahlt",
       "noCandidates": "Kein anderer Beleg dieses Partners",
       "link": "Verknüpfen",
-      "failed": "Das hat nicht geklappt: {message}"
+      "failed": "Das hat nicht geklappt: {message}",
+      "dialogTitle": "Beleg zu einer Rechnung",
+      "alreadyLinked": "Dieser Beleg ist schon verknüpft. Löse die Verknüpfung zuerst im Panel.",
+      "cancel": "Abbrechen"
     },
     "split": {
       "suggestionTitle": "Sieht aus wie {count} getrennte Rechnungen oder Zahlungsbelege",

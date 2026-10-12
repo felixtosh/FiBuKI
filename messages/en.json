@@ -411,7 +411,7 @@
       "vatDeductible": "VAT deductible",
       "whyVatDeductible": "Why the VAT is or is not deductible",
       "vatDeductibleYes": "Yes",
-      "vatDeductibleNo": "No, ask the supplier for an invoice",
+      "vatDeductibleNo": "No",
       "clickToView": "Click to view",
       "clickToClose": "Click to close",
       "download": "Download",
@@ -419,7 +419,8 @@
       "activityLog": "Activity log",
       "delete": "Delete",
       "restore": "Restore",
-      "edit": "Edit"
+      "edit": "Edit",
+      "vatDeductibleNoAction": "Ask the supplier for an invoice: without one, the VAT is not deductible."
     },
     "source": {
       "gmail": "Gmail",
@@ -571,7 +572,10 @@
       "chooseInvoice": "Choose the invoice this Receipt pays",
       "noCandidates": "No other File of this Partner",
       "link": "Link",
-      "failed": "That did not work: {message}"
+      "failed": "That did not work: {message}",
+      "dialogTitle": "Receipt for an invoice",
+      "alreadyLinked": "This File is already linked. Unlink it in the panel first.",
+      "cancel": "Cancel"
     },
     "split": {
       "suggestionTitle": "Looks like {count} separate invoices or Receipts",

@@ -35,6 +35,7 @@ import {
   Scissors,
   History,
   MoreHorizontal,
+  ReceiptText,
 } from "lucide-react";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
@@ -194,6 +195,7 @@ function FileDetailPanelInner({
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
   const [isSplitOpen, setIsSplitOpen] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
+  const [isReceiptPickerOpen, setIsReceiptPickerOpen] = useState(false);
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
   const [isRetryingExtraction, setIsRetryingExtraction] = useState(false);
   const [isUpdatingExtractedFields, setIsUpdatingExtractedFields] = useState(false);
@@ -527,15 +529,8 @@ function FileDetailPanelInner({
                   {/* The § 11 verdict as its consequence, on Expenses only (#519) */}
                   {showVatDeductible && (
                     <div className="flex items-start gap-3 file-meta-row">
-                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label flex items-center gap-1">
+                      <span className="text-muted-foreground w-16 shrink-0 file-meta-label">
                         {t("vatDeductible")}
-                        <InfoPopover label={t("whyVatDeductible")}>
-                          <Section11Reasoning
-                            documentType={file.documentType}
-                            basis={file.documentTypeBasis}
-                            missingElements={file.documentTypeMissingElements}
-                          />
-                        </InfoPopover>
                       </span>
                       {receiptInvoice ? (
                         // The pair counts as its invoice (#571): nothing is
@@ -544,14 +539,28 @@ function FileDetailPanelInner({
                           {tReceipt("receiptForInvoice", { invoice: fileDisplayName(receiptInvoice) })}
                         </span>
                       ) : (
-                        <span
-                          className={cn(
-                            "flex-1 text-right file-meta-value",
-                            vatDeductible.tone === "no" && "text-amber-600 dark:text-amber-500",
-                            vatDeductible.tone === "unknown" && "text-muted-foreground"
-                          )}
-                        >
-                          {vatDeductible.text}
+                        <span className="flex-1 flex items-center justify-end gap-1 file-meta-value">
+                          <span
+                            className={cn(
+                              vatDeductible.tone === "no" && "text-amber-600 dark:text-amber-500",
+                              vatDeductible.tone === "unknown" && "text-muted-foreground"
+                            )}
+                          >
+                            {vatDeductible.text}
+                          </span>
+                          {/* The short answer here; the why and what to do behind the icon */}
+                          <InfoPopover label={t("whyVatDeductible")}>
+                            <div className="space-y-2">
+                              {vatDeductible.tone === "no" ? (
+                                <p className="text-xs font-medium">{t("vatDeductibleNoAction")}</p>
+                              ) : null}
+                              <Section11Reasoning
+                                documentType={file.documentType}
+                                basis={file.documentTypeBasis}
+                                missingElements={file.documentTypeMissingElements}
+                              />
+                            </div>
+                          </InfoPopover>
                         </span>
                       )}
                     </div>
@@ -667,7 +676,11 @@ function FileDetailPanelInner({
             <FileCorrectionSection file={file} />
 
             {/* The invoice this Receipt pays, or this invoice's Receipts (#571) */}
-            <FileReceiptLinkSection file={file} />
+            <FileReceiptLinkSection
+              file={file}
+              pickerOpen={isReceiptPickerOpen}
+              onPickerOpenChange={setIsReceiptPickerOpen}
+            />
 
             {/* Connected Transactions + Suggestions */}
             <FileConnectionsList
@@ -733,6 +746,12 @@ function FileDetailPanelInner({
                   <DropdownMenuItem onSelect={() => setIsSplitOpen(true)}>
                     <Scissors />
                     {tSplit("action")}
+                  </DropdownMenuItem>
+                ) : null}
+                {!file.isNotInvoice && !file.receiptLink ? (
+                  <DropdownMenuItem onSelect={() => setIsReceiptPickerOpen(true)}>
+                    <ReceiptText />
+                    {tReceipt("linkByHand")}
                   </DropdownMenuItem>
                 ) : null}
                 <DropdownMenuItem onSelect={() => setShowActivityLog(true)}>
