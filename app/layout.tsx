@@ -7,11 +7,11 @@ import { NextIntlClientProvider } from "next-intl";
 import { getMessages, getLocale } from "next-intl/server";
 
 export const metadata: Metadata = {
-  title: "FiBuKI - Tax Management Tool",
-  description: "Manage your transactions and receipts for tax purposes",
+  title: "FiBuKI - Your bookkeeping works while you sleep",
+  description: "Pre-accounting for Austrian one-person businesses: your receipts and bank lines, ready for your Tax Advisor.",
   openGraph: {
-    title: "FiBuKI - Bank Access for AI-natives",
-    description: "Manage your transactions and receipts for tax purposes",
+    title: "FiBuKI - Your bookkeeping works while you sleep",
+    description: "Pre-accounting for Austrian one-person businesses: your receipts and bank lines, ready for your Tax Advisor.",
     url: "https://fibuki.com",
     siteName: "FiBuKI",
     images: [
@@ -19,15 +19,15 @@ export const metadata: Metadata = {
         url: "https://fibuki.com/og-image.png",
         width: 1200,
         height: 630,
-        alt: "FiBuKI - Bank Access for AI-natives",
+        alt: "FiBuKI - Your bookkeeping works while you sleep",
       },
     ],
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "FiBuKI - Bank Access for AI-natives",
-    description: "Manage your transactions and receipts for tax purposes",
+    title: "FiBuKI - Your bookkeeping works while you sleep",
+    description: "Pre-accounting for Austrian one-person businesses: your receipts and bank lines, ready for your Tax Advisor.",
     images: ["https://fibuki.com/og-image.png"],
   },
 };

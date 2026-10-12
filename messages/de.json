@@ -1,8 +1,8 @@
 {
   "landing": {
     "hero": {
-      "title": "Bank-Zugang für AI-natives",
-      "subtitle": "Verbinde deine europäische Bank mit Claude, ChatGPT oder OpenClaw mit eigenen Skills, MCP und API. Lass KI dein Budgeting, Rechnungszuordnung und Buchhaltung übernehmen.",
+      "title": "Deine Buchhaltung arbeitet, während du schläfst",
+      "subtitle": "FiBuKI lernt mit jeder Aktion dazu und erledigt deine Vorkontierung automatisch, damit du dich auf dein Geschäft konzentrieren kannst.",
       "ctaLogin": "Zum Dashboard",
       "ctaGetStarted": "Loslegen"
     },
