@@ -3,7 +3,6 @@ import { AutoActionNotification } from "./notification";
 
 export type ChatTab = "notifications" | "chat" | "history";
 export type SidebarMode = "chat" | "onboarding";
-export type ModelProvider = "anthropic" | "gemini";
 
 /**
  * A part of a message - either text or a tool call (in chronological order)
@@ -43,6 +42,9 @@ export interface ChatMessage {
 
   /** Results of tool executions */
   toolResults?: ToolResult[];
+
+  /** The chat turn an assistant message answered: its trace's id, which feedback names. */
+  turnId?: string;
 }
 
 /**
@@ -63,6 +65,19 @@ export interface ToolCall {
   result?: unknown;
   status: "pending" | "approved" | "rejected" | "executed";
   requiresConfirmation: boolean;
+}
+
+/** Choice cards answered in this view: token -> option id. */
+export type AnsweredChoices = Map<string, string>;
+/** Thumbs given in this view: turnId -> rating. */
+export type TurnRatings = Map<string, "up" | "down">;
+
+/** A click on a choice card: the token the card carries, the option, and what the User sees as their message. */
+export interface ChoiceClick {
+  token: string;
+  optionId: string;
+  label: string;
+  feedback?: string;
 }
 
 /**
@@ -119,12 +134,17 @@ export interface ChatContextValue {
   currentSession: ChatSession | null;
   sessions: ChatSession[];
   currentSessionId: string | null;
-  pendingConfirmations: ToolCall[];
 
   // Actions
   sendMessage: (content: string) => Promise<void>;
-  approveToolCall: (toolCallId: string) => Promise<void>;
-  rejectToolCall: (toolCallId: string) => void;
+  /** Answer a choice card or a confirmation (lib/agent/choices.ts): the click continues the turn. */
+  chooseOption: (choice: ChoiceClick) => Promise<void>;
+  /** Choice cards already answered in this view, by token. */
+  answeredChoices: AnsweredChoices;
+  /** Thumbs on one turn's reply; stored on its trace. */
+  rateTurn: (turnId: string, rating: "up" | "down", comment?: string) => Promise<void>;
+  /** The rating given to each turn in this view. */
+  turnRatings: TurnRatings;
   startNewSession: () => Promise<void>;
   loadSession: (sessionId: string) => Promise<void>;
 
@@ -166,9 +186,5 @@ export interface ChatContextValue {
   // Sidebar mode (chat vs onboarding)
   sidebarMode: SidebarMode;
   setSidebarMode: (mode: SidebarMode) => void;
-
-  // Model selection
-  modelProvider: ModelProvider;
-  setModelProvider: (provider: ModelProvider) => void;
 
 }

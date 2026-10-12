@@ -798,7 +798,22 @@
   },
   "chat": {
     "toolCompleted": "{tool} erledigt",
-    "toolFailed": "{tool} fehlgeschlagen"
+    "toolFailed": "{tool} fehlgeschlagen",
+    "choiceNone": "Nichts davon",
+    "choiceFeedbackPlaceholder": "Was hat nicht gepasst? (optional)",
+    "choiceSend": "Senden",
+    "choiceAnswered": "Beantwortet",
+    "confirmApprove": "Ausführen",
+    "confirmCancel": "Abbrechen",
+    "confirmTitle": {
+      "bulkUpdateTransactions": "{count, plural, one {# Transaktion} other {# Transaktionen}} ändern",
+      "rollbackTransaction": "Frühere Version dieser Transaktion wiederherstellen",
+      "createSource": "Bankkonto „{name}“ anlegen"
+    },
+    "rateUp": "Gute Antwort",
+    "rateDown": "Schlechte Antwort",
+    "rateCommentPlaceholder": "Was hätte BuKI tun sollen?",
+    "rateThanks": "Danke, notiert"
   },
   "integrationSections": {
     "email": "E-Mail",
@@ -1114,6 +1129,31 @@
         "connected": "zugeordnet {ids}",
         "rejected": "abgelehnt {ids}"
       }
+    },
+    "chatTraces": {
+      "navLabel": "Chat-Verläufe",
+      "title": "Chat-Verläufe",
+      "description": "Jede BuKI-Runde: die Frage, jeder Tool-Aufruf, die Antwort, die Prüfungen der Bewertungsliste und das Daumen-Feedback. Vor jeder Änderung an Prompt oder Modell 20 bis 50 davon lesen.",
+      "filterAll": "Alle",
+      "filterFeedback": "Bewertet",
+      "filterFailing": "Mit fehlgeschlagener Prüfung",
+      "colWhen": "Wann",
+      "colQuestion": "Frage",
+      "colTools": "Tool-Aufrufe",
+      "colReply": "Antwort",
+      "colScore": "Prüfungen",
+      "colFeedback": "Daumen",
+      "empty": "Noch keine Runden.",
+      "loading": "Lädt…",
+      "refused": "abgelehnt: {guard}",
+      "waiting": "wartet auf die Person",
+      "failed": "fehlgeschlagen",
+      "failingChecks": "Fehlgeschlagene Prüfungen",
+      "steps": "Schritte",
+      "noReply": "(keine Antwort)",
+      "model": "Modell",
+      "error": "Die Verläufe konnten nicht geladen werden: {message}",
+      "comment": "Kommentar"
     }
   },
   "activity": {

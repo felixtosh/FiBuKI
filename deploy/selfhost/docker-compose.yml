@@ -333,6 +333,13 @@ services:
       # version v1beta". Override without editing the shared registry, which the
       # Firebase build still uses successfully against Vertex.
       FIBUKI_CHAT_MODEL: ${FIBUKI_CHAT_MODEL:-}
+      # Which provider the chat runs on (lib/agent/model.ts): unset means Gemini
+      # when its key is set, else Anthropic. "openai" is any OpenAI-compatible
+      # endpoint (OpenRouter, or an open model behind vLLM / Ollama), which takes
+      # FIBUKI_CHAT_MODEL plus these two.
+      FIBUKI_CHAT_PROVIDER: ${FIBUKI_CHAT_PROVIDER:-}
+      FIBUKI_CHAT_BASE_URL: ${FIBUKI_CHAT_BASE_URL:-}
+      FIBUKI_CHAT_API_KEY: ${FIBUKI_CHAT_API_KEY:-}
       # Also at runtime: server-side reads in route handlers resolve it here, and
       # keeping both in step avoids a stale baked-in value outliving an origin change.
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}

@@ -70,6 +70,8 @@ export function useCategories() {
 
 **AI tools:**
 - `runToolCallable` (`runTool`) - Run one tool from `functions/src/tools/definitions.ts` as the session's User, through the handler MCP uses (#616)
+- `submitChatFeedbackCallable` (`submitChatFeedback`) - Thumbs up or down (and a comment) on one chat turn, stored on its trace `chatTraces/{uid}_{turnId}`; the id is built from the caller's uid, so only a turn of their own (docs/buki-rubric.md)
+- `listChatTracesCallable` (`listChatTraces`) - The newest chat traces with their rubric verdicts, for the admin trace page; admins only, decided from the verified token
 
 **Files:**
 - `connectFileToTransactionCallable` - Connect file to transaction. Takes the Connection Origin (`manual`, `suggestion`, `agent`, `auto`); an accepted suggestion sends no score, the server reads the stored one

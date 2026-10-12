@@ -228,11 +228,19 @@ plan feature gate and without the API-key rate limit. The MCP output shape is th
 external integrations depend on: a wrapper passes it through, reformatted for reading
 only (`forTheModel`: Timestamps as ISO strings; a File's OCR text and a Transaction's
 import and automation bookkeeping left out of list rows, the single get keeps them), and
-filtering or computing lives only in the shared tool. Chat-only tools (queue status,
-Transaction history, navigation, Gmail search, the Partner batch context) keep their own
-reads. Every amount the chat reads is integer cents, the chat-only tools' included.
+filtering or computing lives only in the shared tool. A chat tool without an MCP twin is
+listed in `CHAT_ONLY_TOOLS` (`lib/agent/tools/index.ts`) with the reason it cannot be one
+yet; `functions/src/selfhost/buki-agent.test.ts` fails on a chat tool that is neither.
+The Partner batch tools are the workers' only (`ALL_TOOLS`), not the chat's (`CHAT_TOOLS`).
+Every amount the chat reads is integer cents, the chat-only tools' included.
 `functions/src/selfhost/chat-mcp-tools.test.ts` holds each wrapper to its twin's output
 and fails if one reads or writes the database itself.
+
+**What good chat behaviour is: [`docs/buki-rubric.md`](docs/buki-rubric.md).** Read it
+before changing the chat's prompt, tools or model. The escalation order (act on a clear
+case, `presentChoices` for several, next steps for none), the writes held for Approve, the
+trajectory guard that refuses senseless calls in code, and the stored traces with their
+checks all follow from it.
 
 **Who called is the server's to say (#665).** `handleTool` takes a caller
 (`functions/src/tools/caller.ts`): MCP and the REST API by default, the chat agent when
@@ -444,8 +452,7 @@ the Sonnet fallback (`models.test.ts`).
 | CSV column matching | `geminiLite` | `gemini-3.1-flash-lite` | Cheapest callable model; no thinking tokens on structured prompts |
 | Document extraction | `geminiLite` | `gemini-3.1-flash-lite` | Native PDF/image support |
 | Partner matching / company lookup | `geminiFlash` | `gemini-3.5-flash-lite` | Priced identically to the 2.5-flash it replaces |
-| Chat/Agent (cloud) | `chatAgent` | Anthropic Claude | Complex reasoning, multi-step tasks |
-| Chat/Agent (self-host) | `FIBUKI_CHAT_MODEL` | `gemini-3.8-flash` | Runs in fibuki-web via API key, not Vertex |
+| Chat/Agent | `FIBUKI_CHAT_PROVIDER` + `FIBUKI_CHAT_MODEL` | Gemini when its key is set, else Anthropic (`chatAgent`); `openai` = any OpenAI-compatible endpoint | The deployment chooses, never the browser (`lib/agent/model.ts`); runs in fibuki-web. Run the golden set before switching (`docs/buki-rubric.md`) |
 
 Google **retires model ids for new API-key consumers while Vertex keeps serving
 them** — `gemini-2.5-flash` returns 404 on a current key but works on Vertex. So a

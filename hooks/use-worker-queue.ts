@@ -176,7 +176,6 @@ export function useWorkerQueue(options: UseWorkerQueueOptions = {}) {
           triggerContext: request.triggerContext,
           workerRequestId: request.id,
           triggeredBy: request.triggeredBy,
-          modelProvider: "gemini", // Use cheaper model for automated tasks
         }),
       });
 

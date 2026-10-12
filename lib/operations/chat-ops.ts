@@ -268,6 +268,8 @@ export function serializeMessagesForSDK(
   role: "user" | "assistant" | "system";
   content: string;
   createdAt?: Date;
+  /** The chat turn an assistant message answered (its trace, for feedback). */
+  turnId?: string;
   parts?: Array<{ type: "text"; text: string } | { type: "tool"; toolCallId: string; toolName: string }>;
   toolInvocations?: Array<{
     toolCallId: string;
@@ -288,6 +290,7 @@ export function serializeMessagesForSDK(
       // chain and throws on the call, which kills the whole live-sync listener
       // rather than one rendered row (#123, same family as #53).
       createdAt: toDateSafe(m.createdAt) ?? undefined,
+      ...(m.turnId ? { turnId: m.turnId } : {}),
     };
 
     // Include tool invocations if present

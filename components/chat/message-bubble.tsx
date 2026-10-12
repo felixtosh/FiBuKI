@@ -8,6 +8,7 @@ import { RuntimeChatMessage, MessagePart, ToolCall } from "@/types/chat";
 import { Badge } from "@/components/ui/badge";
 import { useChat } from "./chat-provider";
 import { useToolResultRenderer } from "@/hooks/use-tool-result-renderer";
+import { ChoiceCard, ConfirmCard, TurnRating, type AwaitingConfirmationView, type PresentedChoicesView } from "./choice-card";
 
 interface MessageBubbleProps {
   message: RuntimeChatMessage;
@@ -15,6 +16,7 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
+  const { isLoading } = useChat();
 
   // User messages: bubble without icon
   if (isUser) {
@@ -43,6 +45,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )
       )}
+      {message.turnId && !isLoading ? <TurnRating turnId={message.turnId} /> : null}
     </div>
   );
 }
@@ -103,6 +106,17 @@ function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
     : null;
 
   if (toolCall.status === "executed") {
+    const parsed = parseResult(toolCall.result);
+    // A choice or a held write: the card is the end of BuKI's turn.
+    if (parsed?.status === "awaiting_choice") {
+      return <ChoiceCard choices={parsed as unknown as PresentedChoicesView} />;
+    }
+    if (parsed?.status === "awaiting_confirmation") {
+      return <ConfirmCard pending={parsed as unknown as AwaitingConfirmationView} />;
+    }
+    // A call the trajectory guard refused is BuKI correcting itself, not news for the User.
+    if (typeof parsed?.guard === "string") return null;
+
     if (resultPreview) {
       return <div className="flex flex-col gap-2">{resultPreview}</div>;
     }
@@ -141,20 +155,26 @@ function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
   );
 }
 
-/**
- * A tool that ran but did nothing: an error, or `success: false` (a bulk update
- * whose every row failed). Results arrive as objects or as JSON strings.
- */
-function toolResultFailed(result: unknown): boolean {
+/** A tool result as an object; results arrive as objects or as JSON strings. */
+function parseResult(result: unknown): Record<string, unknown> | null {
   let value = result;
   if (typeof value === "string") {
     try {
       value = JSON.parse(value);
     } catch {
-      return false;
+      return null;
     }
   }
-  if (!value || typeof value !== "object") return false;
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/**
+ * A tool that ran but did nothing: an error, or `success: false` (a bulk update
+ * whose every row failed).
+ */
+function toolResultFailed(result: unknown): boolean {
+  const value = parseResult(result);
+  if (!value) return false;
   const r = value as { success?: unknown; error?: unknown };
   return r.success === false || (typeof r.error === "string" && r.error.length > 0);
 }

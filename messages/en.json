@@ -798,7 +798,22 @@
   },
   "chat": {
     "toolCompleted": "{tool} completed",
-    "toolFailed": "{tool} failed"
+    "toolFailed": "{tool} failed",
+    "choiceNone": "None of these",
+    "choiceFeedbackPlaceholder": "What was wrong? (optional)",
+    "choiceSend": "Send",
+    "choiceAnswered": "Answered",
+    "confirmApprove": "Approve",
+    "confirmCancel": "Cancel",
+    "confirmTitle": {
+      "bulkUpdateTransactions": "Change {count, plural, one {# transaction} other {# transactions}}",
+      "rollbackTransaction": "Restore an earlier version of this transaction",
+      "createSource": "Create the bank account “{name}”"
+    },
+    "rateUp": "Good answer",
+    "rateDown": "Bad answer",
+    "rateCommentPlaceholder": "What should BuKI have done?",
+    "rateThanks": "Thanks, noted"
   },
   "integrationSections": {
     "email": "Email",
@@ -1114,6 +1129,31 @@
         "connected": "connected {ids}",
         "rejected": "rejected {ids}"
       }
+    },
+    "chatTraces": {
+      "navLabel": "Chat traces",
+      "title": "Chat traces",
+      "description": "Every BuKI turn: what was asked, each tool call, the reply, the rubric's checks and the user's thumbs. Read 20 to 50 of them before changing the prompt or the model.",
+      "filterAll": "All",
+      "filterFeedback": "Rated",
+      "filterFailing": "Failing a check",
+      "colWhen": "When",
+      "colQuestion": "Question",
+      "colTools": "Tool calls",
+      "colReply": "Reply",
+      "colScore": "Checks",
+      "colFeedback": "Thumbs",
+      "empty": "No turns yet.",
+      "loading": "Loading…",
+      "refused": "refused: {guard}",
+      "waiting": "waits for the user",
+      "failed": "failed",
+      "failingChecks": "Failing checks",
+      "steps": "Steps",
+      "noReply": "(no reply)",
+      "model": "Model",
+      "error": "Could not load the traces: {message}",
+      "comment": "Comment"
     }
   },
   "activity": {

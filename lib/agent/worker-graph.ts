@@ -19,7 +19,7 @@ import { StructuredToolInterface } from "@langchain/core/tools";
 import { ALL_TOOLS } from "./tools";
 import { getWorkerConfig } from "./worker-configs";
 import { getWorkerPrompt } from "@/lib/chat/worker-prompts";
-import { createChatModel, ModelProvider } from "./model";
+import { createChatModel, ModelProvider, resolveChatProvider } from "./model";
 import { WorkerType, WorkerAction } from "@/types/worker";
 
 // Strip CR/LF so request-derived values cannot forge log lines
@@ -733,7 +733,7 @@ export async function runWorkerGraph(input: RunWorkerInput): Promise<RunWorkerOu
       authHeader: input.authHeader,
       workerType: input.workerType,
       runId: input.runId,
-      modelProvider: input.modelProvider || "gemini",
+      modelProvider: input.modelProvider || resolveChatProvider(),
       messageCount: 0,
       toolCallCount: 0,
       shouldContinue: true,
@@ -771,7 +771,7 @@ export async function* streamWorkerGraph(
       authHeader: input.authHeader,
       workerType: input.workerType,
       runId: input.runId,
-      modelProvider: input.modelProvider || "gemini",
+      modelProvider: input.modelProvider || resolveChatProvider(),
       messageCount: 0,
       toolCallCount: 0,
       shouldContinue: true,

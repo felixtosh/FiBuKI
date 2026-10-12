@@ -63,15 +63,18 @@ interface TestRunResult {
   langfuseUrl?: string;
 }
 
-type TestCategory = "all" | "tool-calling" | "response-quality" | "error-handling" | "conversation";
+// BuKI's golden set, by rubric section (docs/buki-rubric.md).
+type TestCategory = "all" | "outcome" | "trajectory" | "governance" | "experience";
 
 const chatTestCategories = [
-  { id: "all" as TestCategory, label: "All Tests", icon: MessageSquare },
-  { id: "tool-calling" as TestCategory, label: "Tool Calling", icon: Wrench },
-  { id: "response-quality" as TestCategory, label: "Response Quality", icon: MessageCircle },
-  { id: "error-handling" as TestCategory, label: "Error Handling", icon: AlertTriangle },
-  { id: "conversation" as TestCategory, label: "Conversation", icon: MessagesSquare },
+  { id: "all" as TestCategory, label: "All scenarios", icon: MessageSquare },
+  { id: "outcome" as TestCategory, label: "Outcome", icon: MessagesSquare },
+  { id: "trajectory" as TestCategory, label: "Trajectory", icon: Wrench },
+  { id: "governance" as TestCategory, label: "Governance", icon: AlertTriangle },
+  { id: "experience" as TestCategory, label: "Experience", icon: MessageCircle },
 ];
+
+const INCLUDE_WRITES_LABEL = "Include scenarios that change data (test account only)";
 
 export default function TestingPage() {
   const router = useRouter();
@@ -84,6 +87,7 @@ export default function TestingPage() {
   const [result, setResult] = useState<TestRunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedTest, setExpandedTest] = useState<string | null>(null);
+  const [includeWrites, setIncludeWrites] = useState(false);
 
   const setActiveCategory = (category: TestCategory) => {
     router.push(`/admin/testing?category=${category}`);
@@ -119,6 +123,7 @@ export default function TestingPage() {
         body: JSON.stringify({
           suite: "chat",
           category: category === "all" ? undefined : category,
+          includeWrites,
         }),
       });
 
@@ -134,7 +139,7 @@ export default function TestingPage() {
     } finally {
       setRunning(null);
     }
-  }, [router, user]);
+  }, [router, user, includeWrites]);
 
   return (
     <div className="h-full flex overflow-hidden">
@@ -190,6 +195,15 @@ export default function TestingPage() {
               );
             })}
           </ul>
+          <label className="mt-3 flex items-start gap-2 px-3 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={includeWrites}
+              onChange={(e) => setIncludeWrites(e.target.checked)}
+            />
+            {INCLUDE_WRITES_LABEL}
+          </label>
         </div>
 
         {/* Cloud Functions */}

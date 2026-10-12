@@ -47,6 +47,18 @@ export const MCP_TWINS = {
   assignPartnerToTransaction: "assign_partner_to_transaction",
   assignPartnerToFile: "assign_partner_to_file",
   updatePartner: "update_partner",
+  createPartner: "create_partner",
+  markFileAsCopy: "mark_file_as_copy",
+  unmarkFileAsCopy: "unmark_file_as_copy",
+  makeFileTheOriginal: "make_file_the_original",
+  linkCorrection: "link_correction",
+  unlinkCorrection: "unlink_correction",
+  getCorrection: "get_correction",
+  linkReceipt: "link_receipt",
+  unlinkReceipt: "unlink_receipt",
+  getReceiptLink: "get_receipt_link",
+  splitFile: "split_file",
+  dismissSplitSuggestion: "dismiss_split_suggestion",
 } as const;
 
 type ChatTwin = keyof typeof MCP_TWINS;
@@ -413,6 +425,92 @@ Separately, a pair the file has previously rejected is refused outright with err
   })
 );
 
+export const createPartnerTool = wrap(
+  "createPartner",
+  "Create a new partner (vendor/supplier). Only after listPartners found no existing partner for this company " +
+    "(search its name variants, VAT ID and IBAN) and lookupCompanyInfo or validateVatId confirmed who it is: pass " +
+    "the verified name, VAT ID, website and country.",
+  mcpSchema("create_partner")
+);
+
+// Copy (#162, ADR-0010), Invoice Corrections (#564) and Receipt Links (#571, ADR-0012).
+
+export const markFileAsCopyTool = wrap(
+  "markFileAsCopy",
+  "Record a file as a Copy of another file: a second File of the same invoice that arrived by another route (mailbox and a document system, or a mailed copy of an invoice the user issued). A Copy holds no transaction connection and is never proposed as a match; if it was connected, the connection moves to the original where the original lacks it. Also accepts a Copy suggestion. A receipt for the same charge as an invoice is NOT a Copy, nor is a payment reminder. Reversible with unmarkFileAsCopy.",
+  mcpSchema("mark_file_as_copy")
+);
+
+export const unmarkFileAsCopyTool = wrap(
+  "unmarkFileAsCopy",
+  "Not a Copy: undo a Copy, or decline a Copy suggestion on a file. The pair is never suggested again. Undoing reconnects nothing; the file goes back to matching.",
+  mcpSchema("unmark_file_as_copy")
+);
+
+export const makeFileTheOriginalTool = wrap(
+  "makeFileTheOriginal",
+  "Swap a Copy and its original: the given Copy becomes the original and takes over the transaction connections; the former original becomes its Copy.",
+  mcpSchema("make_file_the_original")
+);
+
+export const linkCorrectionTool = wrap(
+  "linkCorrection",
+  "Link an Invoice Correction (a supplier's credit note, a Gutschrift reducing an earlier invoice, a Rechnungskorrektur) to the File it corrects. The UVA then books the refund against the original's Vorsteuer (KZ 067) or revenue, at the original's rates; an unlinked correction blocks the period's filing. Also accepts a link suggestion. Reversible with unlinkCorrection.",
+  mcpSchema("link_correction")
+);
+
+export const unlinkCorrectionTool = wrap(
+  "unlinkCorrection",
+  "Remove an Invoice Correction's link, or decline one of its link suggestions (pass originalFileId). That File is never linked to it automatically again.",
+  mcpSchema("unlink_correction")
+);
+
+export const getCorrectionTool = wrap(
+  "getCorrection",
+  "Inspect Invoice Corrections: for a File, what it corrects, who paid the original, its link suggestions and the corrections linked to it; for a transaction, the transactions related to it through a correction (a refund and the purchase it refunds).",
+  mcpSchema("get_correction")
+);
+
+export const linkReceiptTool = wrap(
+  "linkReceipt",
+  "Link a Receipt (a payment confirmation: GitHub's or Stripe's receipt, a card terminal slip) to the invoice it pays. Both stay on the transaction and count once: the invoice's figures and Vorsteuer, the Receipt's surplus (a tip) as Trinkgeld without VAT. If one File is on a transaction and the other on none, the other follows. Also accepts a pairing suggestion. Reversible with unlinkReceipt.",
+  mcpSchema("link_receipt")
+);
+
+export const unlinkReceiptTool = wrap(
+  "unlinkReceipt",
+  "Remove a Receipt Link, or decline a pairing suggestion (pass otherFileId). The pair is never linked or suggested automatically again. No transaction connection changes.",
+  mcpSchema("unlink_receipt")
+);
+
+export const getReceiptLinkTool = wrap(
+  "getReceiptLink",
+  "Inspect a File's Receipt Link: the invoice it is the Receipt of, or the Receipts linked to it, and its pairing suggestions.",
+  mcpSchema("get_receipt_link")
+);
+
+// Split (#550). The ranges keep their shape for the model; the MCP schema's
+// nested object would read as a bare record.
+
+export const splitFileTool = wrap(
+  "splitFile",
+  "Split a PDF that holds several separately issued invoices or Receipts (an Amazon Marketplace order with one Rechnung or Quittung per seller) into one file per invoice or Receipt. The ranges cover every page exactly once, in order. Each part is extracted from scratch and connected to the original's transactions; the original is deleted, and can be restored only after its parts are deleted. Use the file's splitSuggestion for the ranges when it has one.",
+  mcpSchema("split_file", {
+    overrides: {
+      ranges: z
+        .array(z.object({ from: z.number().int(), to: z.number().int() }))
+        .min(2)
+        .describe("The parts in page order: first and last page of each, 1-based and inclusive"),
+    },
+  })
+);
+
+export const dismissSplitSuggestionTool = wrap(
+  "dismissSplitSuggestion",
+  "Say a file is one document, not several: removes its splitSuggestion, and re-extraction never stores a new one. Use it when the suggestion is wrong, such as one invoice running over several pages. splitFile still splits the file by explicit ranges.",
+  mcpSchema("dismiss_split_suggestion")
+);
+
 /** Every wrapper, for the guard test. The agent lists them in READ_TOOLS / WRITE_TOOLS / SEARCH_TOOLS. */
 export const MCP_TOOLS = [
   listSourcesTool,
@@ -430,4 +528,16 @@ export const MCP_TOOLS = [
   assignPartnerToFileTool,
   updatePartnerTool,
   connectFileToTransactionTool,
+  createPartnerTool,
+  markFileAsCopyTool,
+  unmarkFileAsCopyTool,
+  makeFileTheOriginalTool,
+  linkCorrectionTool,
+  unlinkCorrectionTool,
+  getCorrectionTool,
+  linkReceiptTool,
+  unlinkReceiptTool,
+  getReceiptLinkTool,
+  splitFileTool,
+  dismissSplitSuggestionTool,
 ];
