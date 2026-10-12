@@ -498,7 +498,7 @@ export function FileExtractedInfo({ file, onRetryExtraction, isRetrying, isParsi
               </>
             ) : (
               <>
-                <Badge variant="secondary" className="bg-complete-row text-amount-positive">
+                <Badge variant="secondary" className="bg-complete-row text-amount-positive hover:bg-complete-row">
                   {file.extractionConfidence != null && `${file.extractionConfidence}%`}
                 </Badge>
                 {/*
