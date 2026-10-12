@@ -73,11 +73,11 @@ function FieldRow({
   return (
     <div
       className={cn(
-        "flex items-baseline gap-4 min-w-0 field-row-responsive",
+        "flex items-baseline gap-3 min-w-0 field-row-responsive",
         className
       )}
     >
-      <span className="text-sm text-muted-foreground shrink-0 w-32 field-row-label">
+      <span className="text-sm text-muted-foreground shrink-0 w-28 field-row-label">
         {label}
       </span>
       <span className="text-sm flex-1 min-w-0 field-row-value">{children}</span>
