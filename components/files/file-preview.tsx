@@ -2,10 +2,11 @@
 
 import { FileText, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { useFileObjectUrl } from "@/hooks/use-file-object-url";
 import { classifyPreviewFile, previewFileExtensionLabel } from "@/lib/files/file-kind";
 import { PdfThumbnail } from "./pdf-page-viewer";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface FilePreviewProps {
   downloadUrl: string;
@@ -17,6 +18,8 @@ interface FilePreviewProps {
   fullSize?: boolean;
   /** Active state - shows visual feedback when viewer is open */
   active?: boolean;
+  /** Thumbnail only: what a click does, shown as a tooltip ("Click to view"). */
+  hint?: string;
 }
 
 /**
@@ -30,6 +33,7 @@ export function FilePreview({
   onClick,
   fullSize = false,
   active = false,
+  hint,
 }: FilePreviewProps) {
   // Some file records were written without a fileType (#248) — normalised to
   // the sentinel this component already treats as "trust the file extension
@@ -100,52 +104,68 @@ export function FilePreview({
     );
   }
 
-  // Thumbnail mode (original behavior)
+  // Thumbnail mode. A thin outline at rest shows where the page ends on a
+  // white PDF; hover and active draw the thicker ring over it.
   return (
-    <div
-      className={cn(
-        "relative bg-muted/30 rounded-md overflow-hidden cursor-pointer transition-all",
-        active
-          ? "ring-2 ring-primary shadow-md"
-          : "hover:ring-2 hover:ring-primary/50",
-        className
-      )}
-      onClick={onClick}
-    >
-      {isPdf && srcUrl ? (
-        // FiBuKI's own renderer, not the browser's PDF viewer in an iframe:
-        // for a protected PDF that viewer asked for the password and took
-        // keyboard focus, so the list's arrow keys stopped working (#676).
-        <div className="aspect-[3/4] bg-background" role="img" aria-label={fileName}>
-          <PdfThumbnail url={srcUrl} />
-        </div>
-      ) : isPdf ? (
-        // Resolving, or failed — show the placeholder rather than a broken frame.
-        <div className="aspect-[3/4] flex items-center justify-center bg-background text-muted-foreground">
-          {isLoading && !hasError ? (
-            <Loader2 className="h-6 w-6 animate-spin" />
-          ) : (
+    <HintTooltip hint={hint}>
+      <div
+        className={cn(
+          "relative bg-muted/30 rounded-md overflow-hidden cursor-pointer transition-all",
+          active
+            ? "ring-2 ring-primary shadow-md"
+            : "ring-1 ring-border hover:ring-2 hover:ring-primary/50",
+          className
+        )}
+        onClick={onClick}
+      >
+        {isPdf && srcUrl ? (
+          // FiBuKI's own renderer, not the browser's PDF viewer in an iframe:
+          // for a protected PDF that viewer asked for the password and took
+          // keyboard focus, so the list's arrow keys stopped working (#676).
+          <div className="aspect-[3/4] bg-background" role="img" aria-label={fileName}>
+            <PdfThumbnail url={srcUrl} />
+          </div>
+        ) : isPdf ? (
+          // Resolving, or failed — show the placeholder rather than a broken frame.
+          <div className="aspect-[3/4] flex items-center justify-center bg-background text-muted-foreground">
+            {isLoading && !hasError ? (
+              <Loader2 className="h-6 w-6 animate-spin" />
+            ) : (
+              <FileText className="h-8 w-8" />
+            )}
+          </div>
+        ) : isImage ? (
+          <div className="aspect-[3/4] flex items-center justify-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={srcUrl ?? undefined}
+              alt={fileName}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        ) : (
+          <div className="aspect-[3/4] flex flex-col items-center justify-center text-muted-foreground">
             <FileText className="h-8 w-8" />
-          )}
+          </div>
+        )}
+        {/* File type badge */}
+        <div className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[10px] font-medium bg-background/90 backdrop-blur-sm rounded border border-border/50 text-muted-foreground">
+          {previewFileExtensionLabel(fileType, fileName)}
         </div>
-      ) : isImage ? (
-        <div className="aspect-[3/4] flex items-center justify-center">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={srcUrl ?? undefined}
-            alt={fileName}
-            className="w-full h-full object-cover"
-          />
-        </div>
-      ) : (
-        <div className="aspect-[3/4] flex flex-col items-center justify-center text-muted-foreground">
-          <FileText className="h-8 w-8" />
-        </div>
-      )}
-      {/* File type badge */}
-      <div className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[10px] font-medium bg-background/90 backdrop-blur-sm rounded border border-border/50 text-muted-foreground">
-        {previewFileExtensionLabel(fileType, fileName)}
       </div>
-    </div>
+    </HintTooltip>
+  );
+}
+
+/** The thumbnail's click hint in the design-system tooltip; nothing without a hint. */
+function HintTooltip({ hint, children }: { hint?: string; children: ReactElement }) {
+  if (!hint) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        {hint}
+      </TooltipContent>
+    </Tooltip>
   );
 }

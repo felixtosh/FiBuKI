@@ -342,7 +342,7 @@
     },
     "viewer": {
       "passwordProtected": "Dieses PDF ist passwortgeschützt und kann nicht in der Vorschau angezeigt werden.",
-      "passwordProtectedShort": "Passwort\u00adgeschützt"
+      "passwordProtectedShort": "Passwort­geschützt"
     }
   },
   "settings": {
@@ -411,7 +411,15 @@
       "vatDeductible": "Vorsteuer abziehbar",
       "whyVatDeductible": "Warum die Vorsteuer abziehbar ist oder nicht",
       "vatDeductibleYes": "Ja",
-      "vatDeductibleNo": "Nein, beim Lieferanten eine Rechnung anfordern"
+      "vatDeductibleNo": "Nein, beim Lieferanten eine Rechnung anfordern",
+      "clickToView": "Klicken zum Ansehen",
+      "clickToClose": "Klicken zum Schließen",
+      "download": "Herunterladen",
+      "more": "Mehr",
+      "activityLog": "Aktivitätsprotokoll",
+      "delete": "Löschen",
+      "restore": "Wiederherstellen",
+      "edit": "Bearbeiten"
     },
     "source": {
       "gmail": "Gmail",
@@ -1022,7 +1030,6 @@
       "foreignRecipient": "Dieser Beleg ist an jemand anderen adressiert und wird nicht zugeordnet. Bestätige den Empfänger, um ihn zuzuordnen."
     }
   },
-
   "admin": {
     "benchmark": {
       "title": "Benchmark",
@@ -1157,6 +1164,48 @@
       "reconciliation_suggested": "Abgleich vorgeschlagen",
       "ruling_recorded": "Entscheidung erfasst",
       "ruling_revoked": "Entscheidung widerrufen"
+    },
+    "summary": {
+      "ran": "{n, plural, =0 {Nie gelaufen} one {Einmal gelaufen} other {# Mal gelaufen}}",
+      "madeMatch": "hat die aktuelle Zuordnung gemacht",
+      "matched": {
+        "partner": "Partner zugeordnet",
+        "connection": "Verknüpft"
+      },
+      "unmatched": {
+        "partner": "Noch kein Partner",
+        "connection": "Noch nicht verknüpft"
+      },
+      "kinds": {
+        "auto": {
+          "label": "Auto",
+          "description": {
+            "partner": "Der regelbasierte Abgleich: IBAN, UID, Website und Name gegen deine Partner und die globale Liste.",
+            "connection": "Der regelbasierte Abgleich: Betrag, Datum, Partner und Referenz."
+          }
+        },
+        "llm": {
+          "label": "LLM",
+          "description": {
+            "partner": "Ein Modell hat das Unternehmen selbstständig nachgeschlagen, ohne dass du es gestartet hast.",
+            "connection": "Ein Modell hat selbstständig nach dem Beleg gesucht, ohne dass du es gestartet hast."
+          }
+        },
+        "magic": {
+          "label": "Magic",
+          "description": {
+            "partner": "Der KI-Agent, gestartet über den Zauberstab oder den Chat.",
+            "connection": "Der KI-Agent, gestartet über den Zauberstab oder den Chat."
+          }
+        },
+        "manual": {
+          "label": "Manuell",
+          "description": {
+            "partner": "Du: deine eigene Wahl oder ein Vorschlag, den du angeklickt hast.",
+            "connection": "Du: deine eigene Wahl oder ein Vorschlag, den du angenommen hast."
+          }
+        }
+      }
     }
   }
 }

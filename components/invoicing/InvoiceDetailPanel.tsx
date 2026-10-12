@@ -15,7 +15,9 @@ import {
   Copy,
   Download,
   FileText,
+  History,
   Loader2,
+  MoreHorizontal,
   Pencil,
   Send,
   Share2,
@@ -26,6 +28,15 @@ import {
 import QRCode from "qrcode";
 import { doc, onSnapshot } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ActivityLogOverlay } from "@/components/activity/activity-log-overlay";
+import { AutomationSummaryRow } from "@/components/activity/automation-summary-row";
 import { useAuthenticatedDownload } from "@/hooks/use-authenticated-download";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -46,7 +57,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { callFunction } from "@/lib/firebase/callable";
 import { pushQuery } from "@/lib/navigation/query-url";
@@ -235,6 +245,10 @@ export function InvoiceDetailPanel({
   const [form, setForm] = useState<LocalForm | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [undoIssueOpen, setUndoIssueOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [showActivityLog, setShowActivityLog] = useState(false);
+  const tDetail = useTranslations("files.detail");
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [showMore, setShowMore] = useState(false);
@@ -941,7 +955,7 @@ export function InvoiceDetailPanel({
 
   return (
     <>
-      <div className="h-full flex flex-col">
+      <div className="h-full flex flex-col relative">
         <PanelHeader
           title={`Rechnung ${liveDisplayName}`}
           onClose={onClose}
@@ -973,7 +987,7 @@ export function InvoiceDetailPanel({
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-6">
             {/* Preview thumbnail row — same layout as file-detail-panel. */}
-            <div className="flex gap-4 file-preview-section">
+            <div className="flex gap-4 file-preview-section -mb-2">
               <div className="w-1/4 flex-shrink-0 file-preview-thumb">
                 {previewSource ? (
                   <>
@@ -983,14 +997,14 @@ export function InvoiceDetailPanel({
                       fileName={previewSource.fileName}
                       onClick={onToggleViewer}
                       active={viewerOpen}
+                      hint={
+                        draftRendering
+                          ? "Updating…"
+                          : viewerOpen
+                            ? tDetail("clickToClose")
+                            : tDetail("clickToView")
+                      }
                     />
-                    <p className="text-xs text-muted-foreground text-center mt-1">
-                      {draftRendering
-                        ? "Updating…"
-                        : viewerOpen
-                          ? "Click to close"
-                          : "Click to view"}
-                    </p>
                   </>
                 ) : (
                   <div className="aspect-[3/4] rounded-md border border-dashed bg-muted/30 flex flex-col items-center justify-center text-xs text-muted-foreground gap-2">
@@ -1070,6 +1084,7 @@ export function InvoiceDetailPanel({
                 onEnterEditMode={() => setMode("edit")}
                 correctionNumber={correction?.number}
                 onOpenInvoice={openInvoice}
+                onOpenActivityLog={() => setShowActivityLog(true)}
               />
             ) : (
               <EditSections
@@ -1116,183 +1131,143 @@ export function InvoiceDetailPanel({
             </div>
           ) : (
             <>
-              {/* Edit affordance at the TOP of the footer. */}
-              {!disabled && (
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => setMode("edit")}
-                  disabled={actionBusy !== null}
-                >
-                  <Pencil className="h-4 w-4 mr-2" />
-                  Rechnung bearbeiten
-                </Button>
-              )}
-
-              {invoice.status === "draft" && (
-                <Button
-                  className="w-full"
-                  onClick={handleIssue}
-                  disabled={actionBusy !== null || !canIssue}
-                >
-                  {actionBusy === "issue" ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4 mr-2" />
-                  )}
-                  Ausstellen
-                </Button>
-              )}
-
-              {(invoice.status === "issued" || invoice.status === "sent") && (
-                <>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => setShareOpen(true)}
-                      disabled={actionBusy !== null}
+              {/* One row: Edit (or Issue on a draft), Download, and the rest behind More. */}
+              <div className="flex gap-2">
+                {!disabled && (
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => setMode("edit")}
+                    disabled={actionBusy !== null}
+                  >
+                    <Pencil className="h-4 w-4 mr-2" />
+                    {tDetail("edit")}
+                  </Button>
+                )}
+                {invoice.status === "draft" && (
+                  <Button
+                    className="flex-1"
+                    onClick={handleIssue}
+                    disabled={actionBusy !== null || !canIssue}
+                  >
+                    {actionBusy === "issue" ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4 mr-2" />
+                    )}
+                    Ausstellen
+                  </Button>
+                )}
+                {hasIssuedPdf && (
+                  <Button variant="outline" className="flex-1" asChild>
+                    <a
+                      href={issuedFile!.downloadUrl}
+                      download={issuedFile!.fileName}
+                      onClick={storedDownload.onClick}
+                      aria-busy={storedDownload.pending}
                     >
-                      <Share2 className="h-4 w-4 mr-2" />
-                      Teilen
+                      <Download className="h-4 w-4 mr-2" />
+                      {tDetail("download")}
+                    </a>
+                  </Button>
+                )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="flex-1" disabled={actionBusy !== null}>
+                      <MoreHorizontal className="h-4 w-4 mr-2" />
+                      {tDetail("more")}
                     </Button>
-                    <Button
-                      variant="outline"
-                      onClick={handleDuplicate}
-                      disabled={actionBusy !== null}
-                    >
-                      <Copy className="h-4 w-4 mr-2" />
-                      Duplizieren
-                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" side="top" className="w-60">
+                    {invoice.status !== "draft" && invoice.status !== "cancelled" && (
+                      <DropdownMenuItem onSelect={() => setShareOpen(true)}>
+                        <Share2 />
+                        Teilen
+                      </DropdownMenuItem>
+                    )}
+                    {invoice.status !== "draft" && (
+                      <DropdownMenuItem onSelect={handleDuplicate}>
+                        <Copy />
+                        Duplizieren
+                      </DropdownMenuItem>
+                    )}
                     {invoice.status === "issued" && !invoice.sentAt && (
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            variant="outline"
-                            className="col-span-2"
-                            disabled={actionBusy !== null}
-                          >
-                            <Undo2 className="h-4 w-4 mr-2" />
-                            Ausstellen rückgängig machen
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Ausstellen rückgängig machen?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Die Rechnung wird wieder ein bearbeitbarer Entwurf
-                              mit derselben Nummer, das erzeugte PDF wird
-                              gelöscht. Das geht nur, solange sie die zuletzt
-                              ausgestellte Rechnung dieses Jahres ist und nie
-                              versendet, bezahlt oder über einen Link geöffnet
-                              wurde. Sonst bleibt nur die Stornierung.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel disabled={actionBusy === "undoIssue"}>
-                              Abbrechen
-                            </AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={handleUndoIssue}
-                              disabled={actionBusy !== null}
-                            >
-                              {actionBusy === "undoIssue" && (
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              )}
-                              Rückgängig machen
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      <DropdownMenuItem onSelect={() => setUndoIssueOpen(true)}>
+                        <Undo2 />
+                        Ausstellen rückgängig machen
+                      </DropdownMenuItem>
                     )}
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {hasIssuedPdf && (
-                      <Button variant="outline" asChild>
-                        <a
-                          href={issuedFile!.downloadUrl}
-                          download={issuedFile!.fileName}
-                          onClick={storedDownload.onClick}
-                          aria-busy={storedDownload.pending}
-                        >
-                          <Download className="h-4 w-4 mr-2" />
-                          Download
-                        </a>
-                      </Button>
-                    )}
-                    {storedDownload.error && (
-                      <p className="col-span-2 text-xs text-destructive">
-                        {storedDownload.error}
-                      </p>
-                    )}
-                    {!isCorrection && (
-                      <CancelInvoiceDialog
-                        className={hasIssuedPdf ? undefined : "col-span-2"}
-                        busy={actionBusy === "cancel"}
-                        disabled={actionBusy !== null}
-                        onConfirm={handleCancel}
-                      />
-                    )}
-                  </div>
-                </>
-              )}
-
-              {invoice.status === "paid" && (
-                <>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => setShareOpen(true)}
-                      disabled={actionBusy !== null}
-                    >
-                      <Share2 className="h-4 w-4 mr-2" />
-                      Teilen
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={handleDuplicate}
-                      disabled={actionBusy !== null}
-                    >
-                      <Copy className="h-4 w-4 mr-2" />
-                      Duplizieren
-                    </Button>
-                  </div>
-                  {hasIssuedPdf && (
-                    <Button variant="outline" className="w-full" asChild>
-                      <a
-                        href={issuedFile!.downloadUrl}
-                        download={issuedFile!.fileName}
-                      >
-                        <Download className="h-4 w-4 mr-2" />
-                        Download
-                      </a>
-                    </Button>
-                  )}
-                  {!isCorrection && (
-                    <CancelInvoiceDialog
-                      className="w-full"
-                      busy={actionBusy === "cancel"}
-                      disabled={actionBusy !== null}
-                      onConfirm={handleCancel}
-                    />
-                  )}
-                </>
-              )}
-
-              {invoice.status === "cancelled" && (
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={handleDuplicate}
-                  disabled={actionBusy !== null}
-                >
-                  <Copy className="h-4 w-4 mr-2" />
-                  Duplizieren
-                </Button>
+                    <DropdownMenuItem onSelect={() => setShowActivityLog(true)}>
+                      <History />
+                      {tDetail("activityLog")}
+                      {issuedFile?.automationHistory?.length ? (
+                        <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                          {issuedFile.automationHistory.length}
+                        </span>
+                      ) : null}
+                    </DropdownMenuItem>
+                    {(invoice.status === "issued" || invoice.status === "sent" || invoice.status === "paid") &&
+                      !isCorrection && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <CancelInvoiceMenuItem onSelect={() => setCancelOpen(true)} />
+                        </>
+                      )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              {storedDownload.error && (
+                <p className="text-xs text-destructive">{storedDownload.error}</p>
               )}
             </>
           )}
         </div>
+
+        {showActivityLog && (
+          <ActivityLogOverlay
+            entries={issuedFile?.automationHistory}
+            onClose={() => setShowActivityLog(false)}
+          />
+        )}
       </div>
+
+      <AlertDialog open={undoIssueOpen} onOpenChange={setUndoIssueOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ausstellen rückgängig machen?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Die Rechnung wird wieder ein bearbeitbarer Entwurf
+              mit derselben Nummer, das erzeugte PDF wird
+              gelöscht. Das geht nur, solange sie die zuletzt
+              ausgestellte Rechnung dieses Jahres ist und nie
+              versendet, bezahlt oder über einen Link geöffnet
+              wurde. Sonst bleibt nur die Stornierung.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionBusy === "undoIssue"}>
+              Abbrechen
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleUndoIssue}
+              disabled={actionBusy !== null}
+            >
+              {actionBusy === "undoIssue" && (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              )}
+              Rückgängig machen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <CancelInvoiceDialog
+        open={cancelOpen}
+        onOpenChange={setCancelOpen}
+        busy={actionBusy === "cancel"}
+        disabled={actionBusy !== null}
+        onConfirm={handleCancel}
+      />
 
       <InvoiceShareLinkDialog
         open={shareOpen}
@@ -1308,30 +1283,35 @@ export function InvoiceDetailPanel({
 // Cancel (#133): issues an Invoice Correction; both documents stay on record.
 // ===========================================================================
 
+function CancelInvoiceMenuItem({ onSelect }: { onSelect: () => void }) {
+  const t = useTranslations("invoices.correction");
+  return (
+    <DropdownMenuItem
+      onSelect={onSelect}
+      className="text-destructive focus:text-destructive focus:bg-destructive/10"
+    >
+      <XCircle />
+      {t("cancel")}
+    </DropdownMenuItem>
+  );
+}
+
 function CancelInvoiceDialog({
-  className,
+  open,
+  onOpenChange,
   busy,
   disabled,
   onConfirm,
 }: {
-  className?: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   busy: boolean;
   disabled: boolean;
   onConfirm: () => void;
 }) {
   const t = useTranslations("invoices.correction");
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button
-          variant="outline"
-          className={`text-destructive hover:text-destructive hover:bg-destructive/10 ${className ?? ""}`}
-          disabled={disabled}
-        >
-          <XCircle className="h-4 w-4 mr-2" />
-          {t("cancel")}
-        </Button>
-      </AlertDialogTrigger>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{t("cancelTitle")}</AlertDialogTitle>
@@ -1387,6 +1367,7 @@ interface ViewSectionsProps {
   /** Number of the Invoice Correction that cancels this invoice, once loaded. */
   correctionNumber?: string;
   onOpenInvoice: (invoiceId: string) => void;
+  onOpenActivityLog: () => void;
 }
 
 function ViewSections({
@@ -1409,6 +1390,7 @@ function ViewSections({
   onEnterEditMode,
   correctionNumber,
   onOpenInvoice,
+  onOpenActivityLog,
 }: ViewSectionsProps) {
   const t = useTranslations("invoices.correction");
   const lineItemCount = form.lineItems.filter(
@@ -1527,6 +1509,14 @@ function ViewSections({
           onDismissSuggestion={onDismissTxSuggestion}
           onTriggerRematch={onTriggerRematch}
           isRematching={isRematching}
+        />
+      ) : null}
+      {issuedFile ? (
+        <AutomationSummaryRow
+          entries={issuedFile.automationHistory}
+          area="connection"
+          matched={(issuedFile.transactionIds?.length ?? 0) > 0}
+          onOpenLog={onOpenActivityLog}
         />
       ) : (
         <div className="space-y-2">

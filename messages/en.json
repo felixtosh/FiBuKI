@@ -411,7 +411,15 @@
       "vatDeductible": "VAT deductible",
       "whyVatDeductible": "Why the VAT is or is not deductible",
       "vatDeductibleYes": "Yes",
-      "vatDeductibleNo": "No, ask the supplier for an invoice"
+      "vatDeductibleNo": "No, ask the supplier for an invoice",
+      "clickToView": "Click to view",
+      "clickToClose": "Click to close",
+      "download": "Download",
+      "more": "More",
+      "activityLog": "Activity log",
+      "delete": "Delete",
+      "restore": "Restore",
+      "edit": "Edit"
     },
     "source": {
       "gmail": "Gmail",
@@ -1022,7 +1030,6 @@
       "foreignRecipient": "This File is addressed to someone else, so it is not matched. Confirm the recipient to match it."
     }
   },
-
   "admin": {
     "benchmark": {
       "title": "Benchmark",
@@ -1157,6 +1164,48 @@
       "reconciliation_suggested": "Reconciliation suggested",
       "ruling_recorded": "Ruling recorded",
       "ruling_revoked": "Ruling revoked"
+    },
+    "summary": {
+      "ran": "Ran {n, plural, =0 {never} one {once} other {# times}}",
+      "madeMatch": "made the current match",
+      "matched": {
+        "partner": "Partner assigned",
+        "connection": "Connected"
+      },
+      "unmatched": {
+        "partner": "No Partner yet",
+        "connection": "Not connected yet"
+      },
+      "kinds": {
+        "auto": {
+          "label": "Auto",
+          "description": {
+            "partner": "The rule-based matcher: IBAN, VAT ID, website and name against your Partners and the global list.",
+            "connection": "The rule-based matcher: amount, date, Partner and reference."
+          }
+        },
+        "llm": {
+          "label": "LLM",
+          "description": {
+            "partner": "A model looked the company up on its own, without you starting it.",
+            "connection": "A model searched for the receipt on its own, without you starting it."
+          }
+        },
+        "magic": {
+          "label": "Magic",
+          "description": {
+            "partner": "The AI agent, started from the wand or the chat.",
+            "connection": "The AI agent, started from the wand or the chat."
+          }
+        },
+        "manual": {
+          "label": "Manual",
+          "description": {
+            "partner": "You: your own pick, or a suggestion you clicked.",
+            "connection": "You: your own pick, or a suggestion you accepted."
+          }
+        }
+      }
     }
   }
 }

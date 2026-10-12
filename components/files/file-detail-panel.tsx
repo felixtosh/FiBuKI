@@ -36,6 +36,8 @@ import {
   Info,
   Search,
   Scissors,
+  History,
+  MoreHorizontal,
 } from "lucide-react";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
@@ -52,7 +54,15 @@ import {
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
-import { ActivityHistory } from "@/components/activity/activity-history";
+import { ActivityLogOverlay } from "@/components/activity/activity-log-overlay";
+import { AutomationSummaryRow } from "@/components/activity/automation-summary-row";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { FileCopySection, type CopyAct, type MarkCopyAct } from "./file-copy-section";
 import { FileCorrectionSection } from "./file-correction-section";
 import { FileReceiptLinkSection } from "./file-receipt-link-section";
@@ -191,6 +201,7 @@ function FileDetailPanelInner({
   const { userId } = useAuth();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
   const [isSplitOpen, setIsSplitOpen] = useState(false);
+  const [showActivityLog, setShowActivityLog] = useState(false);
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
   const [isRetryingExtraction, setIsRetryingExtraction] = useState(false);
   const [isUpdatingExtractedFields, setIsUpdatingExtractedFields] = useState(false);
@@ -437,7 +448,7 @@ function FileDetailPanelInner({
 
   return (
     <>
-      <div className="h-full flex flex-col">
+      <div className="h-full flex flex-col relative">
         {/* Header */}
         <PanelHeader
           title={fileDisplayName(file)}
@@ -452,7 +463,8 @@ function FileDetailPanelInner({
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-6">
             {/* Preview thumbnail - 25% width, click to toggle viewer */}
-            <div className="flex gap-4 file-preview-section">
+            {/* -mb-2: the line below sits as far from the preview as the header's line above it */}
+            <div className="flex gap-4 file-preview-section -mb-2">
               <div className="w-1/4 flex-shrink-0 file-preview-thumb">
                 <FilePreview
                   downloadUrl={file.downloadUrl}
@@ -460,10 +472,8 @@ function FileDetailPanelInner({
                   fileName={file.fileName}
                   onClick={onOpenViewer}
                   active={viewerOpen}
+                  hint={viewerOpen ? t("clickToClose") : t("clickToView")}
                 />
-                <p className="text-xs text-muted-foreground text-center mt-1">
-                  {viewerOpen ? "Click to close" : "Click to view"}
-                </p>
               </div>
               <div className="flex-1 space-y-2">
                 {/* Quick file info - fixed label width for alignment */}
@@ -681,6 +691,14 @@ function FileDetailPanelInner({
                   </div>
                 </FieldRow>
               )}
+
+              {/* What looked for a Partner, and what found the one assigned */}
+              <AutomationSummaryRow
+                entries={file.automationHistory}
+                area="partner"
+                matched={!!file.partnerId}
+                onOpenLog={() => setShowActivityLog(true)}
+              />
             </div>
 
             <Separator />
@@ -730,16 +748,18 @@ function FileDetailPanelInner({
               isAiSearching={isWandActive}
             />
 
-            <Separator />
-
-            {/* Every change a person, the matcher or an AI made to this File (#752) */}
-            <ActivityHistory entries={file.automationHistory} />
+            {/* What looked for a Transaction, and what connected the one there */}
+            <AutomationSummaryRow
+              entries={file.automationHistory}
+              area="connection"
+              matched={(file.transactionIds?.length ?? 0) > 0}
+              onOpenLog={() => setShowActivityLog(true)}
+            />
           </div>
         </ScrollArea>
 
-        {/* Footer actions */}
+        {/* Footer: one row. Download, and the rest behind More */}
         <div className="p-4 border-t flex flex-col gap-2">
-          {/* Primary row: Download + Delete/Restore */}
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1" asChild>
               <a
@@ -749,45 +769,67 @@ function FileDetailPanelInner({
                 aria-busy={storedDownload.pending}
               >
                 <Download className="h-4 w-4 mr-2" />
-                Download
+                {t("download")}
               </a>
             </Button>
-            {file.deletedAt ? (
-              // Show restore for deleted files
-              onRestore && (
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={onRestore}
-                >
-                  <RotateCcw className="h-4 w-4 mr-2" />
-                  Restore
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="flex-1">
+                  <MoreHorizontal className="h-4 w-4 mr-2" />
+                  {t("more")}
                 </Button>
-              )
-            ) : (
-              // Show delete for non-deleted files
-              onDelete && (
-                <Button
-                  variant="outline"
-                  className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={onDelete}
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete
-                </Button>
-              )
-            )}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" side="top" className="w-56">
+                {canSplitFile(file) ? (
+                  <DropdownMenuItem onSelect={() => setIsSplitOpen(true)}>
+                    <Scissors />
+                    {tSplit("action")}
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem onSelect={() => setShowActivityLog(true)}>
+                  <History />
+                  {t("activityLog")}
+                  {file.automationHistory?.length ? (
+                    <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                      {file.automationHistory.length}
+                    </span>
+                  ) : null}
+                </DropdownMenuItem>
+                {file.deletedAt && onRestore ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={onRestore}>
+                      <RotateCcw />
+                      {t("restore")}
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+                {!file.deletedAt && onDelete ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={onDelete}
+                      className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                    >
+                      <Trash2 />
+                      {t("delete")}
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-          {canSplitFile(file) ? (
-            <Button variant="ghost" size="sm" onClick={() => setIsSplitOpen(true)}>
-              <Scissors className="h-4 w-4 mr-2" />
-              {tSplit("action")}
-            </Button>
-          ) : null}
           {storedDownload.error && (
             <p className="text-xs text-destructive">{storedDownload.error}</p>
           )}
         </div>
+
+        {showActivityLog && (
+          <ActivityLogOverlay
+            entries={file.automationHistory}
+            onClose={() => setShowActivityLog(false)}
+          />
+        )}
       </div>
 
       <SplitFileDialog file={file} open={isSplitOpen} onClose={() => setIsSplitOpen(false)} />

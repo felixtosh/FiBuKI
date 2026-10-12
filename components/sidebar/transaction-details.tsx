@@ -23,6 +23,7 @@ function toDate(ts: Timestamp | { seconds: number; nanoseconds: number } | Date 
 import { Button } from "@/components/ui/button";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { PartnerPill } from "@/components/partners/partner-pill";
+import { AutomationSummaryRow } from "@/components/activity/automation-summary-row";
 import { FieldRow } from "@/components/ui/detail-panel-primitives";
 import { usePartnerSuggestions, useAssignedPartner } from "@/hooks/use-partner-suggestions";
 import { Plus, ExternalLink, Loader2, WandSparkles } from "lucide-react";
@@ -45,6 +46,8 @@ interface TransactionDetailsProps {
   ) => Promise<void>;
   onRemovePartner: () => Promise<void>;
   onCreatePartner: (data: { name: string; aliases?: string[]; vatId?: string; ibans?: string[]; website?: string; country?: string; notes?: string }, options?: { skipAutoMatch?: boolean }) => Promise<string>;
+  /** Opens the activity log from the automation summary row. */
+  onOpenActivityLog?: () => void;
 }
 
 export function TransactionDetails({
@@ -55,6 +58,7 @@ export function TransactionDetails({
   onAssignPartner,
   onRemovePartner,
   onCreatePartner,
+  onOpenActivityLog,
 }: TransactionDetailsProps) {
   const router = useRouter();
   const [isAddPartnerOpen, setIsAddPartnerOpen] = useState(false);
@@ -329,6 +333,15 @@ export function TransactionDetails({
             </div>
           </FieldRow>
         )}
+
+        {/* What looked for a Partner, and what found the one assigned */}
+        <AutomationSummaryRow
+          className="mt-3"
+          entries={transaction.automationHistory}
+          area="partner"
+          matched={!!transaction.partnerId}
+          onOpenLog={onOpenActivityLog}
+        />
       </div>
 
       {/* Add Partner Dialog */}
