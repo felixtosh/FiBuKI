@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { format } from "date-fns";
 import { X, Loader2, Check, AlertTriangle, Search, Sparkles, Info } from "lucide-react";
@@ -309,6 +309,8 @@ interface FileConnectionsListProps {
   onAiSearch?: () => void;
   /** Whether AI search is in progress */
   isAiSearching?: boolean;
+  /** Shown right after the heading, e.g. the automation summary. */
+  headerAction?: ReactNode;
 }
 
 export function FileConnectionsList({
@@ -323,6 +325,7 @@ export function FileConnectionsList({
   isRematching = false,
   onAiSearch,
   isAiSearching = false,
+  headerAction,
 }: FileConnectionsListProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -425,7 +428,10 @@ export function FileConnectionsList({
       <div className="space-y-2">
         {/* Header with title and action buttons */}
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Transaction</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold">Transaction</h3>
+            {headerAction}
+          </div>
           <div className="flex items-center gap-1">
             {/* Search button to trigger AI transaction search */}
             {onAiSearch && !hasTransactions && (

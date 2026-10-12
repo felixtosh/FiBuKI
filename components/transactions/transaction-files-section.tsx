@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useEffect } from "react";
+import { useMemo, useEffect, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { format } from "date-fns";
 import {
@@ -93,6 +93,8 @@ interface TransactionFilesSectionProps {
   searchLabel?: string;
   /** Trigger a precision search */
   onTriggerSearch?: () => void;
+  /** Shown right after the heading, e.g. the automation summary. */
+  headerAction?: ReactNode;
   /** Open the connect file overlay (lifted to page level) */
   onOpenConnectFile?: () => void;
   /**
@@ -460,6 +462,7 @@ export function TransactionFilesSection({
   isSearching = false,
   searchLabel,
   onTriggerSearch,
+  headerAction,
   onOpenConnectFile,
   onPreviewSuggestedFile,
   isConnectFileOpen = false,
@@ -727,7 +730,10 @@ export function TransactionFilesSection({
       <div className="space-y-3" data-onboarding="files-section">
         {/* Section Header with Search and History Buttons */}
         <div className="flex items-center justify-between relative z-10">
-          <h3 className="text-sm font-semibold">File</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold">File</h3>
+            {headerAction}
+          </div>
           <div className="flex items-center gap-1">
             {/* Browser replay button — shown when recipe exists + extension installed + no files */}
             {!hasFiles && !transaction.noReceiptCategoryId && extensionInstalled && transaction.partnerId && replayMode && partnerRecipes && partnerRecipes.length > 0 && (

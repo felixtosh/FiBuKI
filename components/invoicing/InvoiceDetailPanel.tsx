@@ -1506,13 +1506,13 @@ function ViewSections({
           onDismissSuggestion={onDismissTxSuggestion}
           onTriggerRematch={onTriggerRematch}
           isRematching={isRematching}
-        />
-      ) : null}
-      {issuedFile ? (
-        <AutomationSummaryRow
-          entries={issuedFile.automationHistory}
-          area="connection"
-          matched={(issuedFile.transactionIds?.length ?? 0) > 0}
+          headerAction={
+            <AutomationSummaryRow
+              entries={issuedFile.automationHistory}
+              area="connection"
+              matched={(issuedFile.transactionIds?.length ?? 0) > 0}
+            />
+          }
         />
       ) : (
         <div className="space-y-2">

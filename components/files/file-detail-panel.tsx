@@ -577,7 +577,20 @@ function FileDetailPanelInner({
             {/* Partner Assignment Section */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">Partner</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold">Partner</h3>
+                  <AutomationSummaryRow
+                    entries={file.automationHistory}
+                    area="partner"
+                    matched={!!file.partnerId}
+                    onMagic={
+                      !assignedPartner && file.extractionComplete
+                        ? () => startFilePartnerSearch(file.id)
+                        : undefined
+                    }
+                    magicBusy={isWandActive}
+                  />
+                </div>
                 <div className="flex items-center gap-1">
                   {/* Debug info button */}
                   <Popover>
@@ -673,18 +686,6 @@ function FileDetailPanelInner({
                 </FieldRow>
               )}
 
-              {/* What looked for a Partner, and what found the one assigned */}
-              <AutomationSummaryRow
-                entries={file.automationHistory}
-                area="partner"
-                matched={!!file.partnerId}
-                onMagic={
-                  !assignedPartner && file.extractionComplete
-                    ? () => startFilePartnerSearch(file.id)
-                    : undefined
-                }
-                magicBusy={isWandActive}
-              />
             </div>
 
             <Separator />
@@ -722,27 +723,28 @@ function FileDetailPanelInner({
               onDismissSuggestion={handleDismissTransactionSuggestion}
               onTriggerRematch={handleTriggerTransactionRematch}
               isRematching={isRematchingTransactions}
+              headerAction={
+                <AutomationSummaryRow
+                  entries={file.automationHistory}
+                  area="connection"
+                  matched={(file.transactionIds?.length ?? 0) > 0}
+                  onMagic={
+                    (file.transactionIds?.length ?? 0) === 0
+                      ? () =>
+                          startFileTransactionSearch(file.id, {
+                            fileName: file.fileName,
+                            amount: file.extractedAmount ?? undefined,
+                            currency: file.extractedCurrency ?? undefined,
+                            date: toDateSafe(file.extractedDate)?.toISOString().split("T")[0],
+                            partner: file.extractedPartner ?? undefined,
+                          })
+                      : undefined
+                  }
+                  magicBusy={isWandActive}
+                />
+              }
             />
 
-            {/* What looked for a Transaction, and what connected the one there */}
-            <AutomationSummaryRow
-              entries={file.automationHistory}
-              area="connection"
-              matched={(file.transactionIds?.length ?? 0) > 0}
-              onMagic={
-                (file.transactionIds?.length ?? 0) === 0
-                  ? () =>
-                      startFileTransactionSearch(file.id, {
-                        fileName: file.fileName,
-                        amount: file.extractedAmount ?? undefined,
-                        currency: file.extractedCurrency ?? undefined,
-                        date: toDateSafe(file.extractedDate)?.toISOString().split("T")[0],
-                        partner: file.extractedPartner ?? undefined,
-                      })
-                  : undefined
-              }
-              magicBusy={isWandActive}
-            />
           </div>
         </ScrollArea>
 

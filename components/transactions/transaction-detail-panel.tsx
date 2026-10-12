@@ -338,19 +338,19 @@ export function TransactionDetailPanel({
               partnerName={partnerName}
               partnerWebsite={partnerWebsite}
               extensionInstalled={extensionInstalled}
-            />
-            {/* What looked for a File, and what connected the one there */}
-            <AutomationSummaryRow
-              className="mt-3"
-              entries={transaction.automationHistory}
-              area="connection"
-              matched={(transaction.fileIds?.length ?? 0) > 0}
-              onMagic={
-                (transaction.fileIds?.length ?? 0) === 0 && !transaction.noReceiptCategoryId
-                  ? triggerSearch
-                  : undefined
+              headerAction={
+                <AutomationSummaryRow
+                  entries={transaction.automationHistory}
+                  area="connection"
+                  matched={(transaction.fileIds?.length ?? 0) > 0}
+                  onMagic={
+                    (transaction.fileIds?.length ?? 0) === 0 && !transaction.noReceiptCategoryId
+                      ? triggerSearch
+                      : undefined
+                  }
+                  magicBusy={isSearching || isReceiptSearchRunning}
+                />
               }
-              magicBusy={isSearching || isReceiptSearchRunning}
             />
           </div>
         </div>

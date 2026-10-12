@@ -265,7 +265,16 @@ export function TransactionDetails({
       {/* Partner section */}
       <div className="border-t pt-3 mt-3 -mx-4 px-4" data-onboarding="partner-section">
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold">Partner</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold">Partner</h3>
+            <AutomationSummaryRow
+              entries={transaction.automationHistory}
+              area="partner"
+              matched={!!transaction.partnerId}
+              onMagic={!assignedPartner ? () => startPartnerSearch(transaction.id) : undefined}
+              magicBusy={isWandActive}
+            />
+          </div>
         </div>
 
         <FieldRow label="Connect" labelWidth="w-32">
@@ -313,16 +322,6 @@ export function TransactionDetails({
             </div>
           </FieldRow>
         )}
-
-        {/* What looked for a Partner, and what found the one assigned */}
-        <AutomationSummaryRow
-          className="mt-3"
-          entries={transaction.automationHistory}
-          area="partner"
-          matched={!!transaction.partnerId}
-          onMagic={!assignedPartner ? () => startPartnerSearch(transaction.id) : undefined}
-          magicBusy={isWandActive}
-        />
       </div>
 
       {/* Add Partner Dialog */}
