@@ -309,7 +309,7 @@ describe("a Gmail mailbox that answers 'slow down' (fibuki.com, 2026-10-12)", ()
     await gmailMailbox("g-1");
     let gmailCalls = 0;
     globalThis.fetch = (async (url: string | URL) => {
-      if (String(url).includes("gmail.googleapis.com")) {
+      if (new URL(String(url)).hostname === "gmail.googleapis.com") {
         gmailCalls++;
         return tooMany();
       }
@@ -327,7 +327,7 @@ describe("a Gmail mailbox that answers 'slow down' (fibuki.com, 2026-10-12)", ()
     await gmailMailbox("g-2");
     let first = true;
     globalThis.fetch = (async (url: string | URL) => {
-      if (String(url).includes("gmail.googleapis.com")) {
+      if (new URL(String(url)).hostname === "gmail.googleapis.com") {
         if (first) {
           first = false;
           return tooMany();
