@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback } from "react";
-import { MessageSquare, Send, Loader2, Plus, ArrowDown, CheckCircle2, X } from "lucide-react";
+import { MessageSquare, Send, Loader2, Plus, ArrowDown, CheckCircle2, X, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -25,11 +25,16 @@ const MAX_SIDEBAR_WIDTH = 600;
 
 export function ChatSidebar() {
   const tCommon = useTranslations("common");
+  const tChat = useTranslations("chat");
   const {
     messages,
     isLoading,
     openChoice,
     sendMessage,
+    queuedMessages,
+    queueMessage,
+    removeQueuedMessage,
+    stopTurn,
     startNewSession,
     loadSession,
     isSidebarOpen,
@@ -199,10 +204,16 @@ export function ChatSidebar() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const input = inputRef.current;
-    if (!input || !input.value.trim() || isLoading) return;
+    if (!input || !input.value.trim()) return;
 
     const message = input.value.trim();
     input.value = "";
+
+    // While BuKI works, the message waits in the queue and goes out when the turn ends.
+    if (isLoading) {
+      queueMessage(message);
+      return;
+    }
 
     // Reset scroll tracking and scroll to bottom when user sends a message
     userScrolledRef.current = false;
@@ -364,19 +375,18 @@ export function ChatSidebar() {
 
                   {/* Input */}
                   <div className={cn("border-t p-4", openChoice && "hidden")}>
+                    <QueuedMessageList messages={queuedMessages} onRemove={removeQueuedMessage} />
                     <form ref={formRef} onSubmit={handleSubmit} className="flex gap-2">
                       <Input
                         ref={inputRef}
-                        placeholder={isLoading ? "Waiting for response..." : "Ask about your transactions..."}
+                        placeholder={isLoading ? tChat("queuePlaceholder") : tChat("inputPlaceholder")}
                         className="flex-1"
                       />
-                      <Button type="submit" size="icon" disabled={isLoading}>
-                        {isLoading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Send className="h-4 w-4" />
-                        )}
-                      </Button>
+                      <SendOrStopButton
+                        running={isLoading}
+                        hasQueue={queuedMessages.length > 0}
+                        onStop={stopTurn}
+                      />
                     </form>
                   </div>
                 </TooltipProvider>
@@ -408,5 +418,53 @@ export function ChatSidebar() {
       )}
 
     </>
+  );
+}
+
+/** Messages written while BuKI works, each removable before it is sent. */
+function QueuedMessageList({ messages, onRemove }: { messages: string[]; onRemove: (index: number) => void }) {
+  const t = useTranslations("chat");
+  if (messages.length === 0) return null;
+  return (
+    <div className="mb-2 flex flex-col gap-1">
+      {messages.map((text, index) => (
+        <div key={index} className="flex items-start gap-2 rounded-md border border-dashed bg-muted/40 px-2 py-1.5 text-xs">
+          <span className="shrink-0 font-medium text-muted-foreground">{t("queuedLabel")}</span>
+          <span className="line-clamp-2 flex-1">{text}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 shrink-0"
+            aria-label={t("removeQueued")}
+            title={t("removeQueued")}
+            onClick={() => onRemove(index)}
+          >
+            <X className="h-3 w-3" />
+          </Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Send while idle; Stop while BuKI works (with a message in the queue, Stop
+ * sends it right away). Enter in the input queues while a turn runs.
+ */
+function SendOrStopButton({ running, hasQueue, onStop }: { running: boolean; hasQueue: boolean; onStop: () => void }) {
+  const t = useTranslations("chat");
+  if (running) {
+    const label = hasQueue ? t("stopAndSend") : t("stop");
+    return (
+      <Button type="button" size="icon" variant="secondary" aria-label={label} title={label} onClick={onStop}>
+        <Square className="h-3.5 w-3.5 fill-current" />
+      </Button>
+    );
+  }
+  return (
+    <Button type="submit" size="icon" aria-label={t("send")} title={t("send")}>
+      <Send className="h-4 w-4" />
+    </Button>
   );
 }

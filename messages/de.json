@@ -866,7 +866,14 @@
       }
     },
     "choiceReplyPlaceholder": "Oder schreib eine Antwort…",
-    "choiceDismiss": "Beiseitelegen"
+    "choiceDismiss": "Beiseitelegen",
+    "inputPlaceholder": "Frag etwas zu deinen Transaktionen…",
+    "queuePlaceholder": "Schreib die nächste Nachricht, sie wartet, bis BuKI fertig ist…",
+    "queuedLabel": "In der Warteschlange",
+    "removeQueued": "Aus der Warteschlange entfernen",
+    "stop": "Stopp",
+    "stopAndSend": "Stoppen und die wartende Nachricht senden",
+    "send": "Senden"
   },
   "integrationSections": {
     "email": "E-Mail",
