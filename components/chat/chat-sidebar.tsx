@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { useTranslations } from "next-intl";
 import { useChat } from "./chat-provider";
 import { MessageBubble } from "./message-bubble";
+import { ChatEmptyState } from "./chat-empty-state";
+import { DockedChoice } from "./choice-card";
 import { ChatTabs } from "./chat-tabs";
 import { NotificationsList } from "./notifications-list";
 import { OnboardingSidebar } from "@/components/onboarding";
@@ -26,6 +28,7 @@ export function ChatSidebar() {
   const {
     messages,
     isLoading,
+    openChoice,
     sendMessage,
     startNewSession,
     loadSession,
@@ -303,13 +306,7 @@ export function ChatSidebar() {
                             </Button>
                           </div>
                         ) : messages.length === 0 ? (
-                          <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
-                            <MessageSquare className="mb-4 h-12 w-12 opacity-20" />
-                            <p className="text-sm">Start a conversation with your AI tax assistant.</p>
-                            <p className="mt-2 text-xs">
-                              Try: &ldquo;Show me my recent transactions&rdquo; or &ldquo;Categorize all Amazon purchases&rdquo;
-                            </p>
-                          </div>
+                          <ChatEmptyState />
                         ) : (
                           messages.map((message) => (
                             <MessageBubble key={message.id} message={message} />
@@ -358,8 +355,15 @@ export function ChatSidebar() {
                     </div>
                   )}
 
+                  {/* BuKI's open question takes the input's place until it is answered or put aside */}
+                  {openChoice ? (
+                    <div className="border-t p-3">
+                      <DockedChoice choice={openChoice} />
+                    </div>
+                  ) : null}
+
                   {/* Input */}
-                  <div className="border-t p-4">
+                  <div className={cn("border-t p-4", openChoice && "hidden")}>
                     <form ref={formRef} onSubmit={handleSubmit} className="flex gap-2">
                       <Input
                         ref={inputRef}

@@ -79,10 +79,10 @@ each pass, fail, or n/a when the turn gave it nothing to judge:
 
 | Section | Check |
 |---|---|
-| Outcome | `outcome.writes-succeeded` |
+| Outcome | `outcome.writes-succeeded`, `outcome.failed-source-disclosed` |
 | Trajectory | `trajectory.no-senseless-calls`, `trajectory.within-budget`, `trajectory.receipt-workflow-first` |
 | Governance | `governance.gated-writes-held`, `governance.partner-verified`, `governance.ambiguity-offered-as-choice`, `governance.dead-end-gives-next-steps` |
-| Experience | `experience.not-silent`, `experience.narrates`, `experience.short`, `experience.user-language` |
+| Experience | `experience.not-silent`, `experience.narrates`, `experience.signoff`, `experience.short`, `experience.user-language` |
 
 They are code, not an LLM judge, so they score every model the same way. Outcome
 correctness ("was it the right receipt?") needs a person: that is what the thumbs

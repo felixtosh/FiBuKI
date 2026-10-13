@@ -270,6 +270,23 @@ describe("the trace and the rubric", () => {
     expect(scoreTrace({ ...view, silentRounds: 0 })["experience.narrates"]).toBe("pass");
   });
 
+  it("signs off a finished reply, and a failed mailbox is disclosed rather than reported empty", () => {
+    const base: TraceView = { userMessage: "hi there friend", steps: [], finalText: "Hi! How can I help?", hitStepLimit: false };
+    expect(scoreTrace(base)["experience.signoff"]).toBe("fail");
+    expect(scoreTrace({ ...base, finalText: "Hi! How can I help? BuKI BuKI ✨" })["experience.signoff"]).toBe("pass");
+
+    const failedSearch = {
+      tool: "findReceiptForTransaction",
+      args: "{}",
+      result: '{"status":"no_match","sourcesFailed":[{"integrationId":"g","reason":"rate_limited"}]}',
+    };
+    const silent: TraceView = { ...base, steps: [failedSearch], finalText: "No receipts found. BuKI BuKI 😿" };
+    expect(scoreTrace(silent)["outcome.failed-source-disclosed"]).toBe("fail");
+    expect(scoreTrace(silent)["governance.dead-end-gives-next-steps"]).toBe("n/a");
+    const honest: TraceView = { ...silent, finalText: "Gmail was busy and could not be searched; shall I try again? BuKI BuKI 🫠" };
+    expect(scoreTrace(honest)["outcome.failed-source-disclosed"]).toBe("pass");
+  });
+
   it("answers in the user's language, not the data's", () => {
     expect(looksGerman("Ich habe die Rechnung nicht gefunden, bitte lade sie hoch")).toBe(true);
     expect(looksGerman("I could not find the invoice for this transaction")).toBe(false);

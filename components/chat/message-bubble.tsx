@@ -74,7 +74,7 @@ interface ToolCallBadgeProps {
 
 function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
   const t = useTranslations("chat");
-  const { uiActions } = useChat();
+  const { uiActions, openChoice } = useChat();
   const { renderToolResult, hasRenderer } = useToolResultRenderer({
     uiActions: {
       scrollToTransaction: uiActions.scrollToTransaction,
@@ -105,7 +105,9 @@ function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
 
   if (toolCall.status === "executed") {
     const parsed = parseResult(toolCall.result);
-    // A choice or a held write: the card is the end of BuKI's turn.
+    // A choice or a held write: the card is the end of BuKI's turn. While it
+    // waits it is docked in the input's place, so it is not shown twice.
+    if (openChoice && parsed?.token === openChoice.token) return null;
     if (parsed?.status === "awaiting_choice") {
       return <ChoiceCard choices={parsed as unknown as PresentedChoicesView} />;
     }

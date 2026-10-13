@@ -27,6 +27,7 @@ import {
   type FindReceiptResult,
   type GmailSearchMessage,
   type SearchGmailArgs,
+  type SourceFailure,
 } from "./findReceiptForTransaction";
 import { dayOf } from "../utils/storedDay";
 import type { MailProvider } from "../mail/provider";
@@ -106,8 +107,10 @@ export const findReceiptForTransactionCallable = createCallable<
 async function searchGmailForWorkflow(
   db: FirebaseFirestore.Firestore,
   args: SearchGmailArgs
-): Promise<{ messages: GmailSearchMessage[] }> {
+): Promise<{ messages: GmailSearchMessage[]; failed?: SourceFailure[] }> {
   const collected: GmailSearchMessage[] = [];
+  // A mailbox that could not be searched is reported, not counted as empty.
+  const failed: SourceFailure[] = [];
 
   for (const integrationId of args.integrationIds) {
     const integrationRef = db.collection("emailIntegrations").doc(integrationId);
@@ -129,7 +132,10 @@ async function searchGmailForWorkflow(
 
     if (tokens.expiresAt.toDate() < new Date()) {
       const refreshed = await tryRefreshToken(integrationId, tokens, integrationRef);
-      if (!refreshed) continue;
+      if (!refreshed) {
+        failed.push({ integrationId, reason: "auth" });
+        continue;
+      }
       tokens = { ...tokens, accessToken: refreshed.accessToken, expiresAt: refreshed.expiresAt };
     }
 
@@ -171,10 +177,19 @@ async function searchGmailForWorkflow(
         `[findReceiptForTransaction] Gmail search failed for integration ${integrationId}`,
         err
       );
+      const message = err instanceof Error ? err.message : String(err);
+      failed.push({
+        integrationId,
+        reason: /\(429\)|rateLimitExceeded|RESOURCE_EXHAUSTED/.test(message)
+          ? "rate_limited"
+          : /authentication expired|unauthenticated/i.test(message)
+            ? "auth"
+            : "error",
+      });
     }
   }
 
-  return { messages: collected };
+  return { messages: collected, ...(failed.length > 0 ? { failed } : {}) };
 }
 
 /** Messages one Mail Provider search returns at most per suggestion. */

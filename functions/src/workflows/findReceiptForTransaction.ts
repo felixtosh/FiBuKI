@@ -102,6 +102,17 @@ export interface FindReceiptResult {
     gmailAttachments: number;
     gmailEmails: number;
   };
+  /**
+   * Mailboxes that could not be searched (a rate limit, an expired login). A
+   * no_match with failed sources is not "nothing there": the caller says so
+   * and offers to look again, instead of reporting an empty mailbox.
+   */
+  sourcesFailed?: SourceFailure[];
+}
+
+export interface SourceFailure {
+  integrationId: string;
+  reason: "rate_limited" | "auth" | "error";
 }
 
 export interface SearchGmailArgs {
@@ -158,7 +169,7 @@ export interface ConnectFileArgs {
 
 export interface FindReceiptDeps {
   db: Firestore;
-  searchGmail: (args: SearchGmailArgs) => Promise<{ messages: GmailSearchMessage[] }>;
+  searchGmail: (args: SearchGmailArgs) => Promise<{ messages: GmailSearchMessage[]; failed?: SourceFailure[] }>;
   connectFileToTransaction: (args: ConnectFileArgs) => Promise<{ fileId: string }>;
 }
 
@@ -292,6 +303,7 @@ export async function findReceiptForTransaction(
   // --- Score Gmail attachments + emails ---
   let gmailAttachmentCount = 0;
   let gmailEmailCount = 0;
+  const sourcesFailed: SourceFailure[] = [];
 
   // Every Mail Integration the receipt search reads, Gmail and IMAP alike (#746)
   const integrationsSnap = await db
@@ -394,6 +406,7 @@ export async function findReceiptForTransaction(
         limit: 30,
       });
 
+      if (gmail.failed?.length) sourcesFailed.push(...gmail.failed);
       for (const message of gmail.messages) {
         gmailEmailCount++;
         const emailContext: Pick<
@@ -474,9 +487,10 @@ export async function findReceiptForTransaction(
     gmailAttachments: gmailAttachmentCount,
     gmailEmails: gmailEmailCount,
   };
+  const failed = sourcesFailed.length > 0 ? { sourcesFailed } : {};
 
   if (candidates.length === 0) {
-    return { status: "no_match", sourcesChecked };
+    return { status: "no_match", sourcesChecked, ...failed };
   }
 
   const top = candidates[0];
@@ -513,6 +527,7 @@ export async function findReceiptForTransaction(
       fileId: top.fileId,
       confidence: top.score,
       sourcesChecked,
+      ...failed,
     };
   }
 
@@ -530,5 +545,6 @@ export async function findReceiptForTransaction(
     status: "needs_review",
     candidates: surfaced,
     sourcesChecked,
+    ...failed,
   };
 }

@@ -1206,9 +1206,10 @@ export async function listFiles(userId: string, args: Record<string, unknown>) {
   }
 
   // The page ends either at the requested limit or at the end of the scan.
-  const page = files
-    .slice(0, requestedLimit)
-    .map((f): Record<string, unknown> => ({ ...f, isCopy: copies.has(f.id as string) }));
+  const page = await withoutDanglingSuggestions(
+    userId,
+    files.slice(0, requestedLimit).map((f): Record<string, unknown> => ({ ...f, isCopy: copies.has(f.id as string) }))
+  );
   const truncated = files.length > requestedLimit;
   const hasMore = truncated || scanned.length === scanLimit;
 
@@ -1250,7 +1251,40 @@ export async function getFile(userId: string, fileId: string) {
   if (!doc.exists || doc.data()?.userId !== userId) {
     throw new Error("File not found");
   }
-  return { id: doc.id, ...doc.data() };
+  const [file] = await withoutDanglingSuggestions(userId, [{ id: doc.id, ...doc.data() }]);
+  return file;
+}
+
+/**
+ * Files as a tool answers them, without suggestions of Transactions that no
+ * longer exist. A Transaction deleted with its bank account or import used to
+ * leave its suggestions on the Files it was never connected to, and an agent
+ * acting on one got "Transaction not found" for an 88% match.
+ */
+async function withoutDanglingSuggestions(
+  userId: string,
+  files: Array<Record<string, unknown>>
+): Promise<Array<Record<string, unknown>>> {
+  const suggested = new Set<string>();
+  for (const f of files) {
+    for (const s of (Array.isArray(f.transactionSuggestions) ? f.transactionSuggestions : []) as Array<{ transactionId?: unknown }>) {
+      if (typeof s?.transactionId === "string" && s.transactionId) suggested.add(s.transactionId);
+    }
+  }
+  if (suggested.size === 0) return files;
+  const snaps = await db.getAll(...[...suggested].map((id) => db.collection("transactions").doc(id)));
+  const live = new Set(snaps.filter((snap) => snap.exists && snap.data()?.userId === userId).map((snap) => snap.id));
+  if (live.size === suggested.size) return files;
+  return files.map((f) =>
+    Array.isArray(f.transactionSuggestions)
+      ? {
+          ...f,
+          transactionSuggestions: (f.transactionSuggestions as Array<{ transactionId?: string }>).filter(
+            (s) => typeof s?.transactionId === "string" && live.has(s.transactionId)
+          ),
+        }
+      : f
+  );
 }
 
 /**

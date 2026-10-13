@@ -1666,6 +1666,7 @@ interface FindReceiptResponse {
   confidence?: number;
   candidates?: FindReceiptCandidate[];
   sourcesChecked: { localFiles: number; gmailAttachments: number; gmailEmails: number };
+  sourcesFailed?: Array<{ integrationId: string; reason: "rate_limited" | "auth" | "error" }>;
 }
 
 export const findReceiptForTransactionTool = tool(
@@ -1692,7 +1693,13 @@ export const findReceiptForTransactionTool = tool(
           "then connectFileToTransaction).";
         break;
       case "no_match":
-        nextStep = "Nothing scored high enough; tell the user no receipts found.";
+        nextStep = result.sourcesFailed?.length
+          ? "A mailbox could not be searched (" +
+            result.sourcesFailed.map((f) => f.reason).join(", ") +
+            "), so this is NOT a confirmed empty result. Tell the user which source failed; for rate_limited, " +
+            "offer to search again in a minute (searchGmailEmails with the partner name); for auth, offer to " +
+            "reconnect the mailbox (/integrations)."
+          : "Nothing scored high enough; tell the user no receipts found.";
         break;
       case "skipped":
         nextStep =

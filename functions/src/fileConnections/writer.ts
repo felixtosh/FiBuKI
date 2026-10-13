@@ -21,6 +21,7 @@
  * - What a connect may do keys on its Connection Origin (rules.ts).
  */
 
+import { transactionSuggestionsActivity } from "../matching/suggestionActivity";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { HttpsError } from "../utils/createCallable";
 import { deriveActivityLevel } from "../utils/activityLevel";
@@ -1182,6 +1183,34 @@ export async function detachTransactions(
         ),
       });
       filesUpdated++;
+    }
+    await batch.commit();
+  }
+
+  // No File keeps suggesting a deleted Transaction either: a Firestore query
+  // cannot reach into the suggestion objects, so the User's Files are read once.
+  const deleted = new Set(transactions.map((t) => t.id));
+  const suggesting = (await db.collection("files").where("userId", "==", userId).get()).docs.filter((doc) =>
+    ((doc.data().transactionSuggestions || []) as Array<{ transactionId?: string }>).some(
+      (s) => typeof s?.transactionId === "string" && deleted.has(s.transactionId)
+    )
+  );
+  for (const group of chunks(suggesting, 400)) {
+    const batch = db.batch();
+    for (const doc of group) {
+      const kept = ((doc.data().transactionSuggestions || []) as Array<{ transactionId?: string }>).filter(
+        (s) => !(typeof s?.transactionId === "string" && deleted.has(s.transactionId))
+      );
+      const logged = transactionSuggestionsActivity(
+        doc.data().transactionSuggestions,
+        kept as Array<{ transactionId: string }>,
+        "deleting its Transaction with its bank account or import"
+      );
+      batch.update(doc.ref, {
+        transactionSuggestions: kept,
+        updatedAt: now,
+        ...(logged ? { automationHistory: FieldValue.arrayUnion(logged) } : {}),
+      });
     }
     await batch.commit();
   }

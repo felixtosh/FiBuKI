@@ -42,7 +42,9 @@ export function useChatPersistence() {
     currentSessionIdRef.current = state.currentSessionId;
   }, [state.currentSessionId]);
 
-  // Load most recent session on mount (do not auto-create empty sessions).
+  // On mount the chat is a fresh draft: earlier sessions are in the History tab
+  // and offered on the empty screen, never reopened by themselves. A session
+  // opens only when asked (a ?chat=<id> link, the History tab, a wand run).
   useEffect(() => {
     let cancelled = false;
 
@@ -57,7 +59,7 @@ export function useChatPersistence() {
         const sessions = await listChatSessions(ctx, { limit: 10 });
         if (cancelled) return;
         setState({
-          currentSessionId: sessions[0]?.id ?? null,
+          currentSessionId: null,
           isLoading: false,
           sessions,
         });

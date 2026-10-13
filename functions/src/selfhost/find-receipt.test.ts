@@ -276,3 +276,68 @@ describe("find-receipt reads IMAP Mail Integrations (#746)", () => {
     expect(record.receiptSearchLastError).toMatch(/Authentication failed/);
   });
 });
+
+describe("a Gmail mailbox that answers 'slow down' (fibuki.com, 2026-10-12)", () => {
+  async function gmailMailbox(id: string) {
+    await db.collection("emailIntegrations").doc(id).set({
+      userId: ME,
+      provider: "gmail",
+      email: `${id}@example.com`,
+      isActive: true,
+      needsReauth: false,
+    });
+    await db.collection("emailTokens").doc(id).set({
+      provider: "gmail",
+      accessToken: `token-${id}`,
+      refreshToken: "refresh",
+      expiresAt: Timestamp.fromDate(new Date(Date.now() + 3_600_000)),
+    });
+  }
+
+  const tooMany = () =>
+    new Response(JSON.stringify({ error: { code: 429, message: "Too many concurrent requests for user." } }), {
+      status: 429,
+      headers: { "retry-after": "0.01" },
+    });
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("is reported as not searched, after retrying, instead of as an empty mailbox", async () => {
+    await db.collection("transactions").doc("t").update({ name: "NETFLIX.COM", partner: "Netflix" });
+    await gmailMailbox("g-1");
+    let gmailCalls = 0;
+    globalThis.fetch = (async (url: string | URL) => {
+      if (new URL(String(url)).hostname === "gmail.googleapis.com") {
+        gmailCalls++;
+        return tooMany();
+      }
+      return realFetch(url);
+    }) as typeof fetch;
+
+    const result = await findReceipt({ transactionId: "t" });
+    expect(result.status).toBe("no_match");
+    expect(result.sourcesFailed).toEqual([{ integrationId: "g-1", reason: "rate_limited" }]);
+    expect(gmailCalls).toBeGreaterThan(1);
+  });
+
+  it("is searched normally when a retry gets through", async () => {
+    await db.collection("transactions").doc("t").update({ name: "NETFLIX.COM", partner: "Netflix" });
+    await gmailMailbox("g-2");
+    let first = true;
+    globalThis.fetch = (async (url: string | URL) => {
+      if (new URL(String(url)).hostname === "gmail.googleapis.com") {
+        if (first) {
+          first = false;
+          return tooMany();
+        }
+        return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+      }
+      return realFetch(url);
+    }) as typeof fetch;
+
+    const result = await findReceipt({ transactionId: "t" });
+    expect(result.sourcesFailed).toBeUndefined();
+  });
+});
