@@ -69,6 +69,8 @@ export interface ToolCall {
 
 /** Choice cards answered in this view: token -> option id. */
 export type AnsweredChoices = Map<string, string>;
+/** Messages written while a turn runs, in order. */
+export type QueuedMessages = string[];
 /** Choice card tokens, e.g. those the User put aside. */
 export type ChoiceTokens = Set<string>;
 /** The choice card or confirmation still waiting in BuKI's last reply. */
@@ -145,6 +147,12 @@ export interface ChatContextValue {
 
   // Actions
   sendMessage: (content: string) => Promise<void>;
+  /** Written while BuKI works: sent together when the turn ends, or at once on Stop. */
+  queuedMessages: QueuedMessages;
+  queueMessage: (content: string) => void;
+  removeQueuedMessage: (index: number) => void;
+  /** Stop the running turn, on the server too; a queued message is sent right after. */
+  stopTurn: () => void;
   /** Answer a choice card or a confirmation (lib/agent/choices.ts): the click continues the turn. */
   chooseOption: (choice: ChoiceClick) => Promise<void>;
   /** The card still waiting for the User, docked where the input is; null when none. */

@@ -133,12 +133,16 @@ export async function POST(req: Request) {
     {
       streamMode: ["messages", "values"] as const,
       recursionLimit: RECURSION_LIMIT,
+      // The User's Stop aborts the request: the graph stops with it, so no
+      // tool runs after Stop (a call already running finishes).
+      signal: req.signal,
       callbacks: [usage.handler],
     }
   );
 
   let finalState: { messages?: unknown[]; toolRounds?: number } | null = null;
   let streamError: string | null = null;
+  let stopped = false;
 
   async function* trackUsage(): AsyncGenerator<unknown> {
     // The try/catch is the point of this wrapper as much as the usage tracking is.
@@ -160,90 +164,106 @@ export async function POST(req: Request) {
         yield chunk;
       }
     } catch (error) {
+      if (req.signal.aborted) {
+        // The User pressed Stop: not a failure.
+        stopped = true;
+        return;
+      }
       streamError = error instanceof Error ? error.message : String(error);
       console.error(
         "[Chat API] Stream failed mid-response — the client will see a truncated answer with no error:",
         error instanceof Error ? (error.stack ?? error.message) : String(error),
       );
       throw error;
+    } finally {
+      if (req.signal.aborted) {
+        stopped = true;
+        void finishTurn();
+      }
     }
   }
 
-  const uiStream = toUIMessageStream(trackUsage() as never, {
-    onFinal: async () => {
-      const model = getModelId(modelProvider);
-      const cost = calculateCost(modelProvider, usage.totals.input, usage.totals.output);
+  // Usage and the trace, once: when the stream ends, or when the User's Stop
+  // cancels it (the stream's own end never comes then).
+  let finished = false;
+  async function finishTurn() {
+    if (finished) return;
+    finished = true;
+    const model = getModelId(modelProvider);
+    const cost = calculateCost(modelProvider, usage.totals.input, usage.totals.output);
 
-      if (userId && (usage.totals.input > 0 || usage.totals.output > 0)) {
-        try {
-          await db.collection("aiUsage").add({
-            userId,
-            function: "chat",
-            model,
-            inputTokens: usage.totals.input,
-            outputTokens: usage.totals.output,
-            estimatedCost: cost,
-            createdAt: Timestamp.now(),
-            metadata: null,
-          });
-        } catch (error) {
-          console.error("[AI Usage] Failed to log usage:", error);
-        }
-      }
-
-      // The turn's trace, scored with the rubric (docs/buki-rubric.md).
+    if (userId && (usage.totals.input > 0 || usage.totals.output > 0)) {
       try {
-        const state = finalState as { messages?: unknown[]; toolRounds?: number } | null;
-        const all = (state?.messages ?? []) as typeof messages;
-        const { steps, finalText, silentRounds } = trace.traceSteps(all.slice(messages.length));
-        const view = {
-          userMessage,
+        await db.collection("aiUsage").add({
+          userId,
+          function: "chat",
+          model,
+          inputTokens: usage.totals.input,
+          outputTokens: usage.totals.output,
+          estimatedCost: cost,
+          createdAt: Timestamp.now(),
+          metadata: null,
+        });
+      } catch (error) {
+        console.error("[AI Usage] Failed to log usage:", error);
+      }
+    }
+
+    // The turn's trace, scored with the rubric (docs/buki-rubric.md).
+    try {
+      const state = finalState as { messages?: unknown[]; toolRounds?: number } | null;
+      const all = (state?.messages ?? []) as typeof messages;
+      const { steps, finalText, silentRounds } = trace.traceSteps(all.slice(messages.length));
+      const view = {
+        userMessage,
+        steps,
+        finalText,
+        silentRounds,
+        hitStepLimit: (state?.toolRounds ?? 0) >= (await getAgentGraph()).MAX_TOOL_ROUNDS,
+      };
+      const verdicts = rubric.scoreTrace(view);
+      await db
+        .collection("chatTraces")
+        .doc(`${userId}_${turnId}`)
+        .set({
+          userId,
+          turnId,
+          sessionId,
+          createdAt: Timestamp.now(),
+          durationMs: Date.now() - startedAt,
+          provider: modelProvider,
+          model,
+          page: page ?? null,
+          userMessage: userMessage.slice(0, 4000),
+          choice: choice
+            ? {
+                optionId: choice.optionId,
+                feedback: choice.feedback ?? null,
+                ran: choiceOutcome?.ran
+                  ? { tool: choiceOutcome.ran.tool, result: JSON.stringify(choiceOutcome.ran.result ?? null).slice(0, 2000) }
+                  : null,
+              }
+            : null,
           steps,
           finalText,
           silentRounds,
-          hitStepLimit: (state?.toolRounds ?? 0) >= (await getAgentGraph()).MAX_TOOL_ROUNDS,
-        };
-        const verdicts = rubric.scoreTrace(view);
-        await db
-          .collection("chatTraces")
-          .doc(`${userId}_${turnId}`)
-          .set({
-            userId,
-            turnId,
-            sessionId,
-            createdAt: Timestamp.now(),
-            durationMs: Date.now() - startedAt,
-            provider: modelProvider,
-            model,
-            page: page ?? null,
-            userMessage: userMessage.slice(0, 4000),
-            choice: choice
-              ? {
-                  optionId: choice.optionId,
-                  feedback: choice.feedback ?? null,
-                  ran: choiceOutcome?.ran
-                    ? { tool: choiceOutcome.ran.tool, result: JSON.stringify(choiceOutcome.ran.result ?? null).slice(0, 2000) }
-                    : null,
-                }
-              : null,
-            steps,
-            finalText,
-            silentRounds,
-            toolRounds: state?.toolRounds ?? 0,
-            hitStepLimit: view.hitStepLimit,
-            inputTokens: usage.totals.input,
-            outputTokens: usage.totals.output,
-            estimatedCost: cost,
-            error: streamError,
-            verdicts,
-            passRate: rubric.passRate(verdicts),
-            feedback: null,
-          });
-      } catch (error) {
-        console.error("[Chat API] Failed to store the trace:", error);
-      }
-    },
-  });
+          toolRounds: state?.toolRounds ?? 0,
+          hitStepLimit: view.hitStepLimit,
+          inputTokens: usage.totals.input,
+          outputTokens: usage.totals.output,
+          estimatedCost: cost,
+          error: streamError,
+          stopped,
+          verdicts,
+          passRate: rubric.passRate(verdicts),
+          feedback: null,
+        });
+    } catch (error) {
+      console.error("[Chat API] Failed to store the trace:", error);
+    }
+  }
+
+  const uiStream = toUIMessageStream(trackUsage() as never, { onFinal: finishTurn });
 
   return createUIMessageStreamResponse({ stream: uiStream });
 }

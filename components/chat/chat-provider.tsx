@@ -5,7 +5,7 @@ import { createContext, useContext, useState, useCallback, useMemo, useEffect, u
 import { useRouter } from "next/navigation";
 import { useChat as useVercelChat } from "@ai-sdk/react";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
-import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession, ChatMessage, ChoiceClick, AnsweredChoices, TurnRatings, ChoiceTokens, OpenChoice } from "@/types/chat";
+import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession, ChatMessage, ChoiceClick, AnsweredChoices, TurnRatings, ChoiceTokens, OpenChoice, QueuedMessages } from "@/types/chat";
 import { AutoActionNotification } from "@/types/notification";
 import { callFunction } from "@/lib/firebase/callable";
 import { useNotifications } from "@/hooks/use-notifications";
@@ -92,6 +92,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Choice cards answered in this view (token -> option id), and thumbs given (turnId -> rating).
   const [answeredChoices, setAnsweredChoices] = useState(() => new Map() as AnsweredChoices);
   const [turnRatings, setTurnRatings] = useState(() => new Map() as TurnRatings);
+  // Messages written while BuKI works: sent together when the turn ends, or at once on Stop.
+  const [queuedMessages, setQueuedMessages] = useState(() => [] as QueuedMessages);
   // Open choice cards the User put aside: they stay in the message, the input comes back.
   const [dismissedChoices, setDismissedChoices] = useState(() => new Set() as ChoiceTokens);
   // The turn the next assistant message answers: names its trace (lib/agent/trace.ts).
@@ -187,7 +189,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     },
   });
 
-  const { messages, status, setMessages, sendMessage: sdkSendMessage } = chatHook;
+  const { messages, status, setMessages, sendMessage: sdkSendMessage, stop: sdkStop } = chatHook;
   const isLoading = status === "streaming" || status === "submitted";
 
   // Track last saved message count to save new assistant messages
@@ -429,6 +431,29 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
   const sendMessage = useCallback((content: string) => sendTurn(content), [sendTurn]);
 
+  // While a turn runs, a new message waits in the queue (Claude Code's behaviour).
+  const queueMessage = useCallback((content: string) => {
+    setQueuedMessages((prev) => [...prev, content]);
+  }, []);
+
+  const removeQueuedMessage = useCallback((index: number) => {
+    setQueuedMessages((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // Stop the running turn. The server stops with it (the request's abort ends
+  // the agent graph, so no further tool runs); a queued message then goes out.
+  const stopTurn = useCallback(() => {
+    void sdkStop?.();
+  }, [sdkStop]);
+
+  // The turn is over (finished or stopped): send what was queued, as one message.
+  useEffect(() => {
+    if (isLoading || queuedMessages.length === 0) return;
+    const content = queuedMessages.join("\n\n");
+    setQueuedMessages([]);
+    void sendTurn(content);
+  }, [isLoading, queuedMessages, sendTurn]);
+
   // A click on a choice card or a confirmation: the server runs what it stored
   // for that card's token, and the turn continues from the User's choice.
   const chooseOption = useCallback(
@@ -462,6 +487,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     await switchSession(null);
     setMessages([]);
     setAnsweredChoices(new Map() as AnsweredChoices);
+    setQueuedMessages([]);
     setActiveTab("chat");
     setSidebarMode("chat");
     setChatViewMode("draft");
@@ -1099,6 +1125,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
       sessions,
       currentSessionId,
       sendMessage,
+      queuedMessages,
+      queueMessage,
+      removeQueuedMessage,
+      stopTurn,
       chooseOption,
       answeredChoices,
       rateTurn,
@@ -1135,6 +1165,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
       dismissChoice,
       isLoading,
       sendMessage,
+      queuedMessages,
+      queueMessage,
+      removeQueuedMessage,
+      stopTurn,
       chooseOption,
       answeredChoices,
       rateTurn,

@@ -866,7 +866,14 @@
       }
     },
     "choiceReplyPlaceholder": "Or write a reply…",
-    "choiceDismiss": "Put aside"
+    "choiceDismiss": "Put aside",
+    "inputPlaceholder": "Ask about your transactions…",
+    "queuePlaceholder": "Write the next message, it waits until BuKI is done…",
+    "queuedLabel": "Queued",
+    "removeQueued": "Remove from queue",
+    "stop": "Stop",
+    "stopAndSend": "Stop and send the queued message",
+    "send": "Send"
   },
   "integrationSections": {
     "email": "Email",
