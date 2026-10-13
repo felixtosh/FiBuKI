@@ -442,6 +442,11 @@ export {
   getReferralStatsCallable as getReferralStats,
 } from "./referral";
 
+// Growth / attribution operations (GTM Phase 1)
+export {
+  recordSignupAttributionCallable as recordSignupAttribution,
+} from "./growth";
+
 // Digest email operations
 export {
   sendWeeklyDigest,

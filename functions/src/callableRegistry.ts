@@ -161,6 +161,7 @@ export const CALLABLE_NAMES = [
   "purgeFiles",
   "queuePartnerForLearning",
   "recordMfaSuccess",
+  "recordSignupAttribution",
   "refreshTransactionMatches",
   "refundCountryBackers",
   "regenerateInboundEmailAddress",

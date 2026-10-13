@@ -64,9 +64,18 @@ export const listAllUsers = onCall(
     // The two benchmark switches (docs/benchmarking.md), shown per user.
     const members = await readMembers(db, uids);
 
+    // Signup attribution (GTM Phase 1): read the whole collection once and map
+    // by uid rather than a get per user. Most accounts have no row at all.
+    const attributionSnap = await db.collection("signupAttribution").get();
+    const attributionMap = new Map<string, FirebaseFirestore.DocumentData>();
+    for (const doc of attributionSnap.docs) {
+      attributionMap.set(doc.id, doc.data());
+    }
+
     const users = listResult.users.map((user) => {
       const sub = subMap.get(user.uid);
       const member = members.get(user.uid);
+      const attribution = attributionMap.get(user.uid);
       return {
         uid: user.uid,
         email: user.email || null,
@@ -82,6 +91,12 @@ export const listAllUsers = onCall(
           inBenchmark: member?.inBenchmark ?? false,
           contractNote: member?.contractNote ?? null,
           mayDownload: member?.mayDownload ?? false,
+        },
+        // Signup attribution (GTM Phase 1): the first-touch source/campaign,
+        // shown as an earmark on every user row. Blank when none was captured.
+        attribution: {
+          utmSource: (attribution?.utmSource as string | null) ?? null,
+          utmCampaign: (attribution?.utmCampaign as string | null) ?? null,
         },
       };
     });

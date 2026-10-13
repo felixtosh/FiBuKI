@@ -101,6 +101,7 @@ interface UserInfo {
   transactionCount: number;
   createdAt: string | null;
   benchmark?: { inBenchmark: boolean; contractNote: string | null; mayDownload: boolean };
+  attribution?: { utmSource: string | null; utmCampaign: string | null };
 }
 
 export default function AdminUsersPage() {

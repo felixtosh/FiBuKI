@@ -81,6 +81,13 @@ export const TOP_LEVEL_POLICIES: Readonly<Record<string, CollectionPolicy>> = {
   promotionCandidates: adminOnly,
   accessRequests: { read: "admin", create: "none", update: "none", delete: "none" },
 
+  // Signup attribution (GTM Phase 1): first-touch UTM + referrer per user,
+  // written only by the recordSignupAttribution callable (Admin SDK, which
+  // bypasses this policy). Admins read it for the go-to-market earmark; clients
+  // never write it. On self-host the GROWTH module is unmounted (manifest.ts),
+  // so nothing writes here and admin reads an empty collection.
+  signupAttribution: adminOnly,
+
   // Explicitly denied (rules: allow read, write: if false) — listed so a
   // future edit consciously flips them instead of "fixing" a 403.
   emailTokens: denied,

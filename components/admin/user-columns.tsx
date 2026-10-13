@@ -19,6 +19,8 @@ export interface UserRow {
   createdAt: string | null;
   /** The two benchmark switches (docs/benchmarking.md). */
   benchmark?: { inBenchmark: boolean; contractNote: string | null; mayDownload: boolean };
+  /** First-touch signup attribution (GTM Phase 1). */
+  attribution?: { utmSource: string | null; utmCampaign: string | null };
 }
 
 export const PLAN_COLORS: Record<PlanId, string> = {
@@ -37,6 +39,8 @@ export const DEFAULT_USER_COLUMN_SIZES: Record<string, number> = {
   perks: 110,
   role: 100,
   transactions: 90,
+  source: 120,
+  campaign: 140,
   joined: 100,
 };
 
@@ -123,6 +127,30 @@ export function getUserColumns(): ColumnDef<UserRow>[] {
           {row.original.transactionCount.toLocaleString()}
         </div>
       ),
+    },
+    {
+      id: "source",
+      header: "Source",
+      cell: ({ row }) => {
+        const source = row.original.attribution?.utmSource;
+        return source ? (
+          <span className="text-sm truncate">{source}</span>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        );
+      },
+    },
+    {
+      id: "campaign",
+      header: "Campaign",
+      cell: ({ row }) => {
+        const campaign = row.original.attribution?.utmCampaign;
+        return campaign ? (
+          <span className="text-sm truncate">{campaign}</span>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        );
+      },
     },
     {
       id: "joined",

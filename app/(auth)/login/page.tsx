@@ -24,6 +24,7 @@ import { useMfaChallenge } from "@/hooks/use-mfa-challenge";
 import { usePasskeys } from "@/hooks/use-passkeys";
 import { githubSignInEnabled } from "@/lib/auth/social-providers";
 import { consumeSocialAccessRequest } from "@/lib/auth/social-access-request";
+import { captureSignupAttribution } from "@/lib/attribution/signup-attribution";
 import { AccessRequestedNotice } from "@/components/auth/access-requested-notice";
 import { hintedEmail, safeRedirectPath } from "@/lib/auth/safe-redirect";
 import { logoFont } from "@/app/fonts";
@@ -81,6 +82,15 @@ export default function LoginPage() {
     if (ref) {
       localStorage.setItem("fibuki_referral_code", ref);
     }
+  }, [searchParams]);
+
+  // Capture first-touch signup attribution (UTM + referrer + landing path), the
+  // same way the referral code above survives the OAuth round-trip. The flush to
+  // recordSignupAttribution happens on the register page (same place as the
+  // referral apply); here we only persist so a visitor who lands on /login first
+  // still has their first touch recorded when they sign up.
+  useEffect(() => {
+    captureSignupAttribution(searchParams);
   }, [searchParams]);
 
   // When Firebase MFA is required by the auth provider, trigger the MFA challenge handler
