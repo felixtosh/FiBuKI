@@ -69,6 +69,14 @@ export interface ToolCall {
 
 /** Choice cards answered in this view: token -> option id. */
 export type AnsweredChoices = Map<string, string>;
+/** Choice card tokens, e.g. those the User put aside. */
+export type ChoiceTokens = Set<string>;
+/** The choice card or confirmation still waiting in BuKI's last reply. */
+export interface OpenChoice {
+  token: string;
+  /** The tool result: awaiting_choice or awaiting_confirmation. */
+  result: Record<string, unknown>;
+}
 /** Thumbs given in this view: turnId -> rating. */
 export type TurnRatings = Map<string, "up" | "down">;
 
@@ -139,6 +147,10 @@ export interface ChatContextValue {
   sendMessage: (content: string) => Promise<void>;
   /** Answer a choice card or a confirmation (lib/agent/choices.ts): the click continues the turn. */
   chooseOption: (choice: ChoiceClick) => Promise<void>;
+  /** The card still waiting for the User, docked where the input is; null when none. */
+  openChoice: OpenChoice | null;
+  /** Put the open card aside: it stays in the message and the input comes back. */
+  dismissChoice: (token: string) => void;
   /** Choice cards already answered in this view, by token. */
   answeredChoices: AnsweredChoices;
   /** Thumbs on one turn's reply; stored on its trace. */

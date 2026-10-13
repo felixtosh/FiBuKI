@@ -289,6 +289,33 @@ function extractBodyText(message: GmailApiMessage): string | null {
   return textContent;
 }
 
+/**
+ * Requests in flight per mailbox. Gmail answers 429 "Too many concurrent
+ * requests for user" when a search fetches every hit at once; the receipt
+ * workflow then reported the mailbox as searched and empty.
+ */
+const MAX_IN_FLIGHT_PER_MAILBOX = 4;
+const inFlight = new Map<string, { active: number; waiting: Array<() => void> }>();
+
+async function withMailboxSlot<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const slot = inFlight.get(key) ?? { active: 0, waiting: [] };
+  inFlight.set(key, slot);
+  if (slot.active >= MAX_IN_FLIGHT_PER_MAILBOX) await new Promise<void>((resolve) => slot.waiting.push(resolve));
+  slot.active++;
+  try {
+    return await run();
+  } finally {
+    slot.active--;
+    const next = slot.waiting.shift();
+    if (next) next();
+    else if (slot.active === 0) inFlight.delete(key);
+  }
+}
+
+/** Gmail's "slow down" answers: retried with backoff (Retry-After when given). */
+const RETRYABLE = new Set([429, 503]);
+const BACKOFF_MS = [500, 1500, 3000];
+
 async function gmailFetch<T>(
   accessToken: string,
   endpoint: string,
@@ -296,13 +323,22 @@ async function gmailFetch<T>(
 ): Promise<T> {
   const url = `${GMAIL_API_BASE}/users/me${endpoint}`;
 
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...options.headers,
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
+  const response = await withMailboxSlot(accessToken, async () => {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers,
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      });
+      if (!RETRYABLE.has(res.status) || attempt >= BACKOFF_MS.length) return res;
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const wait = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 5000) : BACKOFF_MS[attempt];
+      await res.text().catch(() => "");
+      await new Promise((r) => setTimeout(r, wait));
+    }
   });
 
   if (!response.ok) {

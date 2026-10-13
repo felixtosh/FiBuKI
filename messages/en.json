@@ -827,7 +827,46 @@
       "queue": "the processing queue",
       "history": "the change history",
       "corrections": "linked documents"
-    }
+    },
+    "empty": {
+      "title": "What should BuKI look at?",
+      "examplesTitle": "Try",
+      "recentTitle": "Continue a conversation",
+      "examples": {
+        "transactionSelected": [
+          "Find the receipt for this transaction",
+          "Who is the partner of this transaction?",
+          "Why is this transaction not complete?"
+        ],
+        "transactions": [
+          "Which transactions still need a receipt?",
+          "Which of my transactions are marked as private?",
+          "How much did I spend last month?"
+        ],
+        "fileSelected": [
+          "Find the transaction for this file",
+          "Which partner issued this document?"
+        ],
+        "files": [
+          "Which files are not connected to a transaction yet?",
+          "Show my newest uploads"
+        ],
+        "partnerSelected": [
+          "Find the invoices from this partner",
+          "Which transactions of this partner still need a receipt?"
+        ],
+        "partners": [
+          "Which partners have transactions without receipts?",
+          "Are there duplicate partners?"
+        ],
+        "default": [
+          "What still needs attention this month?",
+          "Show my recent transactions"
+        ]
+      }
+    },
+    "choiceReplyPlaceholder": "Or write a reply…",
+    "choiceDismiss": "Put aside"
   },
   "integrationSections": {
     "email": "Email",

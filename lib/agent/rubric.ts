@@ -140,7 +140,9 @@ export const RUBRIC_CHECKS: RubricCheck[] = [
     section: "governance",
     description: "When nothing was found, BuKI offers ways to give it the missing context.",
     check: (t) => {
-      const nothing = t.steps.some((s) => s.tool === "findReceiptForTransaction" && /"no_match"/.test(s.result));
+      const nothing = t.steps.some(
+        (s) => s.tool === "findReceiptForTransaction" && /"no_match"/.test(s.result) && !/"sourcesFailed"/.test(s.result)
+      );
       if (!nothing) return "n/a";
       return verdict(t.steps.some((s) => s.tool === "presentChoices" && /"navigate"/.test(s.result)));
     },
@@ -157,6 +159,26 @@ export const RUBRIC_CHECKS: RubricCheck[] = [
     section: "experience",
     description: "Every tool round starts with a short sentence of what BuKI is doing and why: no silent tool runs.",
     check: (t) => (t.steps.length === 0 || t.silentRounds === undefined ? "n/a" : verdict(t.silentRounds === 0)),
+  },
+  {
+    id: "experience.signoff",
+    section: "experience",
+    description: 'A reply that ends the turn signs off with "BuKI BuKI" and an emoji.',
+    check: (t) => {
+      if (!t.finalText || t.steps.some((s) => s.awaitingUser)) return "n/a";
+      return verdict(/BuKI BuKI\W*\S*\s*$/u.test(t.finalText.trim()));
+    },
+  },
+  {
+    id: "outcome.failed-source-disclosed",
+    section: "outcome",
+    description: "When a mailbox could not be searched, BuKI says so or searches again, instead of reporting it empty.",
+    check: (t) => {
+      const failed = t.steps.some((s) => s.tool === "findReceiptForTransaction" && /"sourcesFailed"/.test(s.result));
+      if (!failed) return "n/a";
+      const retried = t.steps.some((s) => /^searchGmail/.test(s.tool) && !s.guard);
+      return verdict(retried || /gmail|mail|postfach|inbox|busy|again|erneut|nochmal|später|later/i.test(t.finalText));
+    },
   },
   {
     id: "experience.short",

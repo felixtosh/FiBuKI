@@ -827,7 +827,46 @@
       "queue": "die Warteschlange",
       "history": "den Änderungsverlauf",
       "corrections": "verknüpfte Dokumente"
-    }
+    },
+    "empty": {
+      "title": "Was soll sich BuKI ansehen?",
+      "examplesTitle": "Probier",
+      "recentTitle": "Unterhaltung fortsetzen",
+      "examples": {
+        "transactionSelected": [
+          "Finde den Beleg für diese Transaktion",
+          "Wer ist der Partner dieser Transaktion?",
+          "Warum ist diese Transaktion nicht vollständig?"
+        ],
+        "transactions": [
+          "Welche Transaktionen brauchen noch einen Beleg?",
+          "Welche meiner Transaktionen sind als privat markiert?",
+          "Wie viel habe ich letzten Monat ausgegeben?"
+        ],
+        "fileSelected": [
+          "Finde die Transaktion zu diesem Beleg",
+          "Welcher Partner hat dieses Dokument ausgestellt?"
+        ],
+        "files": [
+          "Welche Belege sind noch keiner Transaktion zugeordnet?",
+          "Zeig meine neuesten Uploads"
+        ],
+        "partnerSelected": [
+          "Finde die Rechnungen dieses Partners",
+          "Welche Transaktionen dieses Partners brauchen noch einen Beleg?"
+        ],
+        "partners": [
+          "Welche Partner haben Transaktionen ohne Beleg?",
+          "Gibt es doppelte Partner?"
+        ],
+        "default": [
+          "Was braucht diesen Monat noch Aufmerksamkeit?",
+          "Zeig meine letzten Transaktionen"
+        ]
+      }
+    },
+    "choiceReplyPlaceholder": "Oder schreib eine Antwort…",
+    "choiceDismiss": "Beiseitelegen"
   },
   "integrationSections": {
     "email": "E-Mail",

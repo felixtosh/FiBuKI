@@ -62,5 +62,6 @@ export function buildContextBlock(input: { now: Date; page?: PageContext | null 
       lines.push(`- The user has the ${page.path} page open, with nothing selected.`);
     }
   }
+  lines.push('- Finish your final reply with "BuKI BuKI" and one emoji.');
   return lines.join("\n");
 }

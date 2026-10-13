@@ -5,7 +5,7 @@ import { createContext, useContext, useState, useCallback, useMemo, useEffect, u
 import { useRouter } from "next/navigation";
 import { useChat as useVercelChat } from "@ai-sdk/react";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
-import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession, ChatMessage, ChoiceClick, AnsweredChoices, TurnRatings } from "@/types/chat";
+import { ChatContextValue, ChatTab, SidebarMode, UIControlActions, ToolCall, ChatSession, ChatMessage, ChoiceClick, AnsweredChoices, TurnRatings, ChoiceTokens, OpenChoice } from "@/types/chat";
 import { AutoActionNotification } from "@/types/notification";
 import { callFunction } from "@/lib/firebase/callable";
 import { useNotifications } from "@/hooks/use-notifications";
@@ -92,6 +92,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Choice cards answered in this view (token -> option id), and thumbs given (turnId -> rating).
   const [answeredChoices, setAnsweredChoices] = useState(() => new Map() as AnsweredChoices);
   const [turnRatings, setTurnRatings] = useState(() => new Map() as TurnRatings);
+  // Open choice cards the User put aside: they stay in the message, the input comes back.
+  const [dismissedChoices, setDismissedChoices] = useState(() => new Set() as ChoiceTokens);
   // The turn the next assistant message answers: names its trace (lib/agent/trace.ts).
   const pendingTurnIdRef = useRef(null as string | null);
   const turnIdByMessageIdRef = useRef(new Map() as AnsweredChoices);
@@ -432,11 +434,15 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const chooseOption = useCallback(
     async ({ token, optionId, label, feedback }: ChoiceClick) => {
       setAnsweredChoices((prev) => new Map(prev).set(token, optionId) as AnsweredChoices);
-      const content = feedback ? `${label}: ${feedback}` : label;
+      const content = feedback && feedback !== label ? `${label}: ${feedback}` : label;
       await sendTurn(content, { token, optionId, ...(feedback ? { feedback } : {}) });
     },
     [sendTurn]
   );
+
+  const dismissChoice = useCallback((token: string) => {
+    setDismissedChoices((prev) => new Set(prev).add(token) as ChoiceTokens);
+  }, []);
 
   const rateTurn = useCallback(async (turnId: string, rating: "up" | "down", comment?: string) => {
     setTurnRatings((prev) => new Map(prev).set(turnId, rating) as TurnRatings);
@@ -876,9 +882,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, clampedWidth.toString());
   }, []);
 
-  const value: ChatContextValue = useMemo(
-    () => ({
-      messages: messages.map((m: any, index: number) => {
+  const value: ChatContextValue = useMemo(() => {
+    const runtimeMessages = messages.map((m: any, index: number) => {
         // AI SDK v6 uses 'parts' array - preserve order for chronological rendering
         const orderedParts: Array<{ type: "text"; text: string } | { type: "tool"; toolCall: NonNullable<ChatContextValue["messages"][0]["toolCalls"]>[0] }> = [];
         let fullTextContent = "";
@@ -1083,7 +1088,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
             .filter((p): p is { type: "tool"; toolCall: NonNullable<ChatContextValue["messages"][0]["toolCalls"]>[0] } => p.type === "tool")
             .map((p) => p.toolCall),
         };
-      }) as ChatContextValue["messages"],
+      }) as ChatContextValue["messages"];
+    return {
+      messages: runtimeMessages,
+      openChoice: isLoading ? null : openChoiceOf(runtimeMessages, answeredChoices, dismissedChoices),
+      dismissChoice,
       isLoading,
       isStreaming: isLoading,
       currentSession: sessions.find((s) => s.id === currentSessionId) || null,
@@ -1118,9 +1127,12 @@ export function ChatProvider({ children }: ChatProviderProps) {
       // Sidebar mode
       sidebarMode,
       setSidebarMode,
-    }),
+    };
+  },
     [
       messages,
+      dismissedChoices,
+      dismissChoice,
       isLoading,
       sendMessage,
       chooseOption,
@@ -1153,4 +1165,33 @@ export function ChatProvider({ children }: ChatProviderProps) {
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
+}
+
+/**
+ * The choice card or confirmation still waiting in BuKI's last reply: not
+ * answered, not put aside. The sidebar docks it where the input is.
+ */
+function openChoiceOf(
+  messages: ChatContextValue["messages"],
+  answered: AnsweredChoices,
+  dismissed: ChoiceTokens
+): OpenChoice | null {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "assistant") return null;
+  for (const part of [...(last.parts ?? [])].reverse()) {
+    if (part.type !== "tool" || part.toolCall.status !== "executed") continue;
+    let result = part.toolCall.result as unknown;
+    if (typeof result === "string") {
+      try {
+        result = JSON.parse(result);
+      } catch {
+        continue;
+      }
+    }
+    const r = result as { status?: string; token?: string } | null;
+    if (!r?.token || (r.status !== "awaiting_choice" && r.status !== "awaiting_confirmation")) continue;
+    if (answered.has(r.token) || dismissed.has(r.token)) return null;
+    return { token: r.token, result: r as Record<string, unknown> };
+  }
+  return null;
 }
