@@ -41,7 +41,7 @@ jobs:
     steps:
       - name: Read the changed files
         id: files
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           MATCHING_PATHS: >-
             ^functions/src/(matching|fileConnections|partners|fileFacts|receiptPairs|replay)/
@@ -133,7 +133,7 @@ jobs:
           echo "summary=$summary" >> "$GITHUB_OUTPUT"
 
       - name: Post the counts on the PR
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           SUMMARY: ${{ steps.run.outputs.summary }}
           APP_URL: ${{ vars.FIBUKI_APP_URL || 'https://fibuki.com' }}
