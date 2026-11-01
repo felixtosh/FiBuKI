@@ -48,7 +48,7 @@ jobs:
             scripts
             functions/src/utils/models.ts
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: node scripts/post-daily-changelog.mjs
