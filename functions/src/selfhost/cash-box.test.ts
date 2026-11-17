@@ -17,6 +17,7 @@ import { __resetTriggerShim, drainTriggers } from "./trigger-shim";
 import { createSourceCallable } from "../sources/createSource";
 import { updateSourceCallable } from "../sources/updateSource";
 import { bulkCreateTransactionsCallable } from "../imports/bulkCreateTransactions";
+import { getAccountBalancesCallable } from "../sources/getAccountBalances";
 import { handleTool } from "../tools/handlers";
 import { TOOL_DEFINITIONS } from "../tools/definitions";
 
@@ -190,5 +191,29 @@ describe("Cash Box: a CSV import keeps no balance", () => {
     const source = (await db.collection("sources").doc(sourceId).get()).data()!;
     expect(source.latestBalance ?? null).toBeNull();
     expect(source.openingBalance ?? null).toBeNull();
+  });
+});
+
+describe("Cash Box: no balance in the account balances report", () => {
+  it("lists the bank account's balance and leaves the Cash Box out", async () => {
+    const bank = await createSource({ name: "Erste", accountKind: "bank_account", currency: "EUR", type: "manual" });
+    const cash = await createSource({ name: "Kassa", accountKind: "cash", currency: "EUR", type: "manual" });
+    for (const sourceId of [bank.sourceId, cash.sourceId]) {
+      await db.collection("transactions").add({
+        userId: USER,
+        sourceId,
+        amount: -450,
+        name: "Parkschein",
+        date: new Date("2026-07-06T00:00:00Z"),
+      });
+    }
+
+    const { balances } = (await getAccountBalancesCallable.run({
+      data: { date: "2026-12-31" },
+      auth: AUTH,
+    } as never)) as { balances: Array<{ sourceId: string; balanceAtDate: number }> };
+
+    expect(balances.map((b) => b.sourceId)).toEqual([bank.sourceId]);
+    expect(balances[0].balanceAtDate).toBe(-450);
   });
 });
