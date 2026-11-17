@@ -209,8 +209,9 @@ export const bulkCreateTransactionsCallable = createCallable<
       sourceId,
     });
 
-    // Persist balance info on source if provided
-    if (request.balanceInfo) {
+    // Persist balance info on source if provided. A Cash Box keeps none (#787):
+    // a CSV of cash payments says nothing about what is in the box.
+    if (request.balanceInfo && sourceSnap.data()!.accountKind !== "cash") {
       const { openingBalance, openingBalanceDate, latestBalance, latestBalanceDate } = request.balanceInfo;
       const sourceData = sourceSnap.data()!;
       const existingOpeningDate = toDateSafe(sourceData.openingBalanceDate);

@@ -5,10 +5,17 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { buildSourcePartnerData, mergeSourcePartnerData } from "./sourcePartnerUtils";
+import {
+  ACCOUNT_KINDS,
+  type AccountKind,
+  CASH_BOX_CLEARED_FIELDS,
+  isAccountKind,
+  refuseBankFieldsOnCashBox,
+} from "./accountKind";
 
 interface SourceUpdateData {
   name?: string;
-  accountKind?: "checking" | "savings" | "creditCard" | "other";
+  accountKind?: AccountKind;
   iban?: string | null;
   linkedSourceId?: string | null;
   cardLast4?: string | null;
@@ -63,10 +70,27 @@ export const updateSourceCallable = createCallable<
       throw new HttpsError("permission-denied", "Access denied");
     }
 
+    if (data.accountKind !== undefined && !isAccountKind(data.accountKind)) {
+      throw new HttpsError(
+        "invalid-argument",
+        `Unknown account kind "${String(data.accountKind)}"; use one of ${ACCOUNT_KINDS.join(", ")}`
+      );
+    }
+
+    // A Cash Box (#787) takes a name and a currency only, and keeps no balance.
+    const storedKind = sourceSnap.data()!.accountKind;
+    const becomesCashBox = data.accountKind === "cash" && storedKind !== "cash";
+    if ((data.accountKind ?? storedKind) === "cash") {
+      refuseBankFieldsOnCashBox(data as unknown as Record<string, unknown>);
+    }
+
     // Build update object
     const updates: Record<string, unknown> = {
       updatedAt: FieldValue.serverTimestamp(),
     };
+    if (becomesCashBox) {
+      for (const field of CASH_BOX_CLEARED_FIELDS) updates[field] = null;
+    }
 
     if (data.name !== undefined) {
       updates.name = data.name.trim();

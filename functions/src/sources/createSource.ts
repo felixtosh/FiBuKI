@@ -5,10 +5,11 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { buildSourcePartnerData } from "./sourcePartnerUtils";
+import { ACCOUNT_KINDS, type AccountKind, isAccountKind, refuseBankFieldsOnCashBox } from "./accountKind";
 
 interface SourceFormData {
   name: string;
-  accountKind: "bank_account" | "credit_card" | "depot";
+  accountKind: AccountKind;
   iban?: string | null;
   linkedSourceId?: string | null;
   cardLast4?: string | null;
@@ -50,6 +51,17 @@ export async function createSourceInternal(
 
   if (!data.currency) {
     throw new HttpsError("invalid-argument", "Currency is required");
+  }
+
+  if (data.accountKind !== undefined && !isAccountKind(data.accountKind)) {
+    throw new HttpsError(
+      "invalid-argument",
+      `Unknown account kind "${String(data.accountKind)}"; use one of ${ACCOUNT_KINDS.join(", ")}`
+    );
+  }
+
+  if (data.accountKind === "cash") {
+    refuseBankFieldsOnCashBox(data as unknown as Record<string, unknown>);
   }
 
   // Check investments addon for depot sources

@@ -74,17 +74,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "create_source",
     annotation: "write",
-    description: "Create a new bank account/source",
+    description: "Create a new bank account/source, or a Cash Box (accountKind cash)",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Name of the bank account" },
         accountKind: {
           type: "string",
-          enum: ["bank_account", "credit_card"],
-          description: "Type of account (default: bank_account)",
+          enum: ["bank_account", "credit_card", "cash"],
+          description:
+            "Type of account (default: bank_account). `cash` is a Cash Box: a Bank Account with no bank " +
+            "behind it, for payments made in cash. It takes only a name and a currency, never an IBAN, " +
+            "and has no balance.",
         },
-        iban: { type: "string", description: "IBAN (optional)" },
+        iban: { type: "string", description: "IBAN (optional; not for a Cash Box)" },
         currency: { type: "string", description: "Currency code (default: EUR)" },
       },
       required: ["name"],

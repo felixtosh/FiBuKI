@@ -3161,7 +3161,7 @@ export async function createSource(userId: string, args: Record<string, unknown>
   const { createSourceInternal } = await import("../sources/createSource");
   return createSourceInternal(db, userId, {
     name: args.name as string,
-    accountKind: (args.accountKind as "bank_account" | "credit_card") || "bank_account",
+    accountKind: (args.accountKind as "bank_account" | "credit_card" | "cash") || "bank_account",
     iban: args.iban as string | undefined,
     currency: (args.currency as string) || "EUR",
     type: "manual",
