@@ -1259,6 +1259,7 @@
       "facts_corrected": "Daten korrigiert",
       "facts_derived": "Daten abgeleitet",
       "copy_marked": "Kopie erfasst",
+      "cash_payment_added": "Barzahlung eingetragen",
       "copy_suggested": "Kopie vorgeschlagen",
       "receipt_linked": "Zahlungsbeleg verknüpft",
       "receipt_unlinked": "Zahlungsbeleg-Verknüpfung entfernt",
@@ -1323,7 +1324,26 @@
       "kind": "Kassa",
       "kindLabel": "Kontoart",
       "namePlaceholder": "z. B. Kassa",
-      "hint": "Eine Kassa hat keine Bank dahinter: keine IBAN, keine Bankverbindung und keinen Kontostand. Nur einen Namen und eine Währung."
+      "hint": "Eine Kassa hat keine Bank dahinter: keine IBAN, keine Bankverbindung und keinen Kontostand. Nur einen Namen und eine Währung.",
+      "addPayment": "Barzahlung eintragen",
+      "importCsv": "CSV importieren"
+    },
+    "cashPayment": {
+      "title": "Barzahlung eintragen",
+      "description": "Eine bar bezahlte oder bar erhaltene Zahlung. Sie zählt in der UVA und im Export wie eine Bankbuchung.",
+      "direction": "Eingang oder Ausgang",
+      "moneyOut": "Ausgabe",
+      "moneyIn": "Einnahme",
+      "date": "Datum",
+      "amount": "Betrag ({currency})",
+      "amountPlaceholder": "4,50",
+      "name": "Wofür",
+      "namePlaceholder": "z. B. Parkschein",
+      "partner": "Partner (optional)",
+      "noPartner": "Kein Partner, automatisch zuordnen",
+      "cancel": "Abbrechen",
+      "save": "Eintragen",
+      "failed": "Die Barzahlung konnte nicht eingetragen werden."
     }
   }
 }

@@ -368,11 +368,11 @@ describe("a Cash Payment counts like a bank row: the UVA and the BMD export agre
       auth: AUTH,
     } as never)) as { exportId: string };
     const exportRef = db.collection("bmdExports").doc(res.exportId);
-    await waitFor(async () => ["completed", "failed"].includes((await exportRef.get()).data()!.status));
+    await waitFor(async () => ["completed", "failed"].includes((await exportRef.get()).data()!.status as string));
     const run = (await exportRef.get()).data()!;
     expect(run.status).toBe("completed");
 
-    const [zip] = await getStorage().bucket().file(run.storagePath).download();
+    const [zip] = await getStorage().bucket().file(run.storagePath as string).download();
     const dir = await unzipper.Open.buffer(zip);
     const buchungen = (await dir.files.find((f) => f.path === "buchungen.csv")!.buffer()).toString("utf8");
     const rows = buchungen.split("\n").slice(1).filter(Boolean);

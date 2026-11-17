@@ -1259,6 +1259,7 @@
       "facts_corrected": "Data corrected",
       "facts_derived": "Data derived",
       "copy_marked": "Copy recorded",
+      "cash_payment_added": "Cash payment added",
       "copy_suggested": "Copy suggested",
       "receipt_linked": "Receipt linked",
       "receipt_unlinked": "Receipt link removed",
@@ -1323,7 +1324,26 @@
       "kind": "Cash",
       "kindLabel": "Account type",
       "namePlaceholder": "e.g., Cash",
-      "hint": "A Cash Box has no bank behind it: no IBAN, no bank connection and no balance. Only a name and a currency."
+      "hint": "A Cash Box has no bank behind it: no IBAN, no bank connection and no balance. Only a name and a currency.",
+      "addPayment": "Add cash payment",
+      "importCsv": "Import CSV"
+    },
+    "cashPayment": {
+      "title": "Add cash payment",
+      "description": "A payment made or taken in cash. It counts in the UVA and the export like a bank row.",
+      "direction": "Money in or out",
+      "moneyOut": "Money out",
+      "moneyIn": "Money in",
+      "date": "Date",
+      "amount": "Amount ({currency})",
+      "amountPlaceholder": "4,50",
+      "name": "What for",
+      "namePlaceholder": "e.g., Parking ticket",
+      "partner": "Partner (optional)",
+      "noPartner": "No partner, match it for me",
+      "cancel": "Cancel",
+      "save": "Add",
+      "failed": "The cash payment could not be added."
     }
   }
 }

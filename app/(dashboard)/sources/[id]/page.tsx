@@ -24,6 +24,7 @@ import { useImports } from "@/hooks/use-imports";
 import { ImportHistoryCard } from "@/components/sources/import-history-card";
 import { DraftImportsSection } from "@/components/sources/draft-imports-section";
 import { EditSourceDialog } from "@/components/sources/edit-source-dialog";
+import { AddCashPaymentDialog } from "@/components/sources/add-cash-payment-dialog";
 import { format } from "date-fns";
 import { Pencil } from "lucide-react";
 import {
@@ -65,6 +66,7 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isAddCashPaymentOpen, setIsAddCashPaymentOpen] = useState(false);
   const [isEditingBalance, setIsEditingBalance] = useState(false);
   const [balanceInput, setBalanceInput] = useState("");
   const [balanceDateInput, setBalanceDateInput] = useState("");
@@ -316,7 +318,20 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
               Connect Bank
             </Button>
           )}
-          {!isApiConnected && (
+          {/* A Cash Box's main action is a Cash Payment by hand; a CSV of cash payments still imports (#788) */}
+          {isCashBox ? (
+            <>
+              <Button variant="outline" size="sm" onClick={() => router.push(`/sources/${source.id}/import`)}>
+                <Upload className="h-4 w-4 mr-2" />
+                {t("cashBox.importCsv")}
+              </Button>
+              <Button size="sm" onClick={() => setIsAddCashPaymentOpen(true)}>
+                <Banknote className="h-4 w-4 mr-2" />
+                {t("cashBox.addPayment")}
+              </Button>
+            </>
+          ) : null}
+          {!isApiConnected && !isCashBox && (
             <Button size="sm" onClick={() => router.push(`/sources/${source.id}/import`)}>
               <Upload className="h-4 w-4 mr-2" />
               Import CSV
@@ -694,6 +709,16 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
         source={source}
         sources={sources}
       />
+
+      {isCashBox ? (
+        <AddCashPaymentDialog
+          open={isAddCashPaymentOpen}
+          onClose={() => setIsAddCashPaymentOpen(false)}
+          sourceId={source.id}
+          currency={source.currency}
+          onAdded={(transactionId) => router.push(`/transactions?id=${transactionId}`)}
+        />
+      ) : null}
     </div>
   );
 }
