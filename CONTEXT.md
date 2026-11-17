@@ -120,7 +120,9 @@ A Transaction on a Cash Box that the User added by hand, one at a time, in their
 words rather than a bank's. It has no Import behind it and is never deduplicated, so two
 identical payments on one day are two Transactions. Everywhere else it is a Transaction
 like any other: the matcher, the UVA and the BMD export read it as they read a bank row.
-A row imported into a Cash Box from a CSV is not a Cash Payment.
+A row imported into a Cash Box from a CSV is not a Cash Payment. Because it is the User's
+own entry, the User may correct or delete it, except in a period whose UVA is filed
+([ADR-0017](docs/adr/0017-a-cash-payment-is-the-users-own-entry.md)).
 _Deutsch_: Barzahlung
 _Avoid_: cash transaction, manual transaction, cash entry
 _Avoid (de)_: Kassabuchung, Barumsatz (cash takings from sales, the Registrierkasse's

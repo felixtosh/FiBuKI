@@ -313,6 +313,8 @@ MCP client). A run that changes nothing writes nothing. Derived bookkeeping
 
 **Reason**: Transactions are tied to bank account imports. If a bank CSV doesn't include all transactions, deleting individual ones would create accounting inconsistencies.
 
+**The one exception**: a Cash Payment the User added by hand may be corrected and deleted, never in a filed UVA period ([ADR-0017](docs/adr/0017-a-cash-payment-is-the-users-own-entry.md)).
+
 **Correct behavior**:
 - Transactions can only be deleted when their entire source (bank account) is deleted
 - Use `deleteTransactionsBySource()` in operations layer
