@@ -40,10 +40,7 @@ const isOptionalBoolean = (v: unknown) => v === undefined || typeof v === "boole
  * A caller's list, checked entry by entry, then normalised. Amounts are
  * integer cents and may be negative, like a credit note's gross.
  */
-export function parseBookingAccounts(
-  raw: unknown,
-  allowedOrigins: readonly BookingAccountOrigin[] = TOOL_BOOKING_ACCOUNT_ORIGINS
-): BookingAccount[] {
+export function parseBookingAccounts(raw: unknown): BookingAccount[] {
   if (!Array.isArray(raw)) throw new Error("bookingAccounts must be an array ([] clears it)");
   raw.forEach((entry, i) => {
     const e = (entry ?? {}) as Record<string, unknown>;
@@ -66,8 +63,8 @@ export function parseBookingAccounts(
     if (e.amount !== undefined && e.amount !== null && !Number.isSafeInteger(e.amount)) {
       fail("amount", "must be integer cents, or null");
     }
-    if (!allowedOrigins.includes(e.origin as BookingAccountOrigin)) {
-      fail("origin", `must be one of ${allowedOrigins.join(", ")}`);
+    if (!TOOL_BOOKING_ACCOUNT_ORIGINS.includes(e.origin as BookingAccountOrigin)) {
+      fail("origin", `must be one of ${TOOL_BOOKING_ACCOUNT_ORIGINS.join(", ")}`);
     }
     if (!isOptionalString(e.externalId)) fail("externalId", "must be a string or null");
   });

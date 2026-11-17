@@ -131,7 +131,10 @@ export interface AutomationHistoryEntry {
     // #788: a Cash Payment the User (or an AI client for them) added by hand
     | "cash_payment_added"
     // #790: that Cash Payment corrected
-    | "cash_payment_corrected";
+    | "cash_payment_corrected"
+    // #785: an import set or cleared the Booking Accounts
+    | "booking_accounts_set"
+    | "booking_accounts_cleared";
   /** When it ran */
   ranAt: Timestamp;
   /** Status of the run */

@@ -1855,16 +1855,6 @@ export async function unconfirmFileRecipientIsUser(userId: string, args: Record<
 }
 
 /**
- * Record that a document's printed VAT is not deductible Vorsteuer (#203).
- *
- * The state transition lives in `files/nonClaimableVatOps` so the rules can be
- * tested without a database; this owns ownership, the write, and the reply.
- *
- * No connection guard, unlike mark_file_as_not_invoice: a connected file is
- * exactly the case that matters here. The whole point is that the transaction
- * keeps its receipt and stops claiming the VAT on it.
- */
-/**
  * Set a File's or Transaction's Booking Accounts (#785). Every tool caller,
  * MCP client or chat agent, is an AI actor in the activity log.
  */
@@ -1878,6 +1868,16 @@ export async function setBookingAccountsTool(userId: string, args: Record<string
   );
 }
 
+/**
+ * Record that a document's printed VAT is not deductible Vorsteuer (#203).
+ *
+ * The state transition lives in `files/nonClaimableVatOps` so the rules can be
+ * tested without a database; this owns ownership, the write, and the reply.
+ *
+ * No connection guard, unlike mark_file_as_not_invoice: a connected file is
+ * exactly the case that matters here. The whole point is that the transaction
+ * keeps its receipt and stops claiming the VAT on it.
+ */
 export async function markFileVatNotClaimable(userId: string, args: Record<string, unknown>) {
   const fileId = args.fileId as string;
   if (!fileId) {

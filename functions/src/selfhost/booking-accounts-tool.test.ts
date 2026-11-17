@@ -225,5 +225,15 @@ describe("set_booking_accounts on a Transaction", () => {
       transactions: Array<Record<string, unknown>>;
     };
     expect(transactions.find((t) => t.id === "t-1")?.bookingAccounts).toEqual([fees]);
+
+    const again = await handleTool(USER, "set_booking_accounts", { transactionId: "t-1", bookingAccounts: [fees] });
+    expect(again).toMatchObject({ changed: false });
+    await handleTool(USER, "set_booking_accounts", { transactionId: "t-1", bookingAccounts: [] });
+    const cleared = (await handleTool(USER, "get_transaction", { transactionId: "t-1" })) as Record<string, unknown>;
+    expect(cleared.bookingAccounts).toEqual([]);
+    expect((cleared.automationHistory as Array<{ type: string }>).map((e) => e.type)).toEqual([
+      "booking_accounts_set",
+      "booking_accounts_cleared",
+    ]);
   });
 });
