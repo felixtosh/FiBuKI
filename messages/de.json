@@ -417,6 +417,7 @@
       "download": "Herunterladen",
       "more": "Mehr",
       "activityLog": "Aktivitätsprotokoll",
+      "addAsCashPayment": "Als Barzahlung eintragen",
       "delete": "Löschen",
       "restore": "Wiederherstellen",
       "edit": "Bearbeiten",
@@ -1344,7 +1345,13 @@
       "noPartner": "Kein Partner, automatisch zuordnen",
       "cancel": "Abbrechen",
       "save": "Eintragen",
-      "failed": "Die Barzahlung konnte nicht eingetragen werden."
+      "failed": "Die Barzahlung konnte nicht eingetragen werden.",
+      "fromFileTitle": "Als Barzahlung eintragen",
+      "fromFileDescription": "Aus dem Beleg übernommen. Prüfe die Werte: Die Zahlung wird mit dieser Datei verbunden gespeichert.",
+      "cashBox": "Kassa",
+      "chooseCashBox": "Kassa wählen",
+      "noCashBox": "Noch keine Kassa. Beim Speichern wird eine namens „{name}“ angelegt.",
+      "defaultCashBoxName": "Kassa"
     }
   }
 }

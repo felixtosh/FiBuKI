@@ -21,6 +21,7 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { activityEntry, type ActivityActor } from "../utils/activity";
 import { checkTransactionQuota, incrementTransactionCount } from "../billing/checkTransactionQuota";
 import { connectFileToNewTransaction, FILE_ALREADY_CONNECTED_MESSAGE } from "../fileConnections/writer";
+import { cashPaymentDefaultsFromFile } from "./cashPaymentDefaults";
 
 type Db = FirebaseFirestore.Firestore;
 
@@ -341,39 +342,6 @@ async function cashBoxFor(db: Db, userId: string, sourceId: unknown) {
     `There are ${boxes.length} Cash Boxes; say which with sourceId: ` +
       boxes.map((b) => `${b.data().name ?? b.id} (${b.id})`).join(", ")
   );
-}
-
-/** The File's day as `YYYY-MM-DD`, read from the UTC date part (the dates rule). */
-function fileDay(value: unknown): string | null {
-  const toDate = (value as { toDate?: unknown } | null)?.toDate;
-  const date = typeof toDate === "function" ? (value as { toDate: () => Date }).toDate() : null;
-  return date && !Number.isNaN(date.getTime()) ? date.toISOString().slice(0, 10) : null;
-}
-
-/**
- * What the File says the payment was, as defaults a caller may override: its
- * day; its gross amount (the VAT-bearing total plus a tip, what was handed
- * over) signed by direction (an outgoing invoice is money in, anything else
- * money out); its Partner (the User's own; a Global one is filled onto the
- * row by the payee rule as the File connects); and a name.
- */
-export function cashPaymentDefaultsFromFile(file: FirebaseFirestore.DocumentData): {
-  date: string | null;
-  amount: number | null;
-  name: string | null;
-  partnerId: string | null;
-} {
-  const gross = typeof file.extractedAmount === "number" ? Math.abs(file.extractedAmount) : null;
-  const tip = typeof file.extractedTipAmount === "number" ? Math.abs(file.extractedTipAmount) : 0;
-  const amount =
-    gross === null || gross + tip === 0 ? null : (gross + tip) * (file.invoiceDirection === "outgoing" ? 1 : -1);
-  const name =
-    [file.extractedPartner, file.extractedIssuer?.name, file.fileName].find(
-      (v): v is string => typeof v === "string" && v.trim() !== ""
-    ) ?? null;
-  const partnerId =
-    typeof file.partnerId === "string" && file.partnerId && file.partnerType !== "global" ? file.partnerId : null;
-  return { date: fileDay(file.extractedDate), amount, name: name?.trim() ?? null, partnerId };
 }
 
 /**

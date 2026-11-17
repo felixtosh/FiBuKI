@@ -18,17 +18,31 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { callFunction } from "@/lib/firebase/callable";
 import { usePartners } from "@/hooks/use-partners";
 import { cn } from "@/lib/utils";
+import type { CashPaymentDefaults } from "@/functions/src/transactions/cashPaymentDefaults";
 
 type Direction = "out" | "in";
 
 interface AddCashPaymentDialogProps {
   open: boolean;
   onClose: () => void;
-  /** The Cash Box the payment goes to. */
-  sourceId: string;
+  /** The Cash Box the payment goes to. From a File, `cashBoxes` offers it instead. */
+  sourceId?: string;
   currency: string;
   /** Called with the new Transaction's id once it is stored. */
   onAdded?: (transactionId: string) => void;
+  /**
+   * From a File (#789): the File the payment is for, and its figures the
+   * form opens with for the User to check. The saved row is connected to it.
+   */
+  fromFile?: { fileId: string; defaults: CashPaymentDefaults };
+  /** From a File: the User's Cash Boxes. One is chosen, several are asked, none is created on save. */
+  cashBoxes?: CashBoxChoice[];
+}
+
+export interface CashBoxChoice {
+  id: string;
+  name: string;
+  currency: string;
 }
 
 const NO_PARTNER = "__none__";
@@ -46,33 +60,62 @@ function positiveCents(text: string): number | null {
   return cents > 0 ? cents : null;
 }
 
+/** Positive cents as the amount input shows them: 900 is "9,00". */
+function centsText(cents: number | null): string {
+  return cents === null ? "" : (Math.abs(cents) / 100).toFixed(2).replace(".", ",");
+}
+
 /**
  * Add one Cash Payment by hand (#788): the day, a positive amount with money
  * out or money in (out preselected), the User's own text and an optional
  * Partner. The server stores it as signed cents on UTC midnight of the day.
  */
-export function AddCashPaymentDialog({ open, onClose, sourceId, currency, onAdded }: AddCashPaymentDialogProps) {
+export function AddCashPaymentDialog({
+  open,
+  onClose,
+  sourceId,
+  currency,
+  onAdded,
+  fromFile,
+  cashBoxes,
+}: AddCashPaymentDialogProps) {
   const t = useTranslations("sources.cashPayment");
   const { partners } = usePartners();
+  const start = fromFile?.defaults;
+  const startDirection = Math.sign(start?.amount ?? -1) === 1 ? ("in" as Direction) : ("out" as Direction);
+  const boxes = fromFile ? (cashBoxes ?? []) : [];
 
-  const [date, setDate] = useState(viennaToday);
-  const [amount, setAmount] = useState("");
-  const [direction, setDirection] = useState("out" as Direction);
-  const [name, setName] = useState("");
-  const [partnerId, setPartnerId] = useState(NO_PARTNER);
+  const [date, setDate] = useState(start?.date ?? viennaToday());
+  const [amount, setAmount] = useState(centsText(start?.amount ?? null));
+  const [direction, setDirection] = useState(startDirection);
+  const [name, setName] = useState(start?.name ?? "");
+  const [partnerId, setPartnerId] = useState(start?.partnerId ?? NO_PARTNER);
+  const [boxId, setBoxId] = useState(boxes.length === 1 ? boxes[0].id : "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const cents = positiveCents(amount);
-  const canSave = !!date && cents !== null && name.trim().length > 0 && !saving;
+  // From a File: one Cash Box is chosen, several wait for the User's pick, none is created on save.
+  const boxReady = !fromFile || boxes.length === 0 || !!boxId;
+  const canSave = !!date && cents !== null && name.trim().length > 0 && boxReady && !saving;
 
   const reset = () => {
-    setDate(viennaToday());
-    setAmount("");
-    setDirection("out" as Direction);
-    setName("");
-    setPartnerId(NO_PARTNER);
+    setDate(start?.date ?? viennaToday());
+    setAmount(centsText(start?.amount ?? null));
+    setDirection(startDirection);
+    setName(start?.name ?? "");
+    setPartnerId(start?.partnerId ?? NO_PARTNER);
+    setBoxId(boxes.length === 1 ? boxes[0].id : "");
     setError(null);
+  };
+
+  /** The User's first Cash Box, through the create-source callable (#789). */
+  const createFirstCashBox = async () => {
+    const created = await callFunction<{ data: Record<string, unknown> }, { sourceId: string }>("createSource", {
+      data: { name: t("defaultCashBoxName"), accountKind: "cash", currency, type: "manual" },
+    });
+    setBoxId(created.sourceId);
+    return created.sourceId;
   };
 
   const close = () => {
@@ -86,16 +129,22 @@ export function AddCashPaymentDialog({ open, onClose, sourceId, currency, onAdde
     setSaving(true);
     setError(null);
     try {
-      const result = await callFunction<
-        { sourceId: string; date: string; amount: number; name: string; partnerId?: string },
-        { transactionId: string }
-      >("addCashPayment", {
-        sourceId,
+      const payment = {
         date,
         amount: direction === "out" ? -cents : cents,
         name: name.trim(),
         ...(partnerId !== NO_PARTNER ? { partnerId } : {}),
-      });
+      };
+      const result = fromFile
+        ? await callFunction<Record<string, unknown>, { transactionId: string }>("addCashPaymentFromFile", {
+            fileId: fromFile.fileId,
+            sourceId: boxId || (await createFirstCashBox()),
+            ...payment,
+          })
+        : await callFunction<
+            { sourceId?: string; date: string; amount: number; name: string; partnerId?: string },
+            { transactionId: string }
+          >("addCashPayment", { sourceId, ...payment });
       onAdded?.(result.transactionId);
       close();
     } catch (err) {
@@ -110,9 +159,30 @@ export function AddCashPaymentDialog({ open, onClose, sourceId, currency, onAdde
       <DialogContent className="sm:max-w-md">
         <form onSubmit={save} className="space-y-4">
           <DialogHeader>
-            <DialogTitle>{t("title")}</DialogTitle>
-            <DialogDescription>{t("description")}</DialogDescription>
+            <DialogTitle>{fromFile ? t("fromFileTitle") : t("title")}</DialogTitle>
+            <DialogDescription>{fromFile ? t("fromFileDescription") : t("description")}</DialogDescription>
           </DialogHeader>
+
+          {fromFile && boxes.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("noCashBox", { name: t("defaultCashBoxName") })}</p>
+          ) : null}
+          {boxes.length > 1 ? (
+            <div className="space-y-1.5">
+              <Label>{t("cashBox")}</Label>
+              <Select value={boxId} onValueChange={setBoxId}>
+                <SelectTrigger>
+                  <SelectValue placeholder={t("chooseCashBox")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {boxes.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
 
           <div className="flex gap-2" role="radiogroup" aria-label={t("direction")}>
             {(["out", "in"] as const).map((d) => (

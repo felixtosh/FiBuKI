@@ -417,6 +417,7 @@
       "download": "Download",
       "more": "More",
       "activityLog": "Activity log",
+      "addAsCashPayment": "Add as cash payment",
       "delete": "Delete",
       "restore": "Restore",
       "edit": "Edit",
@@ -1344,7 +1345,13 @@
       "noPartner": "No partner, match it for me",
       "cancel": "Cancel",
       "save": "Add",
-      "failed": "The cash payment could not be added."
+      "failed": "The cash payment could not be added.",
+      "fromFileTitle": "Add as cash payment",
+      "fromFileDescription": "Filled in from the receipt. Check the figures: the payment is saved connected to this file.",
+      "cashBox": "Cash box",
+      "chooseCashBox": "Choose a cash box",
+      "noCashBox": "No cash box yet. Saving creates one named “{name}”.",
+      "defaultCashBoxName": "Cash"
     }
   }
 }
