@@ -178,6 +178,8 @@ export {
   acceptPartialPaymentCallable as acceptPartialPayment,
   rollbackTransactionCallable as rollbackTransaction,
   addCashPaymentCallable as addCashPayment,
+  correctCashPaymentCallable as correctCashPayment,
+  deleteCashPaymentCallable as deleteCashPayment,
 } from "./transactions";
 
 // Invoicing operations

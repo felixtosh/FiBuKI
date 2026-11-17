@@ -25,7 +25,7 @@ import { transactionSuggestionsActivity } from "../matching/suggestionActivity";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { HttpsError } from "../utils/createCallable";
 import { deriveActivityLevel } from "../utils/activityLevel";
-import { activityEntry } from "../utils/activity";
+import { activityEntry, type ActivityActor } from "../utils/activity";
 import {
   cancelFileWorkersForTransaction,
   cancelPrecisionSearchForTransaction,
@@ -1119,16 +1119,27 @@ export async function detachFile(
   return { removedConnections, detachedTransactions };
 }
 
+export interface DetachTransactionsOptions {
+  /** Why the Transactions go, for each File's activity log; default "with its bank account or import". */
+  why?: string;
+  /** Who deletes them (#752); default the User. */
+  actor?: ActivityActor;
+}
+
 /**
  * Take every File off Transactions about to be deleted with their bank
- * account or import: their records go, and no File keeps listing them. The
- * caller deletes the Transactions afterwards.
+ * account or import, or a Cash Payment the User deletes (#790): their records
+ * go, and no File keeps listing or suggesting them. The caller deletes the
+ * Transactions afterwards.
  */
 export async function detachTransactions(
   db: Db,
   userId: string,
-  transactions: Array<{ id: string; data: Data }>
+  transactions: Array<{ id: string; data: Data }>,
+  options: DetachTransactionsOptions = {}
 ): Promise<{ removedRecords: number; filesUpdated: number }> {
+  const why = options.why ?? "with its bank account or import";
+  const actor = options.actor ?? "manual";
   let removedRecords = 0;
   let filesUpdated = 0;
   const now = Timestamp.now();
@@ -1174,10 +1185,10 @@ export async function detachTransactions(
           ...names.map((name, i) =>
             activityEntry({
               type: "transaction_disconnected",
-              actor: "manual",
+              actor,
               transactionId: gone[i],
               transactionName: name,
-              summary: `Transaction "${name}" deleted with its bank account or import`,
+              summary: `Transaction "${name}" deleted ${why}`,
             }, now)
           )
         ),
@@ -1204,7 +1215,7 @@ export async function detachTransactions(
       const logged = transactionSuggestionsActivity(
         doc.data().transactionSuggestions,
         kept as Array<{ transactionId: string }>,
-        "deleting its Transaction with its bank account or import"
+        `deleting its Transaction ${why}`
       );
       batch.update(doc.ref, {
         transactionSuggestions: kept,
