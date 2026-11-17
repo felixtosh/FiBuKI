@@ -234,6 +234,56 @@ export async function connectFile(
   return outcome;
 }
 
+/**
+ * A Transaction that does not exist yet, written by the plan that connects
+ * its first File: the row and its File Connection are one Firestore
+ * transaction, so a refused connect leaves no row behind (#789, a Cash
+ * Payment from a File). The row's own writer builds `data`; this module only
+ * adds what a connect adds (the File in `fileIds`, the activity entries).
+ */
+export interface NewTransaction {
+  ref: DocRef;
+  data: Data;
+}
+
+export interface ConnectNewOptions extends ConnectOptions {
+  /** Refuse a File already connected to any Transaction, decided inside the transaction. */
+  onlyUnconnectedFile?: boolean;
+}
+
+export const FILE_ALREADY_CONNECTED_MESSAGE =
+  "This File is already connected to a Transaction; one receipt does not become two payments.";
+
+/**
+ * Create a Transaction and connect one File to it in the same write. A
+ * refusal throws, with the code a callable answers with, and nothing is
+ * written.
+ */
+export async function connectFileToNewTransaction(
+  db: Db,
+  userId: string,
+  pair: Omit<ConnectPair, "transactionId"> & { transaction: NewTransaction },
+  options: ConnectNewOptions
+): Promise<Extract<ConnectOutcome, { status: "connected" }>> {
+  const { transaction, ...rest } = pair;
+  const connectPair: ConnectPair = { ...rest, transactionId: transaction.ref.id };
+  if (typeof connectPair.fileId !== "string" || !connectPair.fileId) {
+    throw new HttpsError("invalid-argument", "fileId is required");
+  }
+  const prepared = await prepareConnects(db, userId, [connectPair], options);
+  const plan = await db.runTransaction((tx) =>
+    planConnects(tx, db, userId, [connectPair], options, prepared, transaction)
+  );
+  const [outcome] = plan.outcomes;
+  if (outcome.status === "refused") throw new HttpsError(outcome.code, outcome.message);
+  if (outcome.status !== "connected") {
+    throw new HttpsError("failed-precondition", FILE_ALREADY_CONNECTED_MESSAGE);
+  }
+  await afterConnects(db, userId, plan, options);
+  await followReceiptLinks(db, userId, plan.connected);
+  return outcome;
+}
+
 function refusal(
   fileId: string,
   transactionId: string,
@@ -401,8 +451,9 @@ async function planConnects(
   db: Db,
   userId: string,
   pairs: ConnectPair[],
-  options: ConnectOptions,
-  prepared: Prepared
+  options: ConnectNewOptions,
+  prepared: Prepared,
+  fresh?: NewTransaction
 ): Promise<ConnectPlan> {
   const { origin } = options;
   const rules = ORIGIN_RULES[origin];
@@ -415,6 +466,9 @@ async function planConnects(
   const txSnaps = await tx.getAll(...txIds.map((id) => db.collection("transactions").doc(id)));
   const files = new Map(fileSnaps.filter((s) => s.exists).map((s) => [s.id, new DocView(s.ref, { ...s.data() })]));
   const txs = new Map(txSnaps.filter((s) => s.exists).map((s) => [s.id, new DocView(s.ref, { ...s.data() })]));
+  // A row this plan creates: read as it will be written, never as stored.
+  const freshView = fresh ? new DocView(fresh.ref, { ...fresh.data }) : undefined;
+  if (freshView) txs.set(freshView.ref.id, freshView);
   const ownedFileIds = fileIds.filter((id) => files.get(id)?.data.userId === userId);
   const ownedTxIds = txIds.filter((id) => txs.get(id)?.data.userId === userId);
 
@@ -552,6 +606,11 @@ async function planConnects(
         status: "already-connected",
         connectionId: earliest(existing).id,
       });
+      continue;
+    }
+
+    if (options.onlyUnconnectedFile && file.ids("transactionIds").length > 0) {
+      outcomes.push(refusal(fileId, transactionId, "locked", "failed-precondition", FILE_ALREADY_CONNECTED_MESSAGE));
       continue;
     }
 
@@ -771,6 +830,14 @@ async function planConnects(
     if (view.data.userId === userId) view.write(tx, now);
   }
   for (const view of [...txs.values(), ...extraTxs.values()]) {
+    if (view === freshView) {
+      // Born with this connect, or not at all.
+      if (connected.some((c) => c.transactionId === view.ref.id)) {
+        const history = Array.isArray(view.data.automationHistory) ? view.data.automationHistory : [];
+        tx.set(view.ref, { ...view.data, automationHistory: [...history, ...view.activity], updatedAt: now });
+      }
+      continue;
+    }
     if (view.data.userId === userId) view.write(tx, now);
   }
 
