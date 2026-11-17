@@ -75,6 +75,172 @@ describe("adding a Cash Payment by hand in the web UI", () => {
       expect(row[field] ?? null, field).toBeNull();
     }
   });
+
+  it("stores money in as positive cents, with the User's description", async () => {
+    const sourceId = await cashBox();
+    const { transactionId } = await addByHand({
+      sourceId,
+      date: "2026-07-06",
+      amount: 2000,
+      name: "Bar kassiert",
+      description: "Workshop, Teilnehmer bezahlt bar",
+    });
+    expect(await stored(transactionId)).toMatchObject({ amount: 2000, description: "Workshop, Teilnehmer bezahlt bar" });
+  });
+
+  it("appends one activity entry, by the User", async () => {
+    const sourceId = await cashBox();
+    const { transactionId } = await addByHand({ sourceId, date: "2026-07-06", amount: -450, name: "Parkschein" });
+
+    const log = ((await stored(transactionId)).automationHistory ?? []) as Array<Record<string, unknown>>;
+    const added = log.filter((e) => e.type === "cash_payment_added");
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ actor: "manual", status: "completed", level: "decision" });
+  });
+
+  it("takes a Partner the User owns, as the User's own choice", async () => {
+    const sourceId = await cashBox();
+    await db.collection("partners").doc("p-cafe").set({ userId: USER, name: "Cafe Central", aliases: [], ibans: [] });
+
+    const { transactionId } = await addByHand({
+      sourceId,
+      date: "2026-07-06",
+      amount: -900,
+      name: "Kaffee mit Kunde",
+      partnerId: "p-cafe",
+    });
+
+    expect(await stored(transactionId)).toMatchObject({
+      partnerId: "p-cafe",
+      partnerType: "user",
+      partnerMatchedBy: "manual",
+      partnerMatchConfidence: 100,
+    });
+  });
+
+  it("refuses another User's Partner, and a Merged Partner naming its survivor", async () => {
+    const sourceId = await cashBox();
+    await db.collection("partners").doc("p-theirs").set({ userId: OTHER, name: "Theirs", aliases: [], ibans: [] });
+    await db.collection("partners").doc("p-old").set({ userId: USER, name: "Old", mergedInto: "p-new", aliases: [], ibans: [] });
+
+    const base = { sourceId, date: "2026-07-06", amount: -900, name: "Kaffee" };
+    await expect(addByHand({ ...base, partnerId: "p-theirs" })).rejects.toMatchObject({ code: "not-found" });
+    await expect(addByHand({ ...base, partnerId: "p-old" })).rejects.toMatchObject({
+      message: expect.stringContaining("p-new"),
+    });
+    expect((await db.collection("transactions").get()).size).toBe(0);
+  });
+
+  it("keeps two identical Cash Payments on one day", async () => {
+    const sourceId = await cashBox();
+    const coffee = { sourceId, date: "2026-07-06", amount: -350, name: "Kaffee" };
+    const a = await addByHand(coffee);
+    const b = await addByHand(coffee);
+    expect(a.transactionId).not.toBe(b.transactionId);
+    expect((await db.collection("transactions").where("sourceId", "==", sourceId).get()).size).toBe(2);
+  });
+
+  it("counts against the transaction quota like an import, and is flagged once over it", async () => {
+    const month = new Date().toISOString().slice(0, 7);
+    const sourceId = await cashBox();
+    await db.collection("subscriptions").doc(USER).set({
+      plan: "free",
+      transactionCountCurrentMonth: 0,
+      transactionCountMonth: month,
+    });
+
+    const first = await addByHand({ sourceId, date: "2026-07-06", amount: -450, name: "Parkschein" });
+    await __whenShimIdle();
+    expect((await db.collection("subscriptions").doc(USER).get()).data()!.transactionCountCurrentMonth).toBe(1);
+    expect((await stored(first.transactionId)).quotaExceeded ?? false).toBe(false);
+
+    const { PLANS } = await import("../billing/config");
+    await db.collection("subscriptions").doc(USER).update({ transactionCountCurrentMonth: PLANS.free.transactionLimit });
+    const over = await addByHand({ sourceId, date: "2026-07-06", amount: -450, name: "Parkschein" });
+    await __whenShimIdle();
+    // Imported but flagged, as an import's over-limit rows are; not counted.
+    expect((await stored(over.transactionId)).quotaExceeded).toBe(true);
+    expect((await db.collection("subscriptions").doc(USER).get()).data()!.transactionCountCurrentMonth).toBe(
+      PLANS.free.transactionLimit
+    );
+  });
+});
+
+const day = (iso: string) => Timestamp.fromDate(new Date(`${iso}T00:00:00Z`));
+
+/** A receipt the extraction has read and the upload pipeline has finished with. */
+function cafeReceipt(overrides: Record<string, unknown> = {}) {
+  return {
+    userId: USER,
+    fileName: "cafe-central.jpg",
+    fileType: "image/jpeg",
+    extractionComplete: true,
+    partnerMatchComplete: true,
+    transactionMatchComplete: true,
+    extractedAmount: 900,
+    extractedCurrency: "EUR",
+    extractedDate: day("2026-07-06"),
+    extractedPartner: "Cafe Central",
+    invoiceDirection: "incoming",
+    transactionIds: [],
+    transactionSuggestions: [],
+    uploadedAt: day("2026-07-06"),
+    ...overrides,
+  };
+}
+
+describe("after a Cash Payment is added: the same matching an imported row gets", () => {
+  it("runs Partner matching when no Partner was given", async () => {
+    const sourceId = await cashBox();
+    await db.collection("partners").doc("p-cafe").set({
+      userId: USER,
+      name: "Cafe Central",
+      aliases: ["Cafe Central"],
+      ibans: [],
+      isActive: true,
+    });
+
+    const { transactionId } = await addByHand({ sourceId, date: "2026-07-06", amount: -900, name: "Cafe Central" });
+    await drainTriggers();
+
+    const row = await stored(transactionId);
+    const suggested = ((row.partnerSuggestions ?? []) as Array<{ partnerId: string }>).map((s) => s.partnerId);
+    expect(row.partnerId === "p-cafe" || suggested.includes("p-cafe")).toBe(true);
+  });
+
+  it("puts the Cash Payment into the suggestions of an unconnected File the matcher pairs it with", async () => {
+    const sourceId = await cashBox();
+    await db.collection("files").doc("f-cafe").set(cafeReceipt());
+
+    const { transactionId } = await addByHand({ sourceId, date: "2026-07-06", amount: -900, name: "Cafe Central" });
+    await drainTriggers();
+
+    const file = (await db.collection("files").doc("f-cafe").get()).data()!;
+    expect((file.transactionSuggestions as Array<{ transactionId: string }>)[0]?.transactionId).toBe(transactionId);
+  });
+
+  it("leaves a File connected elsewhere alone", async () => {
+    const sourceId = await cashBox();
+    await db.collection("files").doc("f-done").set(cafeReceipt({ transactionIds: ["t-elsewhere"] }));
+
+    await addByHand({ sourceId, date: "2026-07-06", amount: -900, name: "Cafe Central" });
+    await drainTriggers();
+
+    expect((await db.collection("files").doc("f-done").get()).data()!.transactionSuggestions).toEqual([]);
+  });
+
+  it("is the top suggestion for a File uploaded after it, through the matcher's own callable", async () => {
+    const sourceId = await cashBox();
+    const { transactionId } = await addByHand({ sourceId, date: "2026-07-06", amount: -900, name: "Cafe Central" });
+    await drainTriggers();
+    await db.collection("files").doc("f-later").set(cafeReceipt({ fileName: "later.jpg" }));
+
+    const { findTransactionMatchesForFile } = await import("../matching/findTransactionMatches");
+    const res = (await (findTransactionMatchesForFile as unknown as {
+      run: (req: unknown) => Promise<{ matches: Array<{ transactionId: string }> }>;
+    }).run({ data: { fileId: "f-later" }, auth: AUTH })) as { matches: Array<{ transactionId: string }> };
+    expect(res.matches[0]?.transactionId).toBe(transactionId);
+  });
 });
 
 describe("what a Cash Payment is refused on", () => {
