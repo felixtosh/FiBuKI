@@ -481,6 +481,16 @@ export async function loadHandAddedCashPayment(db: Db, userId: string, transacti
       "Only a Cash Payment added by hand can be corrected or deleted; an imported Transaction stays as its bank or import delivered it."
     );
   }
+  // The exception follows the Cash Box, not only the row: a hand row whose
+  // Bank Account is no longer a Cash Box is as locked as every other row on it.
+  const sourceId = row.data()?.sourceId;
+  const source = typeof sourceId === "string" && sourceId ? await db.collection("sources").doc(sourceId).get() : null;
+  if (source?.data()?.accountKind !== "cash") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Only a Cash Payment on a Cash Box can be corrected or deleted; this row's Bank Account is not a Cash Box."
+    );
+  }
   return row;
 }
 

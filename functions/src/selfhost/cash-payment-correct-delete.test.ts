@@ -238,6 +238,22 @@ describe("what a correction or a delete is refused on", () => {
     expect(await stored(transactionId)).toEqual(before);
   });
 
+  it("refuses a hand row whose Bank Account is no longer a Cash Box, and changes nothing", async () => {
+    const sourceId = await cashBox();
+    const transactionId = await addByHand({ sourceId, date: "2026-07-06", amount: -450, name: "Parkschein" });
+    // The User switched the Bank Account's kind; the exception follows the Cash Box, not the row.
+    await db.collection("sources").doc(sourceId).update({ accountKind: "bank_account" });
+    const before = await stored(transactionId);
+
+    await expect(correct({ transactionId, amount: -999 })).rejects.toMatchObject({
+      code: "failed-precondition",
+      message: expect.stringContaining("Cash Box"),
+    });
+    await expect(remove({ transactionId })).rejects.toMatchObject({ code: "failed-precondition" });
+
+    expect(await stored(transactionId)).toEqual(before);
+  });
+
   it("refuses another User's Cash Payment as not found", async () => {
     const theirs = await cashBox("Their Kassa", OTHER);
     const { transactionId } = (await addCashPaymentCallable.run({
