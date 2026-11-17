@@ -250,6 +250,25 @@ async function afterCreate(db: Db, userId: string, transactionId: string, { part
     }
   }
 
+  await refreshFileSuggestions(db, userId, transactionId);
+}
+
+/**
+ * Refreshes the matcher's suggestions on the Files a Cash Payment touches:
+ * the unconnected Files the matcher now pairs strongly with the row, and,
+ * after a correction, the Files still suggesting the row from before, so a
+ * suggestion made against the old day or amount does not linger. Each File
+ * is re-scored by the one entry point for that (`rescoreFileSuggestions`), so
+ * which Files pair and what each suggests stays the matcher's answer.
+ *
+ * A failure here never undoes the write: the next matching run catches up.
+ */
+async function refreshFileSuggestions(
+  db: Db,
+  userId: string,
+  transactionId: string,
+  { includeSuggesting = false }: { includeSuggesting?: boolean } = {}
+) {
   try {
     const [{ filesForTransaction, storedSuggestionsOf }, { rescoreFileSuggestions }] = await Promise.all([
       import("../matching/matcher"),
@@ -258,8 +277,16 @@ async function afterCreate(db: Db, userId: string, transactionId: string, { part
     const txDoc = await db.collection("transactions").doc(transactionId).get();
     const { matches } = await filesForTransaction(db, userId, txDoc);
     // The pairs strong enough for a File to store as a suggestion, by the matcher's own threshold.
-    const strong = matches.filter((m) => storedSuggestionsOf([m]).length > 0).map((m) => m.fileId);
-    for (const fileId of strong) {
+    const fileIds = new Set(matches.filter((m) => storedSuggestionsOf([m]).length > 0).map((m) => m.fileId));
+    if (includeSuggesting) {
+      // A Firestore query cannot reach into the suggestion objects, so the User's Files are read once.
+      const files = await db.collection("files").where("userId", "==", userId).get();
+      for (const doc of files.docs) {
+        const suggestions = (doc.data().transactionSuggestions || []) as Array<{ transactionId?: string }>;
+        if (suggestions.some((s) => s?.transactionId === transactionId)) fileIds.add(doc.id);
+      }
+    }
+    for (const fileId of fileIds) {
       const file = await db.collection("files").doc(fileId).get();
       const connected = file.data()?.transactionIds as string[] | undefined;
       if (connected && connected.length > 0) continue;
@@ -607,6 +634,10 @@ export async function correctCashPayment(
       )
     ),
   });
+  // A new day or amount moves which Files the matcher pairs with the row.
+  if (update.date || update.amount !== undefined) {
+    await refreshFileSuggestions(db, userId, row.id, { includeSuggesting: true });
+  }
   return { changed: true };
 }
 

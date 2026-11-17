@@ -141,6 +141,42 @@ describe("correcting a Cash Payment the User added by hand", () => {
     expect(corrected[0].summary).toContain("Parkschein");
   });
 
+  it("lets an unconnected File suggest the row once its day and amount are corrected to the File's", async () => {
+    const sourceId = await cashBox();
+    await db.collection("files").doc("f-cafe").set(receipt());
+    const transactionId = await addByHand({ sourceId, date: "2026-01-02", amount: -45000, name: "Cafe Central" });
+    const suggestedBefore = (await db.collection("files").doc("f-cafe").get()).data()!.transactionSuggestions as Array<{
+      transactionId: string;
+    }>;
+    expect(suggestedBefore.map((s) => s.transactionId)).not.toContain(transactionId);
+
+    await correct({ transactionId, date: "2026-07-06", amount: -900 });
+    await drainTriggers();
+
+    const after = (await db.collection("files").doc("f-cafe").get()).data()!.transactionSuggestions as Array<{
+      transactionId: string;
+    }>;
+    expect(after.map((s) => s.transactionId)).toContain(transactionId);
+  });
+
+  it("stops a File suggesting the row once its amount and day are corrected away from the File's", async () => {
+    const sourceId = await cashBox();
+    await db.collection("files").doc("f-cafe").set(receipt());
+    const transactionId = await addByHand({ sourceId, date: "2026-07-06", amount: -900, name: "Cafe Central" });
+    const suggestedBefore = (await db.collection("files").doc("f-cafe").get()).data()!.transactionSuggestions as Array<{
+      transactionId: string;
+    }>;
+    expect(suggestedBefore.map((s) => s.transactionId)).toContain(transactionId);
+
+    await correct({ transactionId, date: "2026-01-02", amount: -45000, name: "Etwas anderes" });
+    await drainTriggers();
+
+    const after = (await db.collection("files").doc("f-cafe").get()).data()!.transactionSuggestions as Array<{
+      transactionId: string;
+    }>;
+    expect(after.map((s) => s.transactionId)).not.toContain(transactionId);
+  });
+
   it("writes nothing when every value given is already the stored one", async () => {
     const sourceId = await cashBox();
     const transactionId = await addByHand({ sourceId, date: "2026-07-06", amount: -450, name: "Parkschein" });
