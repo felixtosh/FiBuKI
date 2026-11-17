@@ -148,8 +148,8 @@ describe("presentChoices", () => {
     expect(parseChoiceRequest({ toolCallId: "x", optionId: "b" })).toBeNull();
   });
 
-  it("the writes held for approval are the bulk, the rollback and a new bank account", () => {
-    expect(["bulkUpdateTransactions", "rollbackTransaction", "createSource"].every(requiresConfirmation)).toBe(true);
+  it("the writes held for approval are the bulk, the rollback, a new bank account and a Cash Payment", () => {
+    expect(["bulkUpdateTransactions", "rollbackTransaction", "createSource", "addCashPayment"].every(requiresConfirmation)).toBe(true);
     expect(requiresConfirmation("connectFileToTransaction")).toBe(false);
     expect(requiresConfirmation("updateTransaction")).toBe(false);
   });

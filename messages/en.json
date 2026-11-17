@@ -808,7 +808,8 @@
     "confirmTitle": {
       "bulkUpdateTransactions": "Change {count, plural, one {# transaction} other {# transactions}}",
       "rollbackTransaction": "Restore an earlier version of this transaction",
-      "createSource": "Create the bank account “{name}”"
+      "createSource": "Create the bank account “{name}”",
+      "addCashPayment": "Add the cash payment “{name}”, {amount} on {date}"
     },
     "rateUp": "Good answer",
     "rateDown": "Bad answer",

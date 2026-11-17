@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Check, Send, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { useChat } from "./chat-provider";
 import type { OpenChoice } from "@/types/chat";
 
@@ -187,6 +187,9 @@ export function ConfirmCard({ pending, docked }: { pending: AwaitingConfirmation
   const title = t(`confirmTitle.${pending.tool}` as "confirmTitle.bulkUpdateTransactions", {
     count: Array.isArray(ids) ? ids.length : 1,
     name: String(pending.args.name ?? ""),
+    // A Cash Payment (#788): the figures the User approves, not only its text
+    amount: typeof pending.args.amount === "number" ? formatCurrency(pending.args.amount) : "",
+    date: String(pending.args.date ?? ""),
   });
   const answer = (optionId: "approve" | "reject") =>
     void chooseOption({

@@ -38,6 +38,7 @@ export const MCP_TWINS = {
   getTransaction: "get_transaction",
   updateTransaction: "update_transaction",
   createSource: "create_source",
+  addCashPayment: "add_cash_payment",
   listFiles: "list_files",
   getFile: "get_file",
   listPartners: "list_partners",
@@ -356,6 +357,19 @@ export const createSourceTool = wrap(
   mcpSchema("create_source", { pick: ["name", "iban", "currency"] })
 );
 
+/**
+ * A Cash Payment (#788): runTool calls the shared tool as the agent, so the
+ * row records the agent (`ai`) as who added it.
+ */
+export const addCashPaymentTool = wrap(
+  "addCashPayment",
+  "Add one Cash Payment to a Cash Box (listSources: accountKind cash): a payment the user made or took in cash, " +
+    "which no bank statement carries. Use it when the user tells you about a cash payment, or to offer it for an " +
+    "unconnected receipt paid in cash. amount is integer cents with its sign, negative for money out. Never " +
+    "invent the amount, the day or the text: take them from the user or the receipt. REQUIRES USER CONFIRMATION.",
+  mcpSchema("add_cash_payment")
+);
+
 // The writes that record who made them (#665): runTool calls them as the chat
 // agent, so the shared tool records the agent's provenance (`ai`, Connection
 // Origin `agent`) where MCP records its own.
@@ -524,6 +538,7 @@ export const MCP_TOOLS = [
   listCategoriesTool,
   updateTransactionTool,
   createSourceTool,
+  addCashPaymentTool,
   assignPartnerToTransactionTool,
   assignPartnerToFileTool,
   updatePartnerTool,

@@ -32,6 +32,7 @@ const WRITE_TOOLS = new Set([
   "updateTransaction",
   "bulkUpdateTransactions",
   "createSource",
+  "addCashPayment",
   "rollbackTransaction",
   "markFileAsCopy",
   "unmarkFileAsCopy",
