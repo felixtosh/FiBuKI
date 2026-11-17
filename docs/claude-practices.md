@@ -8,10 +8,10 @@ Read alongside [`who-is-this-for.md`](./who-is-this-for.md) (what we're building
 
 ## Host safety — enforced, not advisory
 
-**The claude-audit box has 4 GiB.** A full `vitest run` spawns one worker per CPU,
-each with its own V8 heap. `tsc --noEmit` over this project and `next build` are
-similarly hungry. Any of them OOM-freezes that host hard enough to need a reset.
-This happened three times before it was enforced.
+**The claude-audit box has 16 GiB and 10 CPUs.** A full `vitest run` spawns one
+worker per CPU, each with its own V8 heap. `tsc --noEmit` over this project and
+`next build` are similarly hungry. On a small host any of them OOM-freezes it hard
+enough to need a reset; the audit box froze three times this way when it had 4 GiB.
 
 `.claude/hooks/guard-memory.sh` (wired via `.claude/settings.json`) blocks these
 shapes as a `PreToolUse` hook. It is **host-aware**:
@@ -41,8 +41,9 @@ NODE_OPTIONS=--max-old-space-size=900 npx tsc --noEmit -p functions/tsconfig.sco
 
 Full suites and full builds go on **CT 999**, not the audit box.
 
-**Also:** no parallel sub-agents on the audit box. Fan-out is what OOMs it —
-run build agents one at a time.
+**Sub-agents:** up to four in parallel on the audit box, each running scoped tests
+only. Four agents each starting an unscoped run is what would OOM it, and on this
+box the guard only refuses one once free memory is already under 4 GiB.
 
 ### The guard matches the command string, not the command
 
@@ -83,7 +84,7 @@ doc edits and single-step changes want a cheap tier. Reserve the premium tier fo
 genuinely multi-step, interdependent work.
 
 Sub-agents can run at a lower tier for cheap fan-out — but see the host-safety note
-above about running them one at a time here.
+above: four at a time on the audit box, scoped tests only.
 
 ## Prefer more, smaller sessions
 

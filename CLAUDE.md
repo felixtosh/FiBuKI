@@ -44,7 +44,7 @@ See [`docs/agents/domain.md`](docs/agents/domain.md).
 ## Host safety (enforced)
 
 **Never run a full `vitest`, a project-wide `tsc`, or `next build` on a small host.**
-Each spawns per-CPU workers with their own V8 heaps and OOM-freezes a 4 GiB box hard
+Each spawns per-CPU workers with their own V8 heaps and OOM-freezes a small box hard
 enough to need a reset. `.claude/hooks/guard-memory.sh` blocks these shapes via a
 `PreToolUse` hook when `MemTotal <= 8 GiB` or `MemAvailable < 4 GiB`; on a normal
 workstation it never fires. Use the scoped forms instead:
@@ -57,8 +57,9 @@ echo '{"extends":"./tsconfig.json","include":[],"files":["src/foo.ts"]}' > funct
 NODE_OPTIONS=--max-old-space-size=900 npx tsc --noEmit -p functions/tsconfig.scoped.json
 ```
 
-Full suites belong on CT 999. Also: **no parallel sub-agents on the audit box** —
-fan-out is what OOMs it. Details in [`docs/claude-practices.md`](docs/claude-practices.md).
+Full suites belong on CT 999. The audit box has 16 GiB: up to **four sub-agents in
+parallel** is fine there, each running scoped tests only. Details in
+[`docs/claude-practices.md`](docs/claude-practices.md).
 
 ## Self-host realities (read before debugging)
 
