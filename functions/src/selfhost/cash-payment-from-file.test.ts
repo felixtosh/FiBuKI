@@ -168,6 +168,27 @@ describe("adding a Cash Payment from a File in the web UI", () => {
     expect(await stored("transactions", transactionId)).toMatchObject({ partnerId: "p-cafe", partnerType: "user" });
   });
 
+  it("still adds the row when the File's own Partner no longer exists", async () => {
+    const sourceId = await cashBox();
+    const fileId = await receipt("f-cafe", { partnerId: "p-gone", partnerType: "user" });
+
+    const { transactionId } = await fromFile({ fileId, sourceId });
+
+    expect(await stored("transactions", transactionId)).toMatchObject({ addedByHand: true, amount: -900 });
+  });
+
+  it("refuses a File whose own Partner is a Merged Partner, naming the survivor, and leaves no row", async () => {
+    const sourceId = await cashBox();
+    await db.collection("partners").doc("p-old").set({ userId: USER, name: "Cafe", aliases: [], ibans: [], mergedInto: "p-cafe" });
+    const fileId = await receipt("f-cafe", { partnerId: "p-old", partnerType: "user" });
+
+    await expect(fromFile({ fileId, sourceId })).rejects.toMatchObject({
+      code: "failed-precondition",
+      message: expect.stringContaining("p-cafe"),
+    });
+    expect((await db.collection("transactions").get()).size).toBe(0);
+  });
+
   it("chooses the User's only Cash Box when none is named", async () => {
     const sourceId = await cashBox();
     const fileId = await receipt();

@@ -403,7 +403,11 @@ export async function addCashPaymentFromFile(
   const partner = partnerSent
     ? await loadPartner(db, userId, input.partnerId)
     : defaults.partnerId
-      ? await loadPartner(db, userId, defaults.partnerId).catch(() => null)
+      ? // A File's Partner that is gone is no default; a Merged one is refused as when it is sent.
+        await loadPartner(db, userId, defaults.partnerId).catch((err: unknown) => {
+          if (err instanceof HttpsError && err.code === "not-found") return null;
+          throw err;
+        })
       : null;
   const currency = (source.data()?.currency as string | undefined) ?? "EUR";
 
