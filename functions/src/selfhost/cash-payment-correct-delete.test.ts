@@ -24,6 +24,8 @@ import {
   deleteCashPaymentCallable,
 } from "../transactions/cashPayment";
 import { connectFileToTransactionCallable } from "../files/connectFileToTransaction";
+import { updateTransactionCallable } from "../transactions/updateTransaction";
+import { TOOL_DEFINITIONS } from "../tools/definitions";
 
 const db = getFirestore();
 const USER = "cash-user";
@@ -285,6 +287,21 @@ describe("what a correction or a delete is refused on", () => {
       message: expect.stringContaining("2026-Q3"),
     });
     expect(((await stored(transactionId)).date as Timestamp).toDate().toISOString()).toBe("2026-10-02T00:00:00.000Z");
+  });
+
+  it("leaves the general Transaction update as strict as before: it refuses the amount on a Cash Payment too", async () => {
+    const sourceId = await cashBox();
+    const transactionId = await addByHand({ sourceId, date: "2026-07-06", amount: -450, name: "Parkschein" });
+
+    await expect(
+      updateTransactionCallable.run({ data: { id: transactionId, data: { amount: -1 } }, auth: AUTH } as never)
+    ).rejects.toBeTruthy();
+    expect(await stored(transactionId)).toMatchObject({ amount: -450 });
+  });
+
+  it("offers no MCP or REST tool that deletes a Cash Payment", () => {
+    const names = TOOL_DEFINITIONS.map((d) => d.name);
+    expect(names.filter((n) => /cash/i.test(n) && /delete|remove/i.test(n))).toEqual([]);
   });
 
   it("is not stopped by another User's filed period", async () => {
