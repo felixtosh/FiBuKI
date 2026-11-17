@@ -307,6 +307,17 @@
       "bandRequired": "With more than one recurrence, each needs its own expected amount range."
     }
   },
+  "bookingAccounts": {
+    "title": "Booking accounts",
+    "other": "Other charts: {numbers}",
+    "asset": "Fixed asset",
+    "gwg": "Low-value asset",
+    "rate": "{rate}% VAT",
+    "origin": {
+      "sevdesk": "From SevDesk",
+      "manual": "Set by hand"
+    }
+  },
   "documents": {
     "type": {
       "invoice": "Invoice",
@@ -1273,6 +1284,8 @@
       "reconciliation_suggested": "Reconciliation suggested",
       "ruling_recorded": "Ruling recorded",
       "ruling_revoked": "Ruling revoked",
+      "booking_accounts_set": "Booking accounts set",
+      "booking_accounts_cleared": "Booking accounts cleared",
       "partner_search": "Partner search (agent)",
       "transaction_search": "Transaction search (agent)"
     },

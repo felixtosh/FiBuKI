@@ -131,7 +131,10 @@ export interface AutomationHistoryEntry {
     // #788: a Cash Payment the User (or an AI client for them) added by hand
     | "cash_payment_added"
     // #790: that Cash Payment corrected
-    | "cash_payment_corrected";
+    | "cash_payment_corrected"
+    // #785: an import set or cleared the Booking Accounts
+    | "booking_accounts_set"
+    | "booking_accounts_cleared";
   /** When it ran */
   ranAt: Timestamp;
   /** Status of the run */
@@ -348,6 +351,9 @@ export interface Transaction {
     confidence: number;
     source: "iban" | "vatId" | "website" | "name";
   }>;
+
+  /** The accounts this Transaction is booked to (#785). Written only by set_booking_accounts. */
+  bookingAccounts?: import("@/functions/src/bookingAccounts/types").BookingAccount[];
 
   // === No-Receipt Category ===
   // Note: These use `| null` (not just `?`) so Firestore queries work.

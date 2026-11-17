@@ -424,6 +424,12 @@ export interface TaxFile {
   extractedLineItems?: ExtractedLineItem[] | null;
 
   /**
+   * The accounts this File is booked to (#785), beside the Extraction, not in
+   * it: a re-extraction leaves them alone. Written only by set_booking_accounts.
+   */
+  bookingAccounts?: import("@/functions/src/bookingAccounts/types").BookingAccount[];
+
+  /**
    * The document's own printed per-rate VAT summary block (fork #67),
    * validated on ingest: each row is internally consistent and the rows
    * sum to the document total. Absent when the document prints no such
