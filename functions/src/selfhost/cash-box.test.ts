@@ -18,6 +18,7 @@ import { createSourceCallable } from "../sources/createSource";
 import { updateSourceCallable } from "../sources/updateSource";
 import { bulkCreateTransactionsCallable } from "../imports/bulkCreateTransactions";
 import { getAccountBalancesCallable } from "../sources/getAccountBalances";
+import { initOnboardingCallable, syncOnboardingCallable, updateOnboardingCallable } from "../onboarding/onboardingCallables";
 import { handleTool } from "../tools/handlers";
 import { TOOL_DEFINITIONS } from "../tools/definitions";
 
@@ -215,5 +216,21 @@ describe("Cash Box: no balance in the account balances report", () => {
 
     expect(balances.map((b) => b.sourceId)).toEqual([bank.sourceId]);
     expect(balances[0].balanceAtDate).toBe(-450);
+  });
+});
+
+describe("Cash Box: onboarding", () => {
+  it("adding a Cash Box completes the add-a-Bank-Account step", async () => {
+    await initOnboardingCallable.run({ data: {}, auth: AUTH } as never);
+    // The steps before it, out of the way
+    for (const step of ["set_identity", "connect_email"]) {
+      await updateOnboardingCallable.run({ data: { action: "skip_step", step }, auth: AUTH } as never);
+    }
+    await createSource({ name: "Kassa", accountKind: "cash", currency: "EUR", type: "manual" });
+
+    const status = (await syncOnboardingCallable.run({ data: {}, auth: AUTH } as never)) as {
+      steps: Array<{ id: string; state: string }>;
+    };
+    expect(status.steps.find((s) => s.id === "add_bank_account")?.state).toBe("done");
   });
 });

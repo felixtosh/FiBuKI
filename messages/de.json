@@ -1316,5 +1316,13 @@
         "file": "Von den verknüpften Belegen übernommen."
       }
     }
+  },
+  "sources": {
+    "cashBox": {
+      "kind": "Kassa",
+      "kindLabel": "Kontoart",
+      "namePlaceholder": "z. B. Kassa",
+      "hint": "Eine Kassa hat keine Bank dahinter: keine IBAN, keine Bankverbindung und keinen Kontostand. Nur einen Namen und eine Währung."
+    }
   }
 }

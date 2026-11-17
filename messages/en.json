@@ -1316,5 +1316,13 @@
         "file": "Taken from the connected Files."
       }
     }
+  },
+  "sources": {
+    "cashBox": {
+      "kind": "Cash",
+      "kindLabel": "Account type",
+      "namePlaceholder": "e.g., Cash",
+      "hint": "A Cash Box has no bank behind it: no IBAN, no bank connection and no balance. Only a name and a currency."
+    }
   }
 }

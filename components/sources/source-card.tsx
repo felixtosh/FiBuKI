@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { TransactionSource } from "@/types/source";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import {
   Home,
   Shield,
   Landmark,
+  Banknote,
 } from "lucide-react";
 import { formatIban } from "@/lib/import/deduplication";
 import { formatCurrency } from "@/lib/utils";
@@ -28,6 +30,8 @@ interface SourceCardProps {
 }
 
 export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) {
+  const t = useTranslations("sources");
+  const isCashBox = source.accountKind === "cash";
   // Capture "now" once per mount so checks derived from time remain pure.
   const [now] = useState(() => Date.now());
 
@@ -81,6 +85,8 @@ export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) 
       // No badge for normal connected state
       return null;
     }
+    // A Cash Box says "Cash" on its own line; a CSV badge would suggest a bank statement
+    if (isCashBox) return null;
     // CSV import sources
     return <Badge variant="secondary" className="text-xs">CSV</Badge>;
   };
@@ -95,16 +101,16 @@ export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) 
     other: "Broker",
   };
 
-  // Get account type icon based on accountKind or finAPI accountType
-  const getAccountTypeIcon = () => {
-    if (source.accountKind === "credit_card") {
-      return <CreditCard className="h-3 w-3" />;
-    }
-    if (source.accountKind === "depot") {
-      return <TrendingUp className="h-3 w-3" />;
-    }
-    return <Building2 className="h-3 w-3" />;
-  };
+  // The account type's icon, by accountKind
+  const KindIcon =
+    source.accountKind === "credit_card"
+      ? CreditCard
+      : source.accountKind === "depot"
+        ? TrendingUp
+        : isCashBox
+          ? Banknote
+          : Building2;
+  const getAccountTypeIcon = () => <KindIcon className="h-3 w-3" />;
 
   // Render account icon - use bank logo with overlay for API sources, otherwise default icons
   const renderIcon = () => {
@@ -125,13 +131,7 @@ export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) 
     }
     return (
       <div className="p-2 rounded-lg bg-primary/10 border border-border shrink-0">
-        {source.accountKind === "credit_card" ? (
-          <CreditCard className="h-5 w-5 text-primary" />
-        ) : source.accountKind === "depot" ? (
-          <TrendingUp className="h-5 w-5 text-primary" />
-        ) : (
-          <Building2 className="h-5 w-5 text-primary" />
-        )}
+        <KindIcon className="h-5 w-5 text-primary" />
       </div>
     );
   };
@@ -159,10 +159,12 @@ export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) 
             ? `${source.cardBrand?.toUpperCase() || "Card"} ••••${source.cardLast4 || ""}`
             : source.accountKind === "depot"
               ? BROKER_LABELS[source.brokerName || "other"]
-              : formatIban(source.iban)}
+              : isCashBox
+                ? t("cashBox.kind")
+                : formatIban(source.iban)}
         </p>
 
-        {source.latestBalance != null && (
+        {!isCashBox && source.latestBalance != null && (
           <p className={`text-lg font-semibold font-mono mb-3 ${source.latestBalance >= 0 ? "text-green-700" : "text-red-600"}`}>
             {formatCurrency(source.latestBalance, source.currency)}
             {source.latestBalanceDate && (
@@ -173,7 +175,7 @@ export function SourceCard({ source, onClick, onImportClick }: SourceCardProps) 
           </p>
         )}
 
-        {source.latestBalance == null && <div className="mb-4" />}
+        {(isCashBox || source.latestBalance == null) && <div className="mb-4" />}
 
         <div className="flex items-center justify-between">
           {!isApiConnected && (

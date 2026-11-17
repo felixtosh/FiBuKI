@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -18,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { TransactionSource, AccountKind, CardBrand } from "@/types/source";
 import { isValidIban, normalizeIban, formatIban } from "@/lib/import/deduplication";
-import { Building2, CreditCard } from "lucide-react";
+import { Banknote, Building2, CreditCard } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface EditSourceDialogProps {
@@ -38,6 +39,7 @@ const CARD_BRANDS: { value: CardBrand; label: string }[] = [
 ];
 
 export function EditSourceDialog({ open, onClose, onSave, source, sources = [] }: EditSourceDialogProps) {
+  const t = useTranslations("sources");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [ibanError, setIbanError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
@@ -110,7 +112,7 @@ export function EditSourceDialog({ open, onClose, onSave, source, sources = [] }
       // For bank accounts, IBAN is required
       if (!formData.iban) return false;
       if (ibanError) return false;
-    } else {
+    } else if (formData.accountKind === "credit_card") {
       // For credit cards, card info is required
       if (!formData.cardBrand) return false;
       if (!formData.cardLast4 || formData.cardLast4.length !== 4) return false;
@@ -137,7 +139,7 @@ export function EditSourceDialog({ open, onClose, onSave, source, sources = [] }
         iban: formData.accountKind === "bank_account" ? normalizeIban(formData.iban) : undefined,
         cardBrand: formData.accountKind === "credit_card" ? formData.cardBrand : undefined,
         cardLast4: formData.accountKind === "credit_card" ? formData.cardLast4 : undefined,
-        linkedSourceId: formData.linkedSourceId || undefined,
+        linkedSourceId: formData.accountKind === "credit_card" ? formData.linkedSourceId || undefined : undefined,
         currency: formData.currency,
       });
       onClose();
@@ -159,7 +161,7 @@ export function EditSourceDialog({ open, onClose, onSave, source, sources = [] }
             <label className="text-sm font-medium mb-2 block">
               Account Type
             </label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => handleAccountKindChange("bank_account")}
@@ -186,7 +188,23 @@ export function EditSourceDialog({ open, onClose, onSave, source, sources = [] }
                 <CreditCard className="h-5 w-5" />
                 <span className="font-medium">Credit Card</span>
               </button>
+              <button
+                type="button"
+                onClick={() => handleAccountKindChange("cash")}
+                className={cn(
+                  "flex items-center gap-2 p-3 rounded-lg border-2 transition-colors",
+                  formData.accountKind === "cash"
+                    ? "border-primary bg-primary/5"
+                    : "border-muted hover:border-muted-foreground/50"
+                )}
+              >
+                <Banknote className="h-5 w-5" />
+                <span className="font-medium">{t("cashBox.kind")}</span>
+              </button>
             </div>
+            {formData.accountKind === "cash" && (
+              <p className="text-xs text-muted-foreground mt-2">{t("cashBox.hint")}</p>
+            )}
           </div>
 
           {/* Account Name */}
@@ -197,7 +215,9 @@ export function EditSourceDialog({ open, onClose, onSave, source, sources = [] }
             <Input
               placeholder={formData.accountKind === "credit_card"
                 ? "e.g., Amex Business Card"
-                : "e.g., Business Account"}
+                : formData.accountKind === "cash"
+                  ? t("cashBox.namePlaceholder")
+                  : "e.g., Business Account"}
               value={formData.name}
               onChange={(e) =>
                 setFormData((f) => ({ ...f, name: e.target.value }))

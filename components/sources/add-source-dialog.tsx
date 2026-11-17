@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -18,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { SourceFormData, TransactionSource, AccountKind, CardBrand, BrokerName } from "@/types/source";
 import { isValidIban, normalizeIban, formatIban } from "@/lib/import/deduplication";
-import { Building2, CreditCard, TrendingUp } from "lucide-react";
+import { Banknote, Building2, CreditCard, TrendingUp } from "lucide-react";
 import { useSubscription } from "@/hooks/use-subscription";
 import { cn } from "@/lib/utils";
 
@@ -47,6 +48,7 @@ const BROKERS: { value: BrokerName; label: string }[] = [
 ];
 
 export function AddSourceDialog({ open, onClose, onAdd, sources = [] }: AddSourceDialogProps) {
+  const t = useTranslations("sources");
   const { subscription } = useSubscription();
   const hasInvestmentsAddon = subscription?.addons?.investments?.active ?? false;
 
@@ -144,7 +146,7 @@ export function AddSourceDialog({ open, onClose, onAdd, sources = [] }: AddSourc
         cardBrand: formData.accountKind === "credit_card" ? formData.cardBrand : undefined,
         cardLast4: formData.accountKind === "credit_card" ? formData.cardLast4 : undefined,
         brokerName: formData.accountKind === "depot" ? formData.brokerName : undefined,
-        linkedSourceId: formData.linkedSourceId || undefined,
+        linkedSourceId: formData.accountKind === "credit_card" ? formData.linkedSourceId || undefined : undefined,
         currency: formData.currency,
         type: formData.type,
       });
@@ -181,7 +183,7 @@ export function AddSourceDialog({ open, onClose, onAdd, sources = [] }: AddSourc
             <label className="text-sm font-medium mb-2 block">
               Account Type *
             </label>
-            <div className={cn("grid gap-2", hasInvestmentsAddon ? "grid-cols-3" : "grid-cols-2")}>
+            <div className={cn("grid gap-2", hasInvestmentsAddon ? "grid-cols-2" : "grid-cols-3")}>
               <button
                 type="button"
                 onClick={() => handleAccountKindChange("bank_account")}
@@ -207,6 +209,19 @@ export function AddSourceDialog({ open, onClose, onAdd, sources = [] }: AddSourc
               >
                 <CreditCard className="h-5 w-5" />
                 <span className="font-medium">Credit Card</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAccountKindChange("cash")}
+                className={cn(
+                  "flex items-center gap-2 p-3 rounded-lg border-2 transition-colors",
+                  formData.accountKind === "cash"
+                    ? "border-primary bg-primary/5"
+                    : "border-muted hover:border-muted-foreground/50"
+                )}
+              >
+                <Banknote className="h-5 w-5" />
+                <span className="font-medium">{t("cashBox.kind")}</span>
               </button>
               {hasInvestmentsAddon && (
                 <button
@@ -237,7 +252,9 @@ export function AddSourceDialog({ open, onClose, onAdd, sources = [] }: AddSourc
                   ? "e.g., Amex Business Card"
                   : formData.accountKind === "depot"
                     ? "e.g., Trade Republic Depot"
-                    : "e.g., Business Account"
+                    : formData.accountKind === "cash"
+                      ? t("cashBox.namePlaceholder")
+                      : "e.g., Business Account"
               }
               value={formData.name}
               onChange={(e) =>
@@ -249,6 +266,10 @@ export function AddSourceDialog({ open, onClose, onAdd, sources = [] }: AddSourc
               A friendly name to identify this account
             </p>
           </div>
+
+          {formData.accountKind === "cash" && (
+            <p className="text-xs text-muted-foreground">{t("cashBox.hint")}</p>
+          )}
 
           {/* Broker - Only for depot sources */}
           {formData.accountKind === "depot" && (

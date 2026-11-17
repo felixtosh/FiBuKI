@@ -2,9 +2,10 @@ import { Timestamp } from "firebase/firestore";
 import { AmountFormatConfig } from "./import";
 
 /**
- * Type of financial account
+ * Type of financial account. `cash` is a Cash Box (#787): a Bank Account with
+ * no bank behind it, a name and a currency only, and no balance.
  */
-export type AccountKind = "bank_account" | "credit_card" | "depot";
+export type AccountKind = "bank_account" | "credit_card" | "depot" | "cash";
 
 /**
  * Known broker platforms for depot sources

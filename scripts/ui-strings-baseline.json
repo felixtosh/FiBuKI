@@ -174,7 +174,7 @@
   "components/sources/edit-source-dialog.tsx": 21,
   "components/sources/import-history-card.tsx": 5,
   "components/sources/inline-country-expand.tsx": 12,
-  "components/sources/source-card.tsx": 6,
+  "components/sources/source-card.tsx": 5,
   "components/sources/source-list.tsx": 4,
   "components/sources/sync-status-card.tsx": 19,
   "components/theme/theme-toggle.tsx": 1,

@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useState } from "react";
+import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useSources } from "@/hooks/use-sources";
 import { useAuth } from "@/components/auth";
@@ -17,6 +18,7 @@ import {
   Loader2,
   Link2,
   Globe,
+  Banknote,
 } from "lucide-react";
 import { useImports } from "@/hooks/use-imports";
 import { ImportHistoryCard } from "@/components/sources/import-history-card";
@@ -56,6 +58,7 @@ interface SourceDetailPageProps {
 export default function SourceDetailPage({ params }: SourceDetailPageProps) {
   const { id } = use(params);
   const router = useRouter();
+  const t = useTranslations("sources");
   const { user } = useAuth();
   const { sources, loading, deleteSource, updateSource } = useSources();
   const { imports, drafts, loading: importsLoading, deleteImport, deleteDraft } = useImports(id);
@@ -189,6 +192,9 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
   const isApiConnected = source.type === "api" &&
     (source.apiConfig?.provider === "truelayer" ||
      source.apiConfig?.provider === "finapi");
+  // A Cash Box (#787): no bank behind it, so no IBAN, no bank connection, no balance
+  const isCashBox = source.accountKind === "cash";
+  const KindIcon = source.accountKind === "credit_card" ? CreditCard : isCashBox ? Banknote : Building2;
   const isTrueLayer = source.apiConfig?.provider === "truelayer";
   const isFinapi = source.apiConfig?.provider === "finapi";
 
@@ -240,11 +246,7 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
               </div>
             ) : (
               <div className="p-2.5 rounded-lg bg-primary/10 border border-border">
-                {source.accountKind === "credit_card" ? (
-                  <CreditCard className="h-6 w-6 text-primary" />
-                ) : (
-                  <Building2 className="h-6 w-6 text-primary" />
-                )}
+                <KindIcon className="h-6 w-6 text-primary" />
               </div>
             )}
             <div>
@@ -257,14 +259,16 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
                 {isApiConnected && !needsReauth && daysUntilExpiry !== null && daysUntilExpiry <= 7 && (
                   <Badge variant="outline" className="border-yellow-500 text-yellow-600">Expires Soon</Badge>
                 )}
-                {!isApiConnected && (
+                {!isApiConnected && !isCashBox && (
                   <Badge variant="secondary">CSV Import</Badge>
                 )}
               </div>
               <p className="text-sm text-muted-foreground font-mono">
                 {source.accountKind === "credit_card"
                   ? `${source.cardBrand?.toUpperCase() || "Card"} ••••${source.cardLast4 || ""}`
-                  : formatIban(source.iban)}
+                  : isCashBox
+                    ? t("cashBox.kind")
+                    : formatIban(source.iban)}
               </p>
             </div>
           </div>
@@ -306,7 +310,7 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
             </AlertDialogContent>
           </AlertDialog>
 
-          {!isApiConnected && (
+          {!isApiConnected && !isCashBox && (
             <Button variant="outline" size="sm" onClick={handleConnect}>
               <Link2 className="h-4 w-4 mr-2" />
               Connect Bank
@@ -354,7 +358,19 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
                       </div>
                     </div>
                   </>
-                ) : (
+                ) : null}
+                {isCashBox ? (
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-muted rounded-lg">
+                      <Banknote className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">{t("cashBox.kindLabel")}</p>
+                      <p className="font-medium">{t("cashBox.kind")}</p>
+                    </div>
+                  </div>
+                ) : null}
+                {source.accountKind !== "credit_card" && !isCashBox ? (
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-muted rounded-lg">
                       <Building2 className="h-4 w-4 text-muted-foreground" />
@@ -364,7 +380,7 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
                       <p className="font-medium font-mono text-sm">{formatIban(source.iban)}</p>
                     </div>
                   </div>
-                )}
+                ) : null}
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-muted rounded-lg">
                     <Globe className="h-4 w-4 text-muted-foreground" />
@@ -387,7 +403,8 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
                 </div>
               </div>
 
-              {/* Balance Section */}
+              {/* Balance Section: a Cash Box keeps no balance (#787) */}
+              {!isCashBox && (
               <div className="mt-4 pt-4 border-t">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-sm font-medium">Account Balance</p>
@@ -490,6 +507,7 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
                   </div>
                 )}
               </div>
+              )}
 
               {/* Linked Account Section */}
               {source.accountKind === "credit_card" && source.linkedSourceId && (
