@@ -75,6 +75,7 @@ const TYPE_STYLE: Record<string, { icon: typeof History; color: string }> = {
   reconciliation_suggested: { icon: CreditCard, color: "text-blue-400" },
   ruling_recorded: { icon: Gavel, color: "text-blue-500" },
   cash_payment_added: { icon: Banknote, color: "text-green-600" },
+  cash_payment_corrected: { icon: PencilLine, color: "text-blue-500" },
   ruling_revoked: { icon: Gavel, color: "text-orange-500" },
 };
 

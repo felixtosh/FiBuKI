@@ -129,7 +129,9 @@ export interface AutomationHistoryEntry {
     | "ruling_recorded"
     | "ruling_revoked"
     // #788: a Cash Payment the User (or an AI client for them) added by hand
-    | "cash_payment_added";
+    | "cash_payment_added"
+    // #790: that Cash Payment corrected
+    | "cash_payment_corrected";
   /** When it ran */
   ranAt: Timestamp;
   /** Status of the run */

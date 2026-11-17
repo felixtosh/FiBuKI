@@ -1262,6 +1262,7 @@
       "facts_derived": "Data derived",
       "copy_marked": "Copy recorded",
       "cash_payment_added": "Cash payment added",
+      "cash_payment_corrected": "Cash payment corrected",
       "copy_suggested": "Copy suggested",
       "receipt_linked": "Receipt linked",
       "receipt_unlinked": "Receipt link removed",
