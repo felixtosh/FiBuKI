@@ -291,7 +291,8 @@ async function afterCreate(db: Db, userId: string, transactionId: string, { part
   if (!partnerGiven) {
     try {
       const { runPartnerMatching } = await import("../matching/matchPartners");
-      await runPartnerMatching(userId, { transactionIds: [transactionId], agenticFallback: false });
+      const transactionIds = [transactionId];
+      await runPartnerMatching(userId, { transactionIds, agenticFallback: false });
     } catch (err) {
       console.error(`[cashPayment] Partner matching failed for ${transactionId}:`, err);
     }
