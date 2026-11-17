@@ -74,17 +74,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "create_source",
     annotation: "write",
-    description: "Create a new bank account/source",
+    description: "Create a new bank account/source, or a Cash Box (accountKind cash)",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Name of the bank account" },
         accountKind: {
           type: "string",
-          enum: ["bank_account", "credit_card"],
-          description: "Type of account (default: bank_account)",
+          enum: ["bank_account", "credit_card", "cash"],
+          description:
+            "Type of account (default: bank_account). `cash` is a Cash Box: a Bank Account with no bank " +
+            "behind it, for payments made in cash. It takes only a name and a currency, never an IBAN, " +
+            "and has no balance.",
         },
-        iban: { type: "string", description: "IBAN (optional)" },
+        iban: { type: "string", description: "IBAN (optional; not for a Cash Box)" },
         currency: { type: "string", description: "Currency code (default: EUR)" },
       },
       required: ["name"],
@@ -101,6 +104,56 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         confirm: { type: "boolean", description: "Must be true to confirm deletion" },
       },
       required: ["sourceId", "confirm"],
+    },
+  },
+  {
+    name: "add_cash_payment",
+    annotation: "write",
+    description:
+      "Add one Cash Payment to a Cash Box (a Bank Account with accountKind cash): a payment the user made " +
+      "or took in cash, which no bank statement will carry. Refused on a Bank Account that is not a Cash Box. " +
+      "Two identical payments on one day are both kept, so do not add the same payment twice. Without a " +
+      "partnerId, Partner matching runs on it; the matcher proposes the user's unconnected Files for it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sourceId: { type: "string", description: "The Cash Box's id (list_sources shows accountKind cash)" },
+        date: { type: "string", description: "The day of the payment, YYYY-MM-DD" },
+        amount: {
+          type: "integer",
+          description: "Amount in integer cents with its sign: negative for money out (-450 is 4,50 paid), positive for money in",
+        },
+        name: { type: "string", description: "What the payment was for, in the user's own words" },
+        description: { type: "string", description: "A longer note (optional)" },
+        partnerId: { type: "string", description: "The user's Partner for the payment (optional)" },
+      },
+      required: ["sourceId", "date", "amount", "name"],
+    },
+  },
+  {
+    name: "add_cash_payment_from_file",
+    annotation: "write",
+    description:
+      "Turn a File the user paid in cash (a receipt with no Transaction) into a Cash Payment on a Cash Box, " +
+      "connected to that File in the same write. The File's day, gross amount (money out, or money in for an " +
+      "outgoing invoice), name and Partner are the defaults; any value sent wins. Without sourceId the user's " +
+      "only Cash Box is used; with none or several it is refused, saying which. Refused on a File already " +
+      "connected to a Transaction (one receipt never becomes two payments).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The File's id; it must have no Transaction yet" },
+        sourceId: { type: "string", description: "The Cash Box's id (optional when the user has exactly one)" },
+        date: { type: "string", description: "Override the File's day, YYYY-MM-DD" },
+        amount: {
+          type: "integer",
+          description: "Override the amount: integer cents with its sign, negative for money out",
+        },
+        name: { type: "string", description: "Override what the payment was for" },
+        description: { type: "string", description: "A longer note (optional)" },
+        partnerId: { type: "string", description: "Override the Partner with one of the user's (optional)" },
+      },
+      required: ["fileId"],
     },
   },
 

@@ -58,6 +58,8 @@ export const getAccountBalancesCallable = createCallable<
 
     for (const sourceDoc of sourcesSnap.docs) {
       const sourceData = sourceDoc.data();
+      // A Cash Box keeps no balance (#787): what is in the box is not known.
+      if (sourceData.accountKind === "cash") continue;
       const openingBalance = sourceData.openingBalance ?? 0;
       const openingBalanceDate = toDateSafe(sourceData.openingBalanceDate);
 

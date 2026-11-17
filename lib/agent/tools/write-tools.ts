@@ -13,6 +13,8 @@ import {
   callableErrorMessage,
   createPartnerTool,
   createSourceTool,
+  addCashPaymentTool,
+  addCashPaymentFromFileTool,
   dismissSplitSuggestionTool,
   getCorrectionTool,
   getReceiptLinkTool,
@@ -344,6 +346,8 @@ export const bulkUpdateTransactionsTool = tool(
 export const WRITE_TOOLS = [
   updateTransactionTool,
   createSourceTool,
+  addCashPaymentTool,
+  addCashPaymentFromFileTool,
   rollbackTransactionTool,
   assignPartnerToTransactionTool,
   assignPartnerToFileTool,

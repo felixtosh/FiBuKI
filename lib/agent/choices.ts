@@ -22,10 +22,17 @@
 
 /**
  * Writes that wait for the User's yes: bulk changes, a rollback, a new bank
- * account. A single connect or Partner assignment does not: it is reversible
+ * account, a new Cash Payment (a row the agent would otherwise invent in the
+ * books). A single connect or Partner assignment does not: it is reversible
  * and the User wants it to feel like magic.
  */
-export const TOOLS_REQUIRING_CONFIRMATION = ["bulkUpdateTransactions", "rollbackTransaction", "createSource"] as const;
+export const TOOLS_REQUIRING_CONFIRMATION = [
+  "bulkUpdateTransactions",
+  "rollbackTransaction",
+  "createSource",
+  "addCashPayment",
+  "addCashPaymentFromFile",
+] as const;
 
 export function requiresConfirmation(toolName: string): boolean {
   return (TOOLS_REQUIRING_CONFIRMATION as readonly string[]).includes(toolName);

@@ -114,6 +114,7 @@ async function seed() {
   const mine = { userId: USER, createdAt: now, updatedAt: now };
 
   await db.collection("sources").doc("s-giro").set({ ...mine, name: "Giro", iban: "AT611904300234573201", currency: "EUR", type: "manual", isActive: true });
+  await db.collection("sources").doc("s-cash").set({ ...mine, name: "Kassa", accountKind: "cash", iban: null, currency: "EUR", type: "manual", isActive: true });
   await db.collection("sources").doc("s-old").set({ ...mine, name: "Old account", iban: null, currency: "EUR", type: "manual", isActive: false });
 
   await db.collection("transactions").doc("t-amazon").set({
@@ -394,6 +395,22 @@ describe("the drifts, each a fixture", () => {
     expect(refused.error).toMatch(/name is required/i);
     expect((await db.collection("sources").where("userId", "==", USER).get()).size).toBe(before);
   });
+
+  it("creates a Cash Box when asked for accountKind cash, as its MCP twin does (#787)", async () => {
+    const created = (await tool("createSource").invoke({ name: "Kassa", accountKind: "cash", currency: "EUR" }, CONFIG)) as {
+      success?: boolean;
+      sourceId?: string;
+    };
+    expect(created.success).toBe(true);
+    const stored = (await db.collection("sources").doc(created.sourceId!).get()).data()!;
+    expect(stored).toMatchObject({ name: "Kassa", accountKind: "cash", userId: USER });
+
+    const refused = (await tool("createSource").invoke(
+      { name: "Kassa 2", accountKind: "cash", iban: "AT611904300234573201" },
+      CONFIG
+    )) as { error?: string };
+    expect(refused.error).toMatch(/Cash Box/);
+  });
 });
 
 describe("rolling a Transaction back", () => {
@@ -561,6 +578,57 @@ describe("the four writes: the chat answers what the shared tool answers as the 
         expect(Object.keys(chat).sort(), name).toEqual(Object.keys(mcp).sort());
       }
     }
+  });
+});
+
+describe("adding a Cash Payment: the chat runs add_cash_payment as the agent (#788)", () => {
+  const args = { sourceId: "s-cash", date: "2026-03-05", amount: -900, name: "Kaffee mit Kunde", partnerId: "p-amazon" };
+
+  it("answers what the shared tool answers as the agent, and stores the agent's provenance", async () => {
+    const chat = wire(await tool("addCashPayment").invoke(args, CONFIG)) as Record<string, unknown>;
+    expect(chat.success).toBe(true);
+    const row = (await db.collection("transactions").doc(chat.transactionId as string).get()).data()!;
+    expect(row).toMatchObject({ sourceId: "s-cash", amount: -900, addedByHand: true, partnerMatchedBy: "ai" });
+    const added = (row.automationHistory as Array<Record<string, unknown>>).filter((e) => e.type === "cash_payment_added");
+    expect(added.map((e) => e.actor)).toEqual(["ai"]);
+
+    await seed();
+    const parsed = tool("addCashPayment").schema.parse(args);
+    const agent = wire(await handleTool(USER, "add_cash_payment", parsed, AGENT)) as Record<string, unknown>;
+    const { transactionId: _chatId, ...chatRest } = chat;
+    const { transactionId: _agentId, ...agentRest } = agent;
+    expect(chatRest).toEqual(agentRest);
+  });
+
+  it("is refused on a Bank Account that is not a Cash Box, with MCP's message", async () => {
+    const { chat, mcp } = await both("addCashPayment", { ...args, sourceId: "s-giro" });
+    expect((chat as { error?: string }).error).toMatch(/not a Cash Box/);
+    expect(chat).toEqual(mcp);
+  });
+});
+
+describe("a Cash Payment from a File: the chat runs add_cash_payment_from_file as the agent (#789)", () => {
+  const args = { fileId: "f-coffee", sourceId: "s-cash" };
+
+  it("answers what the shared tool answers as the agent, connected with the agent's origin", async () => {
+    const chat = wire(await tool("addCashPaymentFromFile").invoke(args, CONFIG)) as Record<string, unknown>;
+    expect(chat.success).toBe(true);
+    const row = (await db.collection("transactions").doc(chat.transactionId as string).get()).data()!;
+    expect(row).toMatchObject({ sourceId: "s-cash", amount: -900, addedByHand: true, fileIds: ["f-coffee"] });
+    const record = await db.collection("fileConnections").doc(chat.connectionId as string).get();
+    expect(record.data()?.origin).toBe("agent");
+
+    await seed();
+    const parsed = tool("addCashPaymentFromFile").schema.parse(args);
+    const agent = wire(await handleTool(USER, "add_cash_payment_from_file", parsed, AGENT)) as Record<string, unknown>;
+    const strip = ({ transactionId: _t, connectionId: _c, ...rest }: Record<string, unknown>) => rest;
+    expect(strip(chat)).toEqual(strip(agent));
+  });
+
+  it("is refused on a File already connected, with MCP's message", async () => {
+    const { chat, mcp } = await both("addCashPaymentFromFile", { fileId: "f-amazon", sourceId: "s-cash" });
+    expect((chat as { error?: string }).error).toMatch(/already connected/);
+    expect(chat).toEqual(mcp);
   });
 });
 
@@ -934,6 +1002,8 @@ describe("guard: a chat tool with an MCP twin never touches the database itself"
       getPartner: { partnerId: "p-amazon" },
       updateTransaction: { transactionId: "t-client", description: "probe" },
       createSource: { name: "Probe", iban: "AT611904300234573201" },
+      addCashPayment: { sourceId: "s-cash", date: "2026-03-05", amount: -900, name: "Probe" },
+      addCashPaymentFromFile: { fileId: "f-coffee", sourceId: "s-cash" },
       assignPartnerToTransaction: { transactionId: "t-client", partnerId: "p-amazon" },
       assignPartnerToFile: { fileId: "f-coffee", partnerId: "p-amazon" },
       updatePartner: { partnerId: "p-amazon", website: "https://amazon.example" },

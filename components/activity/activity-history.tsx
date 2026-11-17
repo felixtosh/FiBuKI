@@ -28,6 +28,7 @@ import {
   AlertTriangle,
   CreditCard,
   Gavel,
+  Banknote,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -73,6 +74,8 @@ const TYPE_STYLE: Record<string, { icon: typeof History; color: string }> = {
   reconciled: { icon: CreditCard, color: "text-green-600" },
   reconciliation_suggested: { icon: CreditCard, color: "text-blue-400" },
   ruling_recorded: { icon: Gavel, color: "text-blue-500" },
+  cash_payment_added: { icon: Banknote, color: "text-green-600" },
+  cash_payment_corrected: { icon: PencilLine, color: "text-blue-500" },
   ruling_revoked: { icon: Gavel, color: "text-orange-500" },
 };
 

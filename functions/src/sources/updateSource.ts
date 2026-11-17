@@ -5,10 +5,11 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { buildSourcePartnerData, mergeSourcePartnerData } from "./sourcePartnerUtils";
+import { type AccountKind, CASH_BOX_CLEARED_FIELDS, refuseInvalidAccountKindFields } from "./accountKind";
 
 interface SourceUpdateData {
   name?: string;
-  accountKind?: "checking" | "savings" | "creditCard" | "other";
+  accountKind?: AccountKind;
   iban?: string | null;
   linkedSourceId?: string | null;
   cardLast4?: string | null;
@@ -63,10 +64,18 @@ export const updateSourceCallable = createCallable<
       throw new HttpsError("permission-denied", "Access denied");
     }
 
+    // A Cash Box (#787) takes a name and a currency only, and keeps no balance.
+    const storedKind = sourceSnap.data()!.accountKind;
+    refuseInvalidAccountKindFields(data, storedKind);
+    const becomesCashBox = data.accountKind === "cash" && storedKind !== "cash";
+
     // Build update object
     const updates: Record<string, unknown> = {
       updatedAt: FieldValue.serverTimestamp(),
     };
+    if (becomesCashBox) {
+      for (const field of CASH_BOX_CLEARED_FIELDS) updates[field] = null;
+    }
 
     if (data.name !== undefined) {
       updates.name = data.name.trim();

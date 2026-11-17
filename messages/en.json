@@ -417,6 +417,7 @@
       "download": "Download",
       "more": "More",
       "activityLog": "Activity log",
+      "addAsCashPayment": "Add as cash payment",
       "delete": "Delete",
       "restore": "Restore",
       "edit": "Edit",
@@ -808,7 +809,9 @@
     "confirmTitle": {
       "bulkUpdateTransactions": "Change {count, plural, one {# transaction} other {# transactions}}",
       "rollbackTransaction": "Restore an earlier version of this transaction",
-      "createSource": "Create the bank account “{name}”"
+      "createSource": "Create the bank account “{name}”",
+      "addCashPayment": "Add the cash payment “{name}”, {amount} on {date}",
+      "addCashPaymentFromFile": "Add the receipt as a cash payment, connected to it"
     },
     "rateUp": "Good answer",
     "rateDown": "Bad answer",
@@ -1258,6 +1261,8 @@
       "facts_corrected": "Data corrected",
       "facts_derived": "Data derived",
       "copy_marked": "Copy recorded",
+      "cash_payment_added": "Cash payment added",
+      "cash_payment_corrected": "Cash payment corrected",
       "copy_suggested": "Copy suggested",
       "receipt_linked": "Receipt linked",
       "receipt_unlinked": "Receipt link removed",
@@ -1315,6 +1320,54 @@
         "name": "A new Partner from the name printed on the document.",
         "file": "Taken from the connected Files."
       }
+    }
+  },
+  "cashPaymentEdit": {
+    "correct": "Correct",
+    "delete": "Delete",
+    "correctTitle": "Correct cash payment",
+    "correctDescription": "Fix a payment you typed in. Not possible once the UVA for its period is filed.",
+    "note": "Note (optional)",
+    "cancel": "Cancel",
+    "save": "Save",
+    "correctFailed": "The cash payment could not be corrected.",
+    "deleteTitle": "Delete this cash payment?",
+    "deleteDescription": "The payment is removed from your books. Only cash payments you added by hand can be deleted.",
+    "deleteWithFiles": "The payment is removed from your books. Its {count, plural, one {document stays and goes} other {# documents stay and go}} back to unmatched.",
+    "deleteConfirm": "Delete",
+    "deleteFailed": "The cash payment could not be deleted."
+  },
+  "sources": {
+    "cashBox": {
+      "kind": "Cash",
+      "kindLabel": "Account type",
+      "namePlaceholder": "e.g., Cash",
+      "hint": "A Cash Box has no bank behind it: no IBAN, no bank connection and no balance. Only a name and a currency.",
+      "addPayment": "Add cash payment",
+      "importCsv": "Import CSV"
+    },
+    "cashPayment": {
+      "title": "Add cash payment",
+      "description": "A payment made or taken in cash. It counts in the UVA and the export like a bank row.",
+      "direction": "Money in or out",
+      "moneyOut": "Money out",
+      "moneyIn": "Money in",
+      "date": "Date",
+      "amount": "Amount ({currency})",
+      "amountPlaceholder": "4,50",
+      "name": "What for",
+      "namePlaceholder": "e.g., Parking ticket",
+      "partner": "Partner (optional)",
+      "noPartner": "No partner, match it for me",
+      "cancel": "Cancel",
+      "save": "Add",
+      "failed": "The cash payment could not be added.",
+      "fromFileTitle": "Add as cash payment",
+      "fromFileDescription": "Filled in from the receipt. Check the figures: the payment is saved connected to this file.",
+      "cashBox": "Cash box",
+      "chooseCashBox": "Choose a cash box",
+      "noCashBox": "No cash box yet. Saving creates one named “{name}”.",
+      "defaultCashBoxName": "Cash"
     }
   }
 }

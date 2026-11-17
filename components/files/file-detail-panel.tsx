@@ -36,6 +36,7 @@ import {
   History,
   MoreHorizontal,
   ReceiptText,
+  Banknote,
 } from "lucide-react";
 import { TaxFile, TransactionSuggestion } from "@/types/file";
 import { UserPartner, GlobalPartner, PartnerSuggestion } from "@/types/partner";
@@ -47,6 +48,7 @@ import { PanelHeader, FieldRow } from "@/components/ui/detail-panel-primitives";
 import { FilePreview } from "./file-preview";
 import { FileExtractedInfo } from "./file-extracted-info";
 import { FileConnectionsList } from "./file-connections-list";
+import { useFileCashPayment } from "./file-cash-payment-action";
 import { ActivityLogOverlay } from "@/components/activity/activity-log-overlay";
 import { AutomationSummaryRow } from "@/components/activity/automation-summary-row";
 import {
@@ -200,6 +202,7 @@ function FileDetailPanelInner({
   const [isRetryingExtraction, setIsRetryingExtraction] = useState(false);
   const [isUpdatingExtractedFields, setIsUpdatingExtractedFields] = useState(false);
   const [isRematchingTransactions, setIsRematchingTransactions] = useState(false);
+  const cashPayment = useFileCashPayment(file);
 
   // Chat hook for agentic search (via workers)
   const { startFilePartnerSearch, startFileTransactionSearch, activeWandTargets, notifications } = useChat();
@@ -717,6 +720,14 @@ function FileDetailPanelInner({
               }
             />
 
+            {/* A cash receipt with no Transaction becomes a Cash Payment in one step (#789) */}
+            {cashPayment.offer === "promoted" ? (
+              <Button variant="outline" size="sm" className="w-full" onClick={cashPayment.open}>
+                <Banknote className="h-4 w-4 mr-2" />
+                {t("addAsCashPayment")}
+              </Button>
+            ) : null}
+
           </div>
         </ScrollArea>
 
@@ -752,6 +763,12 @@ function FileDetailPanelInner({
                   <DropdownMenuItem onSelect={() => setIsReceiptPickerOpen(true)}>
                     <ReceiptText />
                     {tReceipt("linkByHand")}
+                  </DropdownMenuItem>
+                ) : null}
+                {cashPayment.offer === "offered" ? (
+                  <DropdownMenuItem onSelect={cashPayment.open}>
+                    <Banknote />
+                    {t("addAsCashPayment")}
                   </DropdownMenuItem>
                 ) : null}
                 <DropdownMenuItem onSelect={() => setShowActivityLog(true)}>
@@ -791,6 +808,8 @@ function FileDetailPanelInner({
             <p className="text-xs text-destructive">{storedDownload.error}</p>
           )}
         </div>
+
+        {cashPayment.dialog}
 
         {showActivityLog && (
           <ActivityLogOverlay

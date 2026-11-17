@@ -90,6 +90,7 @@ import { toDateSafe } from "../utils/toDateSafe";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
+import type { AccountKind } from "../sources/accountKind";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
 import {
   CADENCE_DAYS,
@@ -232,6 +233,10 @@ export async function handleTool(
       return createSource(userId, args);
     case "delete_source":
       return deleteSource(userId, args);
+    case "add_cash_payment":
+      return addCashPaymentTool(userId, args, caller);
+    case "add_cash_payment_from_file":
+      return addCashPaymentFromFileTool(userId, args, caller);
 
     // Transactions
     case "list_transactions":
@@ -3161,11 +3166,66 @@ export async function createSource(userId: string, args: Record<string, unknown>
   const { createSourceInternal } = await import("../sources/createSource");
   return createSourceInternal(db, userId, {
     name: args.name as string,
-    accountKind: (args.accountKind as "bank_account" | "credit_card") || "bank_account",
+    accountKind: (args.accountKind as AccountKind | undefined) || "bank_account",
     iban: args.iban as string | undefined,
     currency: (args.currency as string) || "EUR",
     type: "manual",
   });
+}
+
+/**
+ * One Cash Payment by hand (#788), through the Cash Payment writer the web UI
+ * uses. Who added it is the caller's, never an argument's: an external client
+ * is `api`, the chat agent `ai`; both log the activity as `ai`.
+ */
+export async function addCashPaymentTool(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller = MCP_CALLER
+) {
+  const { addCashPayment, cashPaymentAuthorOf } = await import("../transactions/cashPayment");
+  const result = await addCashPayment(
+    db,
+    userId,
+    {
+      sourceId: args.sourceId as string,
+      date: args.date as string,
+      amount: args.amount as number,
+      name: args.name as string,
+      description: args.description as string | undefined,
+      partnerId: args.partnerId as string | undefined,
+    },
+    cashPaymentAuthorOf(caller)
+  );
+  return { success: true, ...result };
+}
+
+/**
+ * A Cash Payment from a File (#789), through the Cash Payment writer the web
+ * UI uses. Who added it, and so the File Connection's origin, is the
+ * caller's: an external client connects as `mcp`, the chat agent as `agent`.
+ */
+export async function addCashPaymentFromFileTool(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller = MCP_CALLER
+) {
+  const { addCashPaymentFromFile, cashPaymentAuthorOf } = await import("../transactions/cashPayment");
+  const result = await addCashPaymentFromFile(
+    db,
+    userId,
+    {
+      fileId: args.fileId as string,
+      sourceId: args.sourceId as string | undefined,
+      date: args.date as string | undefined,
+      amount: args.amount as number | undefined,
+      name: args.name as string | undefined,
+      description: args.description as string | undefined,
+      partnerId: args.partnerId as string | undefined,
+    },
+    cashPaymentAuthorOf(caller)
+  );
+  return { success: true, ...result };
 }
 
 export async function deleteSource(userId: string, args: Record<string, unknown>) {

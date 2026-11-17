@@ -127,7 +127,11 @@ export interface AutomationHistoryEntry {
     | "reconciled"
     | "reconciliation_suggested"
     | "ruling_recorded"
-    | "ruling_revoked";
+    | "ruling_revoked"
+    // #788: a Cash Payment the User (or an AI client for them) added by hand
+    | "cash_payment_added"
+    // #790: that Cash Payment corrected
+    | "cash_payment_corrected";
   /** When it ran */
   ranAt: Timestamp;
   /** Status of the run */
@@ -301,6 +305,12 @@ export interface Transaction {
 
   /** ID of the import job that created this transaction */
   importJobId: string | null;
+
+  /**
+   * A Cash Payment (#788): the User added this row by hand on a Cash Box. It
+   * has no import job, CSV row, original row or dedupe hash.
+   */
+  addedByHand?: boolean;
 
   /**
    * Row index in the original CSV (0-indexed, excluding header).

@@ -417,6 +417,7 @@
       "download": "Herunterladen",
       "more": "Mehr",
       "activityLog": "Aktivitätsprotokoll",
+      "addAsCashPayment": "Als Barzahlung eintragen",
       "delete": "Löschen",
       "restore": "Wiederherstellen",
       "edit": "Bearbeiten",
@@ -808,7 +809,9 @@
     "confirmTitle": {
       "bulkUpdateTransactions": "{count, plural, one {# Transaktion} other {# Transaktionen}} ändern",
       "rollbackTransaction": "Frühere Version dieser Transaktion wiederherstellen",
-      "createSource": "Bankkonto „{name}“ anlegen"
+      "createSource": "Bankkonto „{name}“ anlegen",
+      "addCashPayment": "Barzahlung „{name}“ eintragen, {amount} am {date}",
+      "addCashPaymentFromFile": "Beleg als Barzahlung eintragen und verbinden"
     },
     "rateUp": "Gute Antwort",
     "rateDown": "Schlechte Antwort",
@@ -1258,6 +1261,8 @@
       "facts_corrected": "Daten korrigiert",
       "facts_derived": "Daten abgeleitet",
       "copy_marked": "Kopie erfasst",
+      "cash_payment_added": "Barzahlung eingetragen",
+      "cash_payment_corrected": "Barzahlung korrigiert",
       "copy_suggested": "Kopie vorgeschlagen",
       "receipt_linked": "Zahlungsbeleg verknüpft",
       "receipt_unlinked": "Zahlungsbeleg-Verknüpfung entfernt",
@@ -1315,6 +1320,54 @@
         "name": "Ein neuer Partner aus dem Namen auf dem Beleg.",
         "file": "Von den verknüpften Belegen übernommen."
       }
+    }
+  },
+  "cashPaymentEdit": {
+    "correct": "Korrigieren",
+    "delete": "Löschen",
+    "correctTitle": "Barzahlung korrigieren",
+    "correctDescription": "Eine selbst eingetragene Zahlung berichtigen. Nicht mehr möglich, sobald die UVA für ihren Zeitraum eingereicht ist.",
+    "note": "Notiz (optional)",
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "correctFailed": "Die Barzahlung konnte nicht korrigiert werden.",
+    "deleteTitle": "Diese Barzahlung löschen?",
+    "deleteDescription": "Die Zahlung wird aus deinen Büchern entfernt. Nur selbst eingetragene Barzahlungen lassen sich löschen.",
+    "deleteWithFiles": "Die Zahlung wird aus deinen Büchern entfernt. {count, plural, one {Ihr Beleg bleibt erhalten und ist} other {Ihre # Belege bleiben erhalten und sind}} danach wieder nicht zugeordnet.",
+    "deleteConfirm": "Löschen",
+    "deleteFailed": "Die Barzahlung konnte nicht gelöscht werden."
+  },
+  "sources": {
+    "cashBox": {
+      "kind": "Kassa",
+      "kindLabel": "Kontoart",
+      "namePlaceholder": "z. B. Kassa",
+      "hint": "Eine Kassa hat keine Bank dahinter: keine IBAN, keine Bankverbindung und keinen Kontostand. Nur einen Namen und eine Währung.",
+      "addPayment": "Barzahlung eintragen",
+      "importCsv": "CSV importieren"
+    },
+    "cashPayment": {
+      "title": "Barzahlung eintragen",
+      "description": "Eine bar bezahlte oder bar erhaltene Zahlung. Sie zählt in der UVA und im Export wie eine Bankbuchung.",
+      "direction": "Eingang oder Ausgang",
+      "moneyOut": "Ausgabe",
+      "moneyIn": "Einnahme",
+      "date": "Datum",
+      "amount": "Betrag ({currency})",
+      "amountPlaceholder": "4,50",
+      "name": "Wofür",
+      "namePlaceholder": "z. B. Parkschein",
+      "partner": "Partner (optional)",
+      "noPartner": "Kein Partner, automatisch zuordnen",
+      "cancel": "Abbrechen",
+      "save": "Eintragen",
+      "failed": "Die Barzahlung konnte nicht eingetragen werden.",
+      "fromFileTitle": "Als Barzahlung eintragen",
+      "fromFileDescription": "Aus dem Beleg übernommen. Prüfe die Werte: Die Zahlung wird mit dieser Datei verbunden gespeichert.",
+      "cashBox": "Kassa",
+      "chooseCashBox": "Kassa wählen",
+      "noCashBox": "Noch keine Kassa. Beim Speichern wird eine namens „{name}“ angelegt.",
+      "defaultCashBoxName": "Kassa"
     }
   }
 }
