@@ -109,11 +109,22 @@ which FiBuKI does not keep)
 **Transaction**:
 One booked line from a Bank Account: date, amount in cents with a normalised sign
 (negative = money out), booking text, counterparty text. The bank's words, kept as
-imported.
+imported; a Cash Payment's text is the User's own.
 _Deutsch_: Transaktion
 _Avoid_: booking, entry, payment, line item
 _Avoid (de)_: Umsatz (turnover, to a Tax Advisor), Buchung (the Tax Advisor's act),
 Zahlung
+
+**Cash Payment**:
+A Transaction on a Cash Box that the User added by hand, one at a time, in their own
+words rather than a bank's. It has no Import behind it and is never deduplicated, so two
+identical payments on one day are two Transactions. Everywhere else it is a Transaction
+like any other: the matcher, the UVA and the BMD export read it as they read a bank row.
+A row imported into a Cash Box from a CSV is not a Cash Payment.
+_Deutsch_: Barzahlung
+_Avoid_: cash transaction, manual transaction, cash entry
+_Avoid (de)_: Kassabuchung, Barumsatz (cash takings from sales, the Registrierkasse's
+subject)
 
 **Import**:
 One batch of Transactions taken in at once, from a CSV or a connector, retaining the raw

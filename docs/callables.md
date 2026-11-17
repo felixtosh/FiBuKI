@@ -67,6 +67,7 @@ export function useCategories() {
 - `acceptReceiptOnlyCallable` - Record or revoke an Accepted Receipt ruling on a receipt-only transaction (#165)
 - `acceptPartialPaymentCallable` - Record or revoke an Accepted Partial Payment ruling on a tipped transaction the bank line does not cover (#554)
 - `rollbackTransactionCallable` - Restore the values one history entry says an edit replaced, through `update_transaction`'s rules (only the fields an edit writes; #616)
+- `addCashPaymentCallable` (`addCashPayment`) - Add one Cash Payment to a Cash Box by hand (#788). The Cash Payment writer (`functions/src/transactions/cashPayment.ts`) is the only code that creates one, MCP's `add_cash_payment` included: it refuses a Bank Account that is not a Cash Box and a Partner that is not the User's, takes a `YYYY-MM-DD` day and signed integer cents, stores no import job, CSV row, original row or dedupe hash (`addedByHand: true`), counts the row against the transaction quota, logs who added it from the caller (the UI `manual`, MCP and the chat `ai`), then runs Partner matching and the matcher's File suggestions on it
 
 **AI tools:**
 - `runToolCallable` (`runTool`) - Run one tool from `functions/src/tools/definitions.ts` as the session's User, through the handler MCP uses (#616)
