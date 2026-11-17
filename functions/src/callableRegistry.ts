@@ -22,6 +22,7 @@ export const CALLABLE_NAMES = [
   "activatePrioritySupportAddon",
   "addAICredits",
   "addCashPayment",
+  "addCashPaymentFromFile",
   "adminDeleteUser",
   "adminResetMfa",
   "aggregateGlobalInsights",

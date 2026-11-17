@@ -234,6 +234,8 @@ export async function handleTool(
       return deleteSource(userId, args);
     case "add_cash_payment":
       return addCashPaymentTool(userId, args, caller);
+    case "add_cash_payment_from_file":
+      return addCashPaymentFromFileTool(userId, args, caller);
 
     // Transactions
     case "list_transactions":
@@ -3189,6 +3191,34 @@ export async function addCashPaymentTool(
       date: args.date as string,
       amount: args.amount as number,
       name: args.name as string,
+      description: args.description as string | undefined,
+      partnerId: args.partnerId as string | undefined,
+    },
+    caller.kind === "agent" ? "ai" : "api"
+  );
+  return { success: true, ...result };
+}
+
+/**
+ * A Cash Payment from a File (#789), through the Cash Payment writer the web
+ * UI uses. Who added it, and so the File Connection's origin, is the
+ * caller's: an external client connects as `mcp`, the chat agent as `agent`.
+ */
+export async function addCashPaymentFromFileTool(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller = MCP_CALLER
+) {
+  const { addCashPaymentFromFile } = await import("../transactions/cashPayment");
+  const result = await addCashPaymentFromFile(
+    db,
+    userId,
+    {
+      fileId: args.fileId as string,
+      sourceId: args.sourceId as string | undefined,
+      date: args.date as string | undefined,
+      amount: args.amount as number | undefined,
+      name: args.name as string | undefined,
       description: args.description as string | undefined,
       partnerId: args.partnerId as string | undefined,
     },

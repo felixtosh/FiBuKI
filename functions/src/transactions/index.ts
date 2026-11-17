@@ -12,3 +12,4 @@ export { bulkUpdateTransactionsCallable } from "./bulkUpdateTransactions";
 export { deleteTransactionsBySourceCallable } from "./deleteTransactionsBySource";
 export { rollbackTransactionCallable } from "./rollbackTransaction";
 export { addCashPaymentCallable } from "./cashPayment";
+export { addCashPaymentFromFileCallable } from "./cashPayment";

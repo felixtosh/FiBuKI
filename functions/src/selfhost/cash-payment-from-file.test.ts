@@ -20,6 +20,9 @@ import { __resetTriggerShim, drainTriggers } from "./trigger-shim";
 import { createSourceCallable } from "../sources/createSource";
 import { addCashPaymentFromFileCallable } from "../transactions/cashPayment";
 import { connectionDocId } from "../fileConnections/rules";
+import { handleTool } from "../tools/handlers";
+import { TOOL_DEFINITIONS } from "../tools/definitions";
+import { agentCaller } from "../tools/caller";
 
 const db = getFirestore();
 const USER = "cash-file-user";
@@ -187,6 +190,57 @@ describe("adding a Cash Payment from a File in the web UI", () => {
       code: "invalid-argument",
       message: expect.stringMatching(/Kassa Wien.*Kassa Graz|Kassa Graz.*Kassa Wien/),
     });
+    expect((await db.collection("transactions").get()).size).toBe(0);
+  });
+});
+
+describe("adding a Cash Payment from a File over MCP add_cash_payment_from_file", () => {
+  it("is defined as a write that takes the File, and optionally the Cash Box and overrides", () => {
+    const def = TOOL_DEFINITIONS.find((d) => d.name === "add_cash_payment_from_file")!;
+    expect(def.annotation).toBe("write");
+    expect(def.inputSchema.required).toEqual(["fileId"]);
+    expect(Object.keys(def.inputSchema.properties).sort()).toEqual(
+      ["amount", "date", "description", "fileId", "name", "partnerId", "sourceId"].sort()
+    );
+  });
+
+  it("connects as MCP and logs the actor ai on both sides, whatever an argument claims", async () => {
+    await cashBox();
+    const fileId = await receipt();
+
+    const res = (await handleTool(USER, "add_cash_payment_from_file", { fileId, actor: "manual", origin: "manual" })) as {
+      success: boolean;
+      transactionId: string;
+    };
+    expect(res.success).toBe(true);
+    await drainTriggers();
+
+    const row = await stored("transactions", res.transactionId);
+    expect(row).toMatchObject({ amount: -900, addedByHand: true, fileIds: [fileId] });
+    const record = await db.collection("fileConnections").doc(connectionDocId(fileId, res.transactionId)).get();
+    expect(record.data()?.origin).toBe("mcp");
+    const log = row.automationHistory as Array<Record<string, unknown>>;
+    expect(log.filter((e) => e.type === "cash_payment_added" || e.type === "file_connected").map((e) => e.actor)).toEqual([
+      "ai",
+      "ai",
+    ]);
+  });
+
+  it("connects as the chat agent when the server's caller is the agent", async () => {
+    await cashBox();
+    const fileId = await receipt();
+
+    const res = (await handleTool(USER, "add_cash_payment_from_file", { fileId }, agentCaller(null))) as {
+      transactionId: string;
+    };
+    const record = await db.collection("fileConnections").doc(connectionDocId(fileId, res.transactionId)).get();
+    expect(record.data()?.origin).toBe("agent");
+  });
+
+  it("is refused on a File already connected, with the same message as the UI", async () => {
+    await cashBox();
+    const fileId = await receipt("f-done", { transactionIds: ["t-bank"] });
+    await expect(handleTool(USER, "add_cash_payment_from_file", { fileId })).rejects.toThrow(/already connected/);
     expect((await db.collection("transactions").get()).size).toBe(0);
   });
 });

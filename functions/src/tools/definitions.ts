@@ -130,6 +130,32 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["sourceId", "date", "amount", "name"],
     },
   },
+  {
+    name: "add_cash_payment_from_file",
+    annotation: "write",
+    description:
+      "Turn a File the user paid in cash (a receipt with no Transaction) into a Cash Payment on a Cash Box, " +
+      "connected to that File in the same write. The File's day, gross amount (money out, or money in for an " +
+      "outgoing invoice), name and Partner are the defaults; any value sent wins. Without sourceId the user's " +
+      "only Cash Box is used; with none or several it is refused, saying which. Refused on a File already " +
+      "connected to a Transaction (one receipt never becomes two payments).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The File's id; it must have no Transaction yet" },
+        sourceId: { type: "string", description: "The Cash Box's id (optional when the user has exactly one)" },
+        date: { type: "string", description: "Override the File's day, YYYY-MM-DD" },
+        amount: {
+          type: "integer",
+          description: "Override the amount: integer cents with its sign, negative for money out",
+        },
+        name: { type: "string", description: "Override what the payment was for" },
+        description: { type: "string", description: "A longer note (optional)" },
+        partnerId: { type: "string", description: "Override the Partner with one of the user's (optional)" },
+      },
+      required: ["fileId"],
+    },
+  },
 
   // =========================================================================
   // Transactions
