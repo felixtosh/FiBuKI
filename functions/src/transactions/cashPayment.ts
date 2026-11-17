@@ -123,7 +123,7 @@ export function cashPaymentAmount(value: unknown): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value === 0) {
     throw new HttpsError(
       "invalid-argument",
-      "amount must be a non-zero whole number of cents, negative for money out (e.g. -450 for 4,50 paid)"
+      "amount must be a non-zero whole number of cents, negative for money out (e.g. -450 for 4.50 paid)"
     );
   }
   return value;
@@ -142,10 +142,13 @@ function cashPaymentDescription(value: unknown): string | null {
   return value.trim() || null;
 }
 
-/** "4,50 out" / "20,00 in", for the activity log. */
+/**
+ * "4.50 EUR out" / "20.00 EUR in", for the activity log: the figure as every
+ * other activity entry and server message writes cents, `(cents / 100).toFixed(2)`
+ * and the currency, then the direction in the log's own language.
+ */
 function amountLine(amount: number, currency: string): string {
-  const euros = (Math.abs(amount) / 100).toFixed(2).replace(".", ",");
-  return `${euros} ${currency} ${amount < 0 ? "out" : "in"}`;
+  return `${(Math.abs(amount) / 100).toFixed(2)} ${currency} ${amount < 0 ? "out" : "in"}`;
 }
 
 export interface AddCashPaymentOptions {

@@ -106,6 +106,8 @@ describe("adding a Cash Payment by hand in the web UI", () => {
     const added = log.filter((e) => e.type === "cash_payment_added");
     expect(added).toHaveLength(1);
     expect(added[0]).toMatchObject({ actor: "manual", status: "completed", level: "decision" });
+    // Amounts read as every other activity entry writes them: a point, the currency, then the direction.
+    expect(added[0].summary).toBe("Cash Payment added by hand: 4.50 EUR out");
   });
 
   it("takes a Partner the User owns, as the User's own choice", async () => {

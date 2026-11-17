@@ -136,8 +136,8 @@ describe("correcting a Cash Payment the User added by hand", () => {
     const corrected = log.filter((e) => e.type === "cash_payment_corrected");
     expect(corrected).toHaveLength(1);
     expect(corrected[0]).toMatchObject({ actor: "manual", status: "completed" });
-    expect(corrected[0].summary).toContain("4,50 EUR out");
-    expect(corrected[0].summary).toContain("5,40 EUR out");
+    expect(corrected[0].summary).toContain("4.50 EUR out");
+    expect(corrected[0].summary).toContain("5.40 EUR out");
     expect(corrected[0].summary).toContain("Parkschein");
   });
 
