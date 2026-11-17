@@ -21,6 +21,13 @@ import { addCashPaymentCallable } from "../transactions/cashPayment";
 import { handleTool } from "../tools/handlers";
 import { TOOL_DEFINITIONS } from "../tools/definitions";
 import { agentCaller } from "../tools/caller";
+import { connectFileToTransactionCallable } from "../files/connectFileToTransaction";
+import { calculateUvaCallable } from "../reports/calculateUvaCallable";
+import { requestBmdExportCallable } from "../bmd-export/requestBmdExport";
+import "../bmd-export/processBmdExportQueue";
+import * as unzipper from "unzipper";
+import { getStorage } from "./storage-shim";
+import { waitFor } from "./test-helpers";
 
 const db = getFirestore();
 const USER = "cash-user";
@@ -319,6 +326,60 @@ describe("after a Cash Payment is added: the same matching an imported row gets"
       run: (req: unknown) => Promise<{ matches: Array<{ transactionId: string }> }>;
     }).run({ data: { fileId: "f-later" }, auth: AUTH })) as { matches: Array<{ transactionId: string }> };
     expect(res.matches[0]?.transactionId).toBe(transactionId);
+  });
+});
+
+describe("a Cash Payment counts like a bank row: the UVA and the BMD export agree on it", () => {
+  /** 12,00 paid in cash in March 2026, its invoice File (20% VAT, 2,00) connected by the User. */
+  async function cashPaymentWithInvoice() {
+    const sourceId = await cashBox();
+    const { transactionId } = await addByHand({ sourceId, date: "2026-03-15", amount: -1200, name: "BUEROMARKT" });
+    await db.collection("files").doc("f-invoice").set(
+      cafeReceipt({
+        fileName: "bueromarkt-rechnung.pdf",
+        extractedAmount: 1200,
+        extractedVatAmount: 200,
+        extractedVatPercent: 20,
+        extractedDate: day("2026-03-15"),
+        extractedPartner: "Bueromarkt",
+      })
+    );
+    await connectFileToTransactionCallable.run({
+      data: { fileId: "f-invoice", transactionId },
+      auth: AUTH,
+    } as never);
+    await drainTriggers();
+    return transactionId;
+  }
+
+  it("the UVA for its quarter claims its input VAT", async () => {
+    await cashPaymentWithInvoice();
+    const { result } = (await calculateUvaCallable.run({
+      data: { period: { year: 2026, period: 1, type: "quarterly" } },
+      auth: AUTH,
+    } as never)) as { result: { totalInputVat: number } };
+    expect(result.totalInputVat).toBe(200);
+  });
+
+  it("the BMD export books the row", async () => {
+    await cashPaymentWithInvoice();
+    const res = (await requestBmdExportCallable.run({
+      data: { dateFrom: "2026-01-01", dateTo: "2026-12-31", onlyWithFiles: true, includeFiles: false },
+      auth: AUTH,
+    } as never)) as { exportId: string };
+    const exportRef = db.collection("bmdExports").doc(res.exportId);
+    await waitFor(async () => ["completed", "failed"].includes((await exportRef.get()).data()!.status));
+    const run = (await exportRef.get()).data()!;
+    expect(run.status).toBe("completed");
+
+    const [zip] = await getStorage().bucket().file(run.storagePath).download();
+    const dir = await unzipper.Open.buffer(zip);
+    const buchungen = (await dir.files.find((f) => f.path === "buchungen.csv")!.buffer()).toString("utf8");
+    const rows = buchungen.split("\n").slice(1).filter(Boolean);
+    expect(rows).toHaveLength(1);
+    const cols = rows[0].split(";");
+    // betrag 12,00 gross, steuer 2,00 at 20%
+    expect([cols[6], cols[8], cols[9]]).toEqual(["12,00", "2,00", "20"]);
   });
 });
 
