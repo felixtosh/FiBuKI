@@ -34,9 +34,23 @@ type Db = FirebaseFirestore.Firestore;
  */
 export type CashPaymentAuthor = "manual" | "api" | "ai";
 
-/** The activity log's actor: the User, or an AI client on the User's behalf. */
-function actorOf(author: CashPaymentAuthor): ActivityActor {
-  return author === "manual" ? "manual" : "ai";
+/**
+ * What each author is called where a Cash Payment is recorded: the activity
+ * log's actor (the User, or an AI client on the User's behalf), the File
+ * Connection writer's origin, and the words of an activity summary.
+ */
+const AUTHORS: Record<
+  CashPaymentAuthor,
+  { actor: ActivityActor; connectionOrigin: "manual" | "mcp" | "agent"; by: string }
+> = {
+  manual: { actor: "manual", connectionOrigin: "manual", by: "by hand" },
+  api: { actor: "ai", connectionOrigin: "mcp", by: "by an AI client" },
+  ai: { actor: "ai", connectionOrigin: "agent", by: "by an AI client" },
+};
+
+/** The author a tool call records: the chat agent is `ai`, any other caller (MCP, the REST API) `api`. */
+export function cashPaymentAuthorOf(caller: { kind: string }): CashPaymentAuthor {
+  return caller.kind === "agent" ? "ai" : "api";
 }
 
 export interface CashPaymentInput {
@@ -151,6 +165,73 @@ function amountLine(amount: number, currency: string): string {
   return `${(Math.abs(amount) / 100).toFixed(2)} ${currency} ${amount < 0 ? "out" : "in"}`;
 }
 
+type Snapshot = FirebaseFirestore.DocumentSnapshot;
+
+interface CashPaymentRowInput {
+  userId: string;
+  /** The Cash Box; its currency is the row's. */
+  source: Snapshot;
+  date: Timestamp;
+  amount: number;
+  name: string;
+  description: string | null;
+  partner: Snapshot | null;
+  author: CashPaymentAuthor;
+  quotaExceeded: boolean;
+  /** The File the row is added from, named in the activity entry. */
+  fromFile?: { id: string; name: string };
+}
+
+/**
+ * The stored Cash Payment, whichever path adds it: what the User typed (or
+ * the File said), marked `addedByHand`, with none of an import's bookkeeping,
+ * and its one `cash_payment_added` activity entry.
+ */
+function cashPaymentRow(input: CashPaymentRowInput): Record<string, unknown> {
+  const { userId, source, date, amount, name, description, partner, author, quotaExceeded, fromFile } = input;
+  const currency = (source.data()?.currency as string | undefined) ?? "EUR";
+  const partnerName = (partner?.data()?.name as string | undefined) ?? null;
+  const now = Timestamp.now();
+  return {
+    userId,
+    sourceId: source.id,
+    date,
+    amount,
+    currency,
+    name,
+    description,
+    partner: null,
+    reference: null,
+    partnerIban: null,
+    addedByHand: true,
+    fileIds: [],
+    isComplete: false,
+    partnerId: partner ? partner.id : null,
+    partnerType: partner ? "user" : null,
+    partnerMatchConfidence: partner ? 100 : null,
+    partnerMatchedBy: partner ? author : null,
+    noReceiptCategoryId: null,
+    ...(quotaExceeded ? { quotaExceeded: true } : {}),
+    automationHistory: [
+      activityEntry(
+        {
+          type: "cash_payment_added",
+          actor: AUTHORS[author].actor,
+          summary:
+            `Cash Payment added ${fromFile ? `from File "${fromFile.name}" ` : ""}${AUTHORS[author].by}: ` +
+            `${amountLine(amount, currency)}${partnerName ? `, ${partnerName}` : ""}`,
+          partnerName,
+          forPartnerId: partner?.id ?? null,
+          ...(fromFile ? { fileId: fromFile.id, fileName: fromFile.name } : {}),
+        },
+        now
+      ),
+    ],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 export interface AddCashPaymentOptions {
   /** Admins are never over quota, as in an import. */
   isAdmin?: boolean;
@@ -177,51 +258,14 @@ export async function addCashPayment(
     input?.partnerId === undefined || input?.partnerId === null
       ? null
       : await loadPartner(db, userId, input.partnerId);
-  const currency = (source.data()?.currency as string | undefined) ?? "EUR";
 
   // Soft limit, as in an import: the row is stored, flagged when over.
   const quota = await checkTransactionQuota(userId, 1, options.isAdmin === true);
 
-  const partnerName = (partner?.data()?.name as string | undefined) ?? null;
-  const now = Timestamp.now();
   const ref = db.collection("transactions").doc();
-  await ref.set({
-    userId,
-    sourceId: source.id,
-    date,
-    amount,
-    currency,
-    name,
-    description,
-    partner: null,
-    reference: null,
-    partnerIban: null,
-    addedByHand: true,
-    fileIds: [],
-    isComplete: false,
-    partnerId: partner ? partner.id : null,
-    partnerType: partner ? "user" : null,
-    partnerMatchConfidence: partner ? 100 : null,
-    partnerMatchedBy: partner ? author : null,
-    noReceiptCategoryId: null,
-    ...(quota.allowed ? {} : { quotaExceeded: true }),
-    automationHistory: [
-      activityEntry(
-        {
-          type: "cash_payment_added",
-          actor: actorOf(author),
-          summary:
-            `Cash Payment added by ${author === "manual" ? "hand" : "an AI client"}: ` +
-            `${amountLine(amount, currency)}${partnerName ? `, ${partnerName}` : ""}`,
-          partnerName,
-          forPartnerId: partner?.id ?? null,
-        },
-        now
-      ),
-    ],
-    createdAt: now,
-    updatedAt: now,
-  });
+  await ref.set(
+    cashPaymentRow({ userId, source, date, amount, name, description, partner, author, quotaExceeded: !quota.allowed })
+  );
 
   if (quota.allowed) await incrementTransactionCount(userId, 1);
 
@@ -328,11 +372,6 @@ export interface AddCashPaymentFromFileResult extends AddCashPaymentResult {
   connectionId: string;
 }
 
-/** Who connected the File, as the File Connection writer names it. */
-function connectionOriginOf(author: CashPaymentAuthor): "manual" | "mcp" | "agent" {
-  return author === "manual" ? "manual" : author === "api" ? "mcp" : "agent";
-}
-
 /**
  * The User's File, unconnected. Another User's File reads as missing; a File
  * already on a Transaction is refused (the writer checks again inside its
@@ -409,15 +448,12 @@ export async function addCashPaymentFromFile(
           throw err;
         })
       : null;
-  const currency = (source.data()?.currency as string | undefined) ?? "EUR";
 
   // Soft limit, as in an import. Over it, only the User's own click may still
   // connect the File (the writer's rule), so an AI client is refused whole.
   const quota = await checkTransactionQuota(userId, 1, options.isAdmin === true);
 
-  const partnerName = (partner?.data()?.name as string | undefined) ?? null;
   const fileName = (fileData.fileName as string | undefined) ?? file.id;
-  const now = Timestamp.now();
   const ref = db.collection("transactions").doc();
   const outcome = await connectFileToNewTransaction(
     db,
@@ -426,48 +462,21 @@ export async function addCashPaymentFromFile(
       fileId: file.id,
       transaction: {
         ref,
-        data: {
+        data: cashPaymentRow({
           userId,
-          sourceId: source.id,
+          source,
           date,
           amount,
-          currency,
           name,
           description,
-          partner: null,
-          reference: null,
-          partnerIban: null,
-          addedByHand: true,
-          fileIds: [],
-          isComplete: false,
-          partnerId: partner ? partner.id : null,
-          partnerType: partner ? "user" : null,
-          partnerMatchConfidence: partner ? 100 : null,
-          partnerMatchedBy: partner ? author : null,
-          noReceiptCategoryId: null,
-          ...(quota.allowed ? {} : { quotaExceeded: true }),
-          automationHistory: [
-            activityEntry(
-              {
-                type: "cash_payment_added",
-                actor: actorOf(author),
-                summary:
-                  `Cash Payment added from File "${fileName}" by ${author === "manual" ? "hand" : "an AI client"}: ` +
-                  `${amountLine(amount, currency)}${partnerName ? `, ${partnerName}` : ""}`,
-                partnerName,
-                forPartnerId: partner?.id ?? null,
-                fileId: file.id,
-                fileName,
-              },
-              now
-            ),
-          ],
-          createdAt: now,
-          updatedAt: now,
-        },
+          partner,
+          author,
+          quotaExceeded: !quota.allowed,
+          fromFile: { id: file.id, name: fileName },
+        }),
       },
     },
-    { origin: connectionOriginOf(author), onlyUnconnectedFile: true }
+    { origin: AUTHORS[author].connectionOrigin, onlyUnconnectedFile: true }
   );
 
   if (quota.allowed) await incrementTransactionCount(userId, 1);
@@ -634,8 +643,8 @@ export async function correctCashPayment(
       activityEntry(
         {
           type: "cash_payment_corrected",
-          actor: actorOf(author),
-          summary: `Cash Payment corrected by ${author === "manual" ? "hand" : "an AI client"}: ${changes.join(", ")}`,
+          actor: AUTHORS[author].actor,
+          summary: `Cash Payment corrected ${AUTHORS[author].by}: ${changes.join(", ")}`,
         },
         now
       )
@@ -682,7 +691,7 @@ export async function deleteCashPayment(
   const { detachTransactions } = await import("../fileConnections/writer");
   const { filesUpdated } = await detachTransactions(db, userId, [{ id: row.id, data: row.data()! }], {
     why: "by the User, a Cash Payment added by hand",
-    actor: actorOf(author),
+    actor: AUTHORS[author].actor,
   });
   await row.ref.delete();
   return { deleted: true, filesDisconnected: filesUpdated };

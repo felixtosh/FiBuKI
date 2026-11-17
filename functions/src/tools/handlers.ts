@@ -3183,7 +3183,7 @@ export async function addCashPaymentTool(
   args: Record<string, unknown>,
   caller: ToolCaller = MCP_CALLER
 ) {
-  const { addCashPayment } = await import("../transactions/cashPayment");
+  const { addCashPayment, cashPaymentAuthorOf } = await import("../transactions/cashPayment");
   const result = await addCashPayment(
     db,
     userId,
@@ -3195,7 +3195,7 @@ export async function addCashPaymentTool(
       description: args.description as string | undefined,
       partnerId: args.partnerId as string | undefined,
     },
-    caller.kind === "agent" ? "ai" : "api"
+    cashPaymentAuthorOf(caller)
   );
   return { success: true, ...result };
 }
@@ -3210,7 +3210,7 @@ export async function addCashPaymentFromFileTool(
   args: Record<string, unknown>,
   caller: ToolCaller = MCP_CALLER
 ) {
-  const { addCashPaymentFromFile } = await import("../transactions/cashPayment");
+  const { addCashPaymentFromFile, cashPaymentAuthorOf } = await import("../transactions/cashPayment");
   const result = await addCashPaymentFromFile(
     db,
     userId,
@@ -3223,7 +3223,7 @@ export async function addCashPaymentFromFileTool(
       description: args.description as string | undefined,
       partnerId: args.partnerId as string | undefined,
     },
-    caller.kind === "agent" ? "ai" : "api"
+    cashPaymentAuthorOf(caller)
   );
   return { success: true, ...result };
 }
