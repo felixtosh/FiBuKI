@@ -177,6 +177,7 @@ export {
   acceptReceiptOnlyCallable as acceptReceiptOnly,
   acceptPartialPaymentCallable as acceptPartialPayment,
   rollbackTransactionCallable as rollbackTransaction,
+  addCashPaymentCallable as addCashPayment,
 } from "./transactions";
 
 // Invoicing operations
