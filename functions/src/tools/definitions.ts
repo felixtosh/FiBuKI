@@ -106,6 +106,30 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["sourceId", "confirm"],
     },
   },
+  {
+    name: "add_cash_payment",
+    annotation: "write",
+    description:
+      "Add one Cash Payment to a Cash Box (a Bank Account with accountKind cash): a payment the user made " +
+      "or took in cash, which no bank statement will carry. Refused on a Bank Account that is not a Cash Box. " +
+      "Two identical payments on one day are both kept, so do not add the same payment twice. Without a " +
+      "partnerId, Partner matching runs on it; the matcher proposes the user's unconnected Files for it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sourceId: { type: "string", description: "The Cash Box's id (list_sources shows accountKind cash)" },
+        date: { type: "string", description: "The day of the payment, YYYY-MM-DD" },
+        amount: {
+          type: "integer",
+          description: "Amount in integer cents with its sign: negative for money out (-450 is 4,50 paid), positive for money in",
+        },
+        name: { type: "string", description: "What the payment was for, in the user's own words" },
+        description: { type: "string", description: "A longer note (optional)" },
+        partnerId: { type: "string", description: "The user's Partner for the payment (optional)" },
+      },
+      required: ["sourceId", "date", "amount", "name"],
+    },
+  },
 
   // =========================================================================
   // Transactions

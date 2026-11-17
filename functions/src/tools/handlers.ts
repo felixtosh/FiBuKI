@@ -232,6 +232,8 @@ export async function handleTool(
       return createSource(userId, args);
     case "delete_source":
       return deleteSource(userId, args);
+    case "add_cash_payment":
+      return addCashPaymentTool(userId, args, caller);
 
     // Transactions
     case "list_transactions":
@@ -3166,6 +3168,33 @@ export async function createSource(userId: string, args: Record<string, unknown>
     currency: (args.currency as string) || "EUR",
     type: "manual",
   });
+}
+
+/**
+ * One Cash Payment by hand (#788), through the Cash Payment writer the web UI
+ * uses. Who added it is the caller's, never an argument's: an external client
+ * is `api`, the chat agent `ai`; both log the activity as `ai`.
+ */
+export async function addCashPaymentTool(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller = MCP_CALLER
+) {
+  const { addCashPayment } = await import("../transactions/cashPayment");
+  const result = await addCashPayment(
+    db,
+    userId,
+    {
+      sourceId: args.sourceId as string,
+      date: args.date as string,
+      amount: args.amount as number,
+      name: args.name as string,
+      description: args.description as string | undefined,
+      partnerId: args.partnerId as string | undefined,
+    },
+    caller.kind === "agent" ? "ai" : "api"
+  );
+  return { success: true, ...result };
 }
 
 export async function deleteSource(userId: string, args: Record<string, unknown>) {

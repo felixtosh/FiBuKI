@@ -18,6 +18,9 @@ import { __resetTriggerShim, drainTriggers } from "./trigger-shim";
 // REAL application code, unmodified:
 import { createSourceCallable } from "../sources/createSource";
 import { addCashPaymentCallable } from "../transactions/cashPayment";
+import { handleTool } from "../tools/handlers";
+import { TOOL_DEFINITIONS } from "../tools/definitions";
+import { agentCaller } from "../tools/caller";
 
 const db = getFirestore();
 const USER = "cash-user";
@@ -163,6 +166,82 @@ describe("adding a Cash Payment by hand in the web UI", () => {
     expect((await db.collection("subscriptions").doc(USER).get()).data()!.transactionCountCurrentMonth).toBe(
       PLANS.free.transactionLimit
     );
+  });
+});
+
+describe("adding a Cash Payment over MCP add_cash_payment", () => {
+  it("is defined as a write that takes the Cash Box, the day, signed cents and the text", () => {
+    const def = TOOL_DEFINITIONS.find((d) => d.name === "add_cash_payment")!;
+    expect(def.annotation).toBe("write");
+    expect(def.inputSchema.required).toEqual(["sourceId", "date", "amount", "name"]);
+    expect(Object.keys(def.inputSchema.properties).sort()).toEqual(
+      ["amount", "date", "description", "name", "partnerId", "sourceId"].sort()
+    );
+  });
+
+  it("stores the row as the UI does, with the activity actor ai and an API Partner assignment", async () => {
+    const sourceId = await cashBox();
+    await db.collection("partners").doc("p-cafe").set({ userId: USER, name: "Cafe Central", aliases: [], ibans: [] });
+
+    const res = (await handleTool(USER, "add_cash_payment", {
+      sourceId,
+      date: "2026-07-06",
+      amount: -900,
+      name: "Kaffee mit Kunde",
+      partnerId: "p-cafe",
+    })) as { success: boolean; transactionId: string };
+    expect(res.success).toBe(true);
+
+    const row = await stored(res.transactionId);
+    expect(row).toMatchObject({ amount: -900, addedByHand: true, partnerId: "p-cafe", partnerMatchedBy: "api" });
+    const added = (row.automationHistory as Array<Record<string, unknown>>).filter((e) => e.type === "cash_payment_added");
+    expect(added).toHaveLength(1);
+    expect(added[0].actor).toBe("ai");
+  });
+
+  it("records the chat agent as ai, read from the server's caller", async () => {
+    const sourceId = await cashBox();
+    await db.collection("partners").doc("p-cafe").set({ userId: USER, name: "Cafe Central", aliases: [], ibans: [] });
+
+    const res = (await handleTool(
+      USER,
+      "add_cash_payment",
+      { sourceId, date: "2026-07-06", amount: -900, name: "Kaffee", partnerId: "p-cafe" },
+      agentCaller(null)
+    )) as { transactionId: string };
+    const row = await stored(res.transactionId);
+    expect(row.partnerMatchedBy).toBe("ai");
+    expect((row.automationHistory as Array<Record<string, unknown>>)[0].actor).toBe("ai");
+  });
+
+  it("never takes the actor from an argument", async () => {
+    const sourceId = await cashBox();
+    const res = (await handleTool(USER, "add_cash_payment", {
+      sourceId,
+      date: "2026-07-06",
+      amount: -450,
+      name: "Parkschein",
+      actor: "manual",
+      author: "manual",
+      addedBy: "manual",
+    })) as { transactionId: string };
+    const added = ((await stored(res.transactionId)).automationHistory as Array<Record<string, unknown>>).filter(
+      (e) => e.type === "cash_payment_added"
+    );
+    expect(added[0].actor).toBe("ai");
+  });
+
+  it("refuses a Bank Account that is not a Cash Box, and another User's Cash Box", async () => {
+    const theirs = await cashBox("Their Kassa", OTHER);
+    const { sourceId: bank } = (await handleTool(USER, "create_source", {
+      name: "Erste",
+      iban: "AT611904300234573201",
+    })) as { sourceId: string };
+    const base = { date: "2026-07-06", amount: -450, name: "Parkschein" };
+
+    await expect(handleTool(USER, "add_cash_payment", { ...base, sourceId: bank })).rejects.toThrow(/not a Cash Box/);
+    await expect(handleTool(USER, "add_cash_payment", { ...base, sourceId: theirs })).rejects.toThrow(/not found/);
+    expect((await db.collection("transactions").get()).size).toBe(0);
   });
 });
 
