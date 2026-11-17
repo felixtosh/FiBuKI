@@ -44,3 +44,22 @@ export function refuseBankFieldsOnCashBox(data: Record<string, unknown>): void {
     }
   }
 }
+
+/**
+ * The account-kind rules a create or an update applies before writing:
+ * refuses an unknown kind naming the known ones, and, when the Bank Account
+ * is or becomes a Cash Box, any bank, card, broker or balance field. On an
+ * update, `storedKind` is the kind already stored, which applies when the
+ * update names none.
+ */
+export function refuseInvalidAccountKindFields(data: { accountKind?: unknown }, storedKind?: unknown): void {
+  if (data.accountKind !== undefined && !isAccountKind(data.accountKind)) {
+    throw new HttpsError(
+      "invalid-argument",
+      `Unknown account kind "${String(data.accountKind)}"; use one of ${ACCOUNT_KINDS.join(", ")}`
+    );
+  }
+  if ((data.accountKind ?? storedKind) === "cash") {
+    refuseBankFieldsOnCashBox(data as Record<string, unknown>);
+  }
+}
