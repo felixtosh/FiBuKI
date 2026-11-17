@@ -177,7 +177,7 @@ root (the smoke profile borrows the functions runner via
 characterization + W1 xfail acceptance in
 `functions/src/selfhost/auth-client.test.ts`.
 
-**Shim cursor gap — CLOSED 2026-07-19.** Found 2026-07-17 on CT 999:
+**Shim cursor gap — CLOSED 2026-07-19.** Found 2026-07-17 on a test instance:
 `firestore-shim.ts` implemented no `startAfter`, but `tools/handlers.ts:228` and
 `precisionSearchQueue.ts:1953` call it — under selfhost these threw. The shim now
 implements `startAfter(docSnapshot | values)` with Firestore's implicit `__name__`
