@@ -89,13 +89,22 @@ _Avoid_: deleted partner, ghost partner, alias record
 ## Money coming in
 
 **Bank Account**:
-An account Transactions arrive from — a bank account, a card account, or a depot. Every
-Transaction belongs to exactly one.
+An account Transactions arrive from — a bank account, a card account, a depot, or a Cash
+Box. Every Transaction belongs to exactly one.
 _Deutsch_: Bankkonto
 _Avoid_: source, account bare, bank, connection, feed. (Stored as `sources`; the rename is
 deferred, as in [ADR-0001](docs/adr/0001-receipt-means-section-11-only.md).)
 _Avoid (de)_: Konto bare (a Tax Advisor's Konto is a Sachkonto), Quelle, Bankverbindung
 (the IBAN details, not the account)
+
+**Cash Box**:
+A Bank Account with no bank behind it, for costs the User pays in cash. It has a name and
+a currency only: no IBAN, no card, no bank connection, and no balance, because FiBuKI
+cannot know what is in the box. Stored kind `cash`.
+_Deutsch_: Kassa
+_Avoid_: cash account
+_Avoid (de)_: Kassabuch (the legal cash book with a running balance and daily totals,
+which FiBuKI does not keep)
 
 **Transaction**:
 One booked line from a Bank Account: date, amount in cents with a normalised sign
