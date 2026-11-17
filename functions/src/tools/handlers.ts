@@ -90,6 +90,7 @@ import { toDateSafe } from "../utils/toDateSafe";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
+import type { AccountKind } from "../sources/accountKind";
 import { readBankOriginalAmount } from "../fx/bankOriginalAmount";
 import {
   CADENCE_DAYS,
@@ -3165,7 +3166,7 @@ export async function createSource(userId: string, args: Record<string, unknown>
   const { createSourceInternal } = await import("../sources/createSource");
   return createSourceInternal(db, userId, {
     name: args.name as string,
-    accountKind: (args.accountKind as "bank_account" | "credit_card" | "cash") || "bank_account",
+    accountKind: (args.accountKind as AccountKind | undefined) || "bank_account",
     iban: args.iban as string | undefined,
     currency: (args.currency as string) || "EUR",
     type: "manual",
