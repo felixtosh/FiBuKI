@@ -395,6 +395,22 @@ describe("the drifts, each a fixture", () => {
     expect(refused.error).toMatch(/name is required/i);
     expect((await db.collection("sources").where("userId", "==", USER).get()).size).toBe(before);
   });
+
+  it("creates a Cash Box when asked for accountKind cash, as its MCP twin does (#787)", async () => {
+    const created = (await tool("createSource").invoke({ name: "Kassa", accountKind: "cash", currency: "EUR" }, CONFIG)) as {
+      success?: boolean;
+      sourceId?: string;
+    };
+    expect(created.success).toBe(true);
+    const stored = (await db.collection("sources").doc(created.sourceId!).get()).data()!;
+    expect(stored).toMatchObject({ name: "Kassa", accountKind: "cash", userId: USER });
+
+    const refused = (await tool("createSource").invoke(
+      { name: "Kassa 2", accountKind: "cash", iban: "AT611904300234573201" },
+      CONFIG
+    )) as { error?: string };
+    expect(refused.error).toMatch(/Cash Box/);
+  });
 });
 
 describe("rolling a Transaction back", () => {

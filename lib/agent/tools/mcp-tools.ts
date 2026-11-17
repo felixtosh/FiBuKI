@@ -354,8 +354,9 @@ export const updateTransactionTool = wrap(
 
 export const createSourceTool = wrap(
   "createSource",
-  "Create a new bank account/source. REQUIRES USER CONFIRMATION.",
-  mcpSchema("create_source", { pick: ["name", "iban", "currency"] })
+  "Create a new bank account/source, or a Cash Box (accountKind cash: a name and a currency, no IBAN). " +
+    "REQUIRES USER CONFIRMATION.",
+  mcpSchema("create_source", { pick: ["name", "accountKind", "iban", "currency"] })
 );
 
 /**
