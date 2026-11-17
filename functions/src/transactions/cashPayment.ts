@@ -16,10 +16,11 @@
  * against anything and two identical coffees on one day are both kept.
  */
 
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { activityEntry, type ActivityActor } from "../utils/activity";
 import { checkTransactionQuota, incrementTransactionCount } from "../billing/checkTransactionQuota";
+import { periodKeyOf } from "../uva/reconcile";
 import { connectFileToNewTransaction, FILE_ALREADY_CONNECTED_MESSAGE } from "../fileConnections/writer";
 import { cashPaymentDefaultsFromFile } from "./cashPaymentDefaults";
 
@@ -448,4 +449,198 @@ export const addCashPaymentFromFileCallable = createCallable<CashPaymentFromFile
   { name: "addCashPaymentFromFile" },
   async (ctx, request) =>
     addCashPaymentFromFile(ctx.db, ctx.userId, request, "manual", { isAdmin: ctx.request.auth?.token?.admin === true })
+);
+
+// ============================================================================
+// Correct and delete (#790, ADR-0017)
+// ============================================================================
+
+/** A stored day as `YYYY-MM-DD`, read from the UTC date part (the dates rule in CLAUDE.md). */
+function dayOf(value: unknown): string {
+  const date = value instanceof Timestamp ? value.toDate() : value instanceof Date ? value : null;
+  return date ? date.toISOString().slice(0, 10) : "";
+}
+
+/**
+ * The User's Cash Payment, added by hand. Another User's Transaction reads
+ * as missing; any other Transaction, a CSV row imported into a Cash Box
+ * included, is refused: it has a statement line behind it and stays as
+ * locked as every import (ADR-0017).
+ */
+export async function loadHandAddedCashPayment(db: Db, userId: string, transactionId: unknown) {
+  if (typeof transactionId !== "string" || !transactionId) {
+    throw new HttpsError("invalid-argument", "transactionId is required");
+  }
+  const row = await db.collection("transactions").doc(transactionId).get();
+  if (!row.exists || row.data()?.userId !== userId) {
+    throw new HttpsError("not-found", "Transaction not found");
+  }
+  if (row.data()?.addedByHand !== true) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Only a Cash Payment added by hand can be corrected or deleted; an imported Transaction stays as its bank or import delivered it."
+    );
+  }
+  return row;
+}
+
+/**
+ * Refuses when the day falls in a period the User has filed a UVA for,
+ * monthly or quarterly, naming the period: a filed return must keep agreeing
+ * with the books, so the change is a correction to file, not an edit.
+ */
+const FILED_REFUSAL = {
+  correct: "a Cash Payment in it cannot be corrected",
+  move: "a Cash Payment cannot be moved into it",
+  delete: "a Cash Payment in it cannot be deleted",
+} as const;
+
+async function refuseInFiledPeriod(
+  db: Db,
+  userId: string,
+  date: Timestamp,
+  action: keyof typeof FILED_REFUSAL
+): Promise<void> {
+  const [y, m] = dayOf(date).split("-").map(Number);
+  const keys = [periodKeyOf({ year: y, period: Math.ceil(m / 3), type: "quarterly" }), periodKeyOf({ year: y, period: m, type: "monthly" })];
+  const { FILED_RECORDS } = await import("../reports/uvaFiledRecords");
+  for (const periodKey of keys) {
+    const records = await db
+      .collection(FILED_RECORDS)
+      .where("userId", "==", userId)
+      .where("periodKey", "==", periodKey)
+      .limit(1)
+      .get();
+    if (!records.empty) {
+      throw new HttpsError(
+        "failed-precondition",
+        `The UVA for ${periodKey} is already filed, so ${FILED_REFUSAL[action]}. ` +
+          `File a corrected UVA for ${periodKey} instead.`
+      );
+    }
+  }
+}
+
+export interface CorrectCashPaymentInput {
+  transactionId: string;
+  /** The corrected calendar day, `YYYY-MM-DD`. */
+  date?: string;
+  /** The corrected signed cents; the sign is the direction. */
+  amount?: number;
+  name?: string;
+  /** null or "" clears it. */
+  description?: string | null;
+}
+
+export interface CorrectCashPaymentResult {
+  /** False when every value given was already the stored one; nothing was written. */
+  changed: boolean;
+}
+
+/**
+ * Corrects one Cash Payment the User added by hand: its day, amount (the
+ * sign is the direction), name or description. One activity entry names
+ * what changed; a correction that changes nothing writes nothing.
+ */
+export async function correctCashPayment(
+  db: Db,
+  userId: string,
+  input: CorrectCashPaymentInput,
+  author: CashPaymentAuthor
+): Promise<CorrectCashPaymentResult> {
+  const next: Record<string, unknown> = {};
+  if (input?.date !== undefined) next.date = cashPaymentDay(input.date);
+  if (input?.amount !== undefined) next.amount = cashPaymentAmount(input.amount);
+  if (input?.name !== undefined) next.name = cashPaymentName(input.name);
+  if (input?.description !== undefined) next.description = cashPaymentDescription(input.description);
+
+  const row = await loadHandAddedCashPayment(db, userId, input?.transactionId);
+  const data = row.data()!;
+  const currency = (data.currency as string | undefined) ?? "EUR";
+
+  const changes: string[] = [];
+  const update: Record<string, unknown> = {};
+  if (next.date && dayOf(next.date as Timestamp) !== dayOf(data.date)) {
+    update.date = next.date;
+    changes.push(`day ${dayOf(data.date)} → ${dayOf(next.date as Timestamp)}`);
+  }
+  if (next.amount !== undefined && next.amount !== data.amount) {
+    update.amount = next.amount;
+    changes.push(`amount ${amountLine(data.amount as number, currency)} → ${amountLine(next.amount as number, currency)}`);
+  }
+  if (next.name !== undefined && next.name !== data.name) {
+    update.name = next.name;
+    changes.push(`name "${data.name}" → "${next.name}"`);
+  }
+  if (next.description !== undefined && next.description !== (data.description ?? null)) {
+    update.description = next.description;
+    changes.push(next.description ? `description "${next.description}"` : "description cleared");
+  }
+  if (changes.length === 0) return { changed: false };
+
+  // The old day, and for a new day that one too: a filed return keeps agreeing with the books.
+  await refuseInFiledPeriod(db, userId, data.date as Timestamp, "correct");
+  if (update.date) await refuseInFiledPeriod(db, userId, update.date as Timestamp, "move");
+
+  const now = Timestamp.now();
+  await row.ref.update({
+    ...update,
+    updatedAt: now,
+    automationHistory: FieldValue.arrayUnion(
+      activityEntry(
+        {
+          type: "cash_payment_corrected",
+          actor: actorOf(author),
+          summary: `Cash Payment corrected by ${author === "manual" ? "hand" : "an AI client"}: ${changes.join(", ")}`,
+        },
+        now
+      )
+    ),
+  });
+  return { changed: true };
+}
+
+export const correctCashPaymentCallable = createCallable<CorrectCashPaymentInput, CorrectCashPaymentResult>(
+  { name: "correctCashPayment" },
+  async (ctx, request) => correctCashPayment(ctx.db, ctx.userId, request, "manual")
+);
+
+export interface DeleteCashPaymentInput {
+  transactionId: string;
+}
+
+export interface DeleteCashPaymentResult {
+  deleted: true;
+  /** Files taken off the row; they stay, back to unmatched. */
+  filesDisconnected: number;
+}
+
+/**
+ * Deletes one Cash Payment the User added by hand (ADR-0017): its File
+ * Connections are taken apart through the File Connection writer, logged on
+ * each File, and no File keeps suggesting it; the Files stay. Then the row
+ * goes. The plan's transaction count is not lowered: the row was counted
+ * when it was added, as an imported row is.
+ */
+export async function deleteCashPayment(
+  db: Db,
+  userId: string,
+  input: DeleteCashPaymentInput,
+  author: CashPaymentAuthor
+): Promise<DeleteCashPaymentResult> {
+  const row = await loadHandAddedCashPayment(db, userId, input?.transactionId);
+  await refuseInFiledPeriod(db, userId, row.data()!.date as Timestamp, "delete");
+
+  const { detachTransactions } = await import("../fileConnections/writer");
+  const { filesUpdated } = await detachTransactions(db, userId, [{ id: row.id, data: row.data()! }], {
+    why: "by the User, a Cash Payment added by hand",
+    actor: actorOf(author),
+  });
+  await row.ref.delete();
+  return { deleted: true, filesDisconnected: filesUpdated };
+}
+
+export const deleteCashPaymentCallable = createCallable<DeleteCashPaymentInput, DeleteCashPaymentResult>(
+  { name: "deleteCashPayment" },
+  async (ctx, request) => deleteCashPayment(ctx.db, ctx.userId, request, "manual")
 );

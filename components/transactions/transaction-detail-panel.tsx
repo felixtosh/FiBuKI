@@ -16,6 +16,7 @@ import { TransactionSource } from "@/types/source";
 import { TransactionDetails } from "@/components/sidebar/transaction-details";
 import { TransactionFilesSection } from "@/components/transactions/transaction-files-section";
 import { TransactionCorrectionRelated } from "./transaction-correction-related";
+import { CashPaymentActions } from "./cash-payment-actions";
 import { ActivityLogOverlay } from "@/components/activity/activity-log-overlay";
 import { AutomationSummaryRow } from "@/components/activity/automation-summary-row";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -368,6 +369,9 @@ export function TransactionDetailPanel({
             {searchError}
           </div>
         )}
+
+        {/* Correct and delete, on a Cash Payment the User added by hand only (#790) */}
+        {transaction.addedByHand ? <CashPaymentActions transaction={transaction} onDeleted={onClose} /> : null}
 
         {/* Edit History button */}
         <Button
