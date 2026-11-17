@@ -60,6 +60,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { FileCopySection, type CopyAct, type MarkCopyAct } from "./file-copy-section";
 import { FileCorrectionSection } from "./file-correction-section";
+import { BookingAccountsSection } from "./booking-accounts-section";
 import { FileReceiptLinkSection } from "./file-receipt-link-section";
 import { FileSplitSection, SplitFileDialog, canSplitFile } from "./file-split-section";
 import { useHandCorrectionGuard } from "./hand-correction-dialog";
@@ -677,6 +678,9 @@ function FileDetailPanelInner({
 
             {/* What this File corrects, or what corrects it (#564) */}
             <FileCorrectionSection file={file} />
+
+            {/* The accounts an import booked this File to (#785) */}
+            <BookingAccountsSection bookingAccounts={file.bookingAccounts} />
 
             {/* The invoice this Receipt pays, or this invoice's Receipts (#571) */}
             <FileReceiptLinkSection

@@ -307,6 +307,17 @@
       "bandRequired": "Bei mehr als einer Wiederkehr braucht jede ihren eigenen erwarteten Betragsbereich."
     }
   },
+  "bookingAccounts": {
+    "title": "Sachkonten",
+    "other": "Andere Kontenrahmen: {numbers}",
+    "asset": "Anlagevermögen",
+    "gwg": "GWG",
+    "rate": "{rate}% USt",
+    "origin": {
+      "sevdesk": "Aus SevDesk",
+      "manual": "Von Hand gesetzt"
+    }
+  },
   "documents": {
     "type": {
       "invoice": "Rechnung",
@@ -1273,6 +1284,8 @@
       "reconciliation_suggested": "Abgleich vorgeschlagen",
       "ruling_recorded": "Entscheidung erfasst",
       "ruling_revoked": "Entscheidung widerrufen",
+      "booking_accounts_set": "Sachkonten gesetzt",
+      "booking_accounts_cleared": "Sachkonten entfernt",
       "partner_search": "Partnersuche (Agent)",
       "transaction_search": "Transaktionssuche (Agent)"
     },

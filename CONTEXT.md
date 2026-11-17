@@ -328,6 +328,18 @@ _Deutsch_: von Hand geändert
 _Avoid_: correction (that is the **Invoice Correction**), override, edit
 _Avoid (de)_: Korrektur, Rechnungskorrektur (both name the **Invoice Correction**)
 
+**Booking Account**:
+The account a File's or a Transaction's amount is booked to: its number and name in the
+Austrian chart, its numbers in other charts, whether it is a fixed asset or a low-value
+asset, and where the value came from (another bookkeeping tool, or a person). An item
+carries a list of them, one per Rate Group when the groups went to different accounts.
+It sits beside the Extraction, not in it: a re-extraction never touches it, and setting
+it is not a Hand Correction (#785).
+_Deutsch_: Sachkonto
+_Avoid_: category (that is the no-receipt category), account bare (that is a **Bank
+Account**), ledger
+_Avoid (de)_: Konto bare, Kategorie
+
 **Line Item**:
 One priced row transcribed from a File's body.
 _Deutsch_: Position (the word English avoids is the one German requires)

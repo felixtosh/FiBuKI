@@ -122,6 +122,11 @@ import {
   agentSourceInfo,
 } from "./agentConnectChecks";
 import { activityEntry, logActivity } from "../utils/activity";
+import {
+  bookingAccountTarget,
+  parseBookingAccounts,
+  setBookingAccounts,
+} from "../bookingAccounts/setBookingAccounts";
 
 /**
  * Convert a Firestore Timestamp to the YYYY-MM-DD calendar day it stands for.
@@ -315,6 +320,8 @@ export async function handleTool(
       return unmarkFileVatNotClaimable(userId, args);
     case "update_file_extraction":
       return updateFileExtraction(userId, args);
+    case "set_booking_accounts":
+      return setBookingAccountsTool(userId, args);
     case "dismiss_transaction_suggestion":
       return dismissTransactionSuggestion(userId, args);
     case "undismiss_transaction_suggestion":
@@ -1857,6 +1864,20 @@ export async function unconfirmFileRecipientIsUser(userId: string, args: Record<
  * exactly the case that matters here. The whole point is that the transaction
  * keeps its receipt and stops claiming the VAT on it.
  */
+/**
+ * Set a File's or Transaction's Booking Accounts (#785). Every tool caller,
+ * MCP client or chat agent, is an AI actor in the activity log.
+ */
+export async function setBookingAccountsTool(userId: string, args: Record<string, unknown>) {
+  return setBookingAccounts(
+    db,
+    userId,
+    bookingAccountTarget(args),
+    parseBookingAccounts(args.bookingAccounts),
+    "ai"
+  );
+}
+
 export async function markFileVatNotClaimable(userId: string, args: Record<string, unknown>) {
   const fileId = args.fileId as string;
   if (!fileId) {

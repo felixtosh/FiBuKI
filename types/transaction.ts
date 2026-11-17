@@ -349,6 +349,9 @@ export interface Transaction {
     source: "iban" | "vatId" | "website" | "name";
   }>;
 
+  /** The accounts this Transaction is booked to (#785). Written only by set_booking_accounts. */
+  bookingAccounts?: import("@/functions/src/bookingAccounts/types").BookingAccount[];
+
   // === No-Receipt Category ===
   // Note: These use `| null` (not just `?`) so Firestore queries work.
 
