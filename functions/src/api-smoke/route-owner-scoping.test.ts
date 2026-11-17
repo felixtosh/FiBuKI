@@ -11,7 +11,7 @@
  * `data.userId !== userId`), so it is the point of the suite.
  *
  * These run the REAL Next handlers, so they need the ROOT dependency tree
- * (next, firebase-admin) — empty on the audit box. Verify via the "App API
+ * (next, firebase-admin), which a scoped dev checkout may not have. Verify via the "App API
  * routes (auth smoke)" CI job, NOT locally. The in-memory Firestore they run on
  * (./fake-firestore) is separately pinned by fake-firestore.test.ts, which DOES
  * run locally.

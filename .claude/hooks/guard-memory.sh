@@ -4,7 +4,7 @@
 #
 # Why this exists: a full `vitest run` spawns one worker per CPU, each with its
 # own V8 heap; `tsc --noEmit` over this project and `next build` are similarly
-# hungry. On a 4 GiB box (the claude-audit LXC) any of them OOM-freezes the
+# hungry. On a 4 GiB box any of them OOM-freezes the
 # host hard enough to need a reset. Prose in CLAUDE.md did not prevent this
 # three times over, so it is enforced here instead.
 #
@@ -152,7 +152,7 @@ OOM-freeze small hosts hard enough to need a reset.
 Scoped alternative:
   ${fix}
 
-Full suites and full builds belong on a bigger host (CT 999), not here.
+Full suites and full builds belong on a bigger host, not here.
 See docs/rewrite-goals.md, Phase 0."
 
 jq -nc --arg r "$reason" '{

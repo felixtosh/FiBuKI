@@ -4,7 +4,7 @@
  * into exportDump() and writes a self-contained version-1 dump directory.
  *
  * This is the ONE piece of W3 that touches Firebase. It runs on a
- * credential-bearing machine (never the audit box, never CI) — the exporter
+ * credential-bearing machine (never an agent's dev host, never CI) — the exporter
  * and importer are split precisely because Admin credentials must not live
  * where the selfhost stack runs. migrate-export.ts is shim-free and
  * duck-typed, so loading it here next to real firebase-admin is safe; do NOT

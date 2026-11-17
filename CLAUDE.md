@@ -57,8 +57,8 @@ echo '{"extends":"./tsconfig.json","include":[],"files":["src/foo.ts"]}' > funct
 NODE_OPTIONS=--max-old-space-size=900 npx tsc --noEmit -p functions/tsconfig.scoped.json
 ```
 
-Full suites belong on CT 999. The audit box has 16 GiB: up to **four sub-agents in
-parallel** is fine there, each running scoped tests only. Details in
+Full suites belong on a host with more than 8 GiB. Sub-agents multiply the load: each
+one runs scoped tests only, and on a small host they run one at a time. Details in
 [`docs/claude-practices.md`](docs/claude-practices.md).
 
 ## Self-host realities (read before debugging)
