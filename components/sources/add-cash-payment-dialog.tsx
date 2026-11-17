@@ -12,15 +12,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { callFunction } from "@/lib/firebase/callable";
 import { usePartners } from "@/hooks/use-partners";
-import { cn } from "@/lib/utils";
 import type { CashPaymentDefaults } from "@/functions/src/transactions/cashPaymentDefaults";
-
-type Direction = "out" | "in";
+import {
+  CashPaymentFields,
+  centsText,
+  directionOf,
+  positiveCents,
+  signedCents,
+} from "@/components/transactions/cash-payment-fields";
 
 interface AddCashPaymentDialogProps {
   open: boolean;
@@ -52,19 +55,6 @@ function viennaToday(): string {
   return new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Vienna" });
 }
 
-/** A positive amount as typed ("4,50", "4.50", "12"), in cents; null when it is not one. */
-function positiveCents(text: string): number | null {
-  const s = text.trim().replace(/[\s€]/g, "");
-  if (!/^\d+([.,]\d{1,2})?$/.test(s)) return null;
-  const cents = Math.round(Number(s.replace(",", ".")) * 100);
-  return cents > 0 ? cents : null;
-}
-
-/** Positive cents as the amount input shows them: 900 is "9,00". */
-function centsText(cents: number | null): string {
-  return cents === null ? "" : (Math.abs(cents) / 100).toFixed(2).replace(".", ",");
-}
-
 /**
  * Add one Cash Payment by hand (#788): the day, a positive amount with money
  * out or money in (out preselected), the User's own text and an optional
@@ -82,7 +72,7 @@ export function AddCashPaymentDialog({
   const t = useTranslations("sources.cashPayment");
   const { partners } = usePartners();
   const start = fromFile?.defaults;
-  const startDirection = Math.sign(start?.amount ?? -1) === 1 ? ("in" as Direction) : ("out" as Direction);
+  const startDirection = directionOf(start?.amount);
   const boxes = fromFile ? (cashBoxes ?? []) : [];
 
   const [date, setDate] = useState(start?.date ?? viennaToday());
@@ -131,7 +121,7 @@ export function AddCashPaymentDialog({
     try {
       const payment = {
         date,
-        amount: direction === "out" ? -cents : cents,
+        amount: signedCents(cents, direction),
         name: name.trim(),
         ...(partnerId !== NO_PARTNER ? { partnerId } : {}),
       };
@@ -184,52 +174,18 @@ export function AddCashPaymentDialog({
             </div>
           ) : null}
 
-          <div className="flex gap-2" role="radiogroup" aria-label={t("direction")}>
-            {(["out", "in"] as const).map((d) => (
-              <Button
-                key={d}
-                type="button"
-                role="radio"
-                aria-checked={direction === d}
-                variant={direction === d ? "default" : "outline"}
-                size="sm"
-                className="flex-1"
-                onClick={() => setDirection(d)}
-              >
-                {d === "out" ? t("moneyOut") : t("moneyIn")}
-              </Button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="cash-payment-date">{t("date")}</Label>
-              <Input id="cash-payment-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="cash-payment-amount">{t("amount", { currency })}</Label>
-              <Input
-                id="cash-payment-amount"
-                inputMode="decimal"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder={t("amountPlaceholder")}
-                className={cn(amount && cents === null && "border-destructive")}
-                required
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="cash-payment-name">{t("name")}</Label>
-            <Input
-              id="cash-payment-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t("namePlaceholder")}
-              required
-            />
-          </div>
+          <CashPaymentFields
+            idPrefix="cash-payment"
+            currency={currency}
+            date={date}
+            onDateChange={setDate}
+            amount={amount}
+            onAmountChange={setAmount}
+            direction={direction}
+            onDirectionChange={setDirection}
+            name={name}
+            onNameChange={setName}
+          />
 
           <div className="space-y-1.5">
             <Label>{t("partner")}</Label>

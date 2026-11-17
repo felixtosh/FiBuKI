@@ -25,28 +25,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { callFunction } from "@/lib/firebase/callable";
-import { cn } from "@/lib/utils";
 import type { Transaction } from "@/types/transaction";
-
-type Direction = "out" | "in";
-
-/** A positive amount as typed ("4,50", "4.50", "12"), in cents; null when it is not one. */
-function positiveCents(text: string): number | null {
-  const s = text.trim().replace(/[\s€]/g, "");
-  if (!/^\d+([.,]\d{1,2})?$/.test(s)) return null;
-  const cents = Math.round(Number(s.replace(",", ".")) * 100);
-  return cents > 0 ? cents : null;
-}
-
-/** Cents as the amount field shows them: "4,50". */
-function centsText(cents: number): string {
-  return (Math.abs(cents) / 100).toFixed(2).replace(".", ",");
-}
-
-/** Negative cents are money out. */
-function directionOf(cents: number): Direction {
-  return cents >= 0 ? "in" : "out";
-}
+import { CashPaymentFields, centsText, directionOf, positiveCents, signedCents } from "./cash-payment-fields";
 
 /** The stored day (UTC midnight of the Vienna day), as the date input's YYYY-MM-DD. */
 function storedDay(transaction: Transaction): string {
@@ -128,7 +108,7 @@ function CorrectCashPaymentDialog({ transaction, onClose }: { transaction: Trans
       >("correctCashPayment", {
         transactionId: transaction.id,
         date,
-        amount: direction === "out" ? -cents : cents,
+        amount: signedCents(cents, direction),
         name: name.trim(),
         description: description.trim() || null,
       });
@@ -149,45 +129,18 @@ function CorrectCashPaymentDialog({ transaction, onClose }: { transaction: Trans
             <DialogDescription>{t("correctDescription")}</DialogDescription>
           </DialogHeader>
 
-          <div className="flex gap-2" role="radiogroup" aria-label={t("direction")}>
-            {(["out", "in"] as const).map((d) => (
-              <Button
-                key={d}
-                type="button"
-                role="radio"
-                aria-checked={direction === d}
-                variant={direction === d ? "default" : "outline"}
-                size="sm"
-                className="flex-1"
-                onClick={() => setDirection(d)}
-              >
-                {d === "out" ? t("moneyOut") : t("moneyIn")}
-              </Button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="correct-cash-date">{t("date")}</Label>
-              <Input id="correct-cash-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="correct-cash-amount">{t("amount", { currency: transaction.currency })}</Label>
-              <Input
-                id="correct-cash-amount"
-                inputMode="decimal"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className={cn(amount && cents === null && "border-destructive")}
-                required
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="correct-cash-name">{t("name")}</Label>
-            <Input id="correct-cash-name" value={name} onChange={(e) => setName(e.target.value)} required />
-          </div>
+          <CashPaymentFields
+            idPrefix="correct-cash"
+            currency={transaction.currency}
+            date={date}
+            onDateChange={setDate}
+            amount={amount}
+            onAmountChange={setAmount}
+            direction={direction}
+            onDirectionChange={setDirection}
+            name={name}
+            onNameChange={setName}
+          />
 
           <div className="space-y-1.5">
             <Label htmlFor="correct-cash-description">{t("note")}</Label>
