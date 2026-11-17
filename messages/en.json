@@ -1319,6 +1319,27 @@
       }
     }
   },
+  "cashPaymentEdit": {
+    "correct": "Correct",
+    "delete": "Delete",
+    "correctTitle": "Correct cash payment",
+    "correctDescription": "Fix a payment you typed in. Not possible once the UVA for its period is filed.",
+    "direction": "Money in or out",
+    "moneyOut": "Money out",
+    "moneyIn": "Money in",
+    "date": "Date",
+    "amount": "Amount ({currency})",
+    "name": "What for",
+    "note": "Note (optional)",
+    "cancel": "Cancel",
+    "save": "Save",
+    "correctFailed": "The cash payment could not be corrected.",
+    "deleteTitle": "Delete this cash payment?",
+    "deleteDescription": "The payment is removed from your books. Only cash payments you added by hand can be deleted.",
+    "deleteWithFiles": "The payment is removed from your books. Its {count, plural, one {document stays and goes} other {# documents stay and go}} back to unmatched.",
+    "deleteConfirm": "Delete",
+    "deleteFailed": "The cash payment could not be deleted."
+  },
   "sources": {
     "cashBox": {
       "kind": "Cash",

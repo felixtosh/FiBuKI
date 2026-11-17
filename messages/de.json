@@ -1319,6 +1319,27 @@
       }
     }
   },
+  "cashPaymentEdit": {
+    "correct": "Korrigieren",
+    "delete": "Löschen",
+    "correctTitle": "Barzahlung korrigieren",
+    "correctDescription": "Eine selbst eingetragene Zahlung berichtigen. Nicht mehr möglich, sobald die UVA für ihren Zeitraum eingereicht ist.",
+    "direction": "Geld rein oder raus",
+    "moneyOut": "Ausgabe",
+    "moneyIn": "Einnahme",
+    "date": "Datum",
+    "amount": "Betrag ({currency})",
+    "name": "Wofür",
+    "note": "Notiz (optional)",
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "correctFailed": "Die Barzahlung konnte nicht korrigiert werden.",
+    "deleteTitle": "Diese Barzahlung löschen?",
+    "deleteDescription": "Die Zahlung wird aus deinen Büchern entfernt. Nur selbst eingetragene Barzahlungen lassen sich löschen.",
+    "deleteWithFiles": "Die Zahlung wird aus deinen Büchern entfernt. {count, plural, one {Ihr Beleg bleibt erhalten und ist} other {Ihre # Belege bleiben erhalten und sind}} danach wieder nicht zugeordnet.",
+    "deleteConfirm": "Löschen",
+    "deleteFailed": "Die Barzahlung konnte nicht gelöscht werden."
+  },
   "sources": {
     "cashBox": {
       "kind": "Kassa",
