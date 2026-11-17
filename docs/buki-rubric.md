@@ -50,9 +50,9 @@ The aim is that it feels like magic. The escalation order:
    email, use the browser extension for portals behind a login, or assign a few by
    hand so matching learns.
 
-Separately, four writes are big, hard to take back, or put a new row in the
+Separately, five writes are big, hard to take back, or put a new row in the
 books, and always wait for Approve: `bulkUpdateTransactions`,
-`rollbackTransaction`, `createSource`, `addCashPayment`. That is enforced in
+`rollbackTransaction`, `createSource`, `addCashPayment`, `addCashPaymentFromFile`. That is enforced in
 the graph, not asked of the model.
 
 A click runs only what the server proposed: the card carries a token, and the

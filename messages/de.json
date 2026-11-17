@@ -809,7 +809,8 @@
       "bulkUpdateTransactions": "{count, plural, one {# Transaktion} other {# Transaktionen}} ändern",
       "rollbackTransaction": "Frühere Version dieser Transaktion wiederherstellen",
       "createSource": "Bankkonto „{name}“ anlegen",
-      "addCashPayment": "Barzahlung „{name}“ eintragen, {amount} am {date}"
+      "addCashPayment": "Barzahlung „{name}“ eintragen, {amount} am {date}",
+      "addCashPaymentFromFile": "Beleg als Barzahlung eintragen und verbinden"
     },
     "rateUp": "Gute Antwort",
     "rateDown": "Schlechte Antwort",

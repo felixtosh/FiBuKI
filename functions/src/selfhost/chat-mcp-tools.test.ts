@@ -591,6 +591,31 @@ describe("adding a Cash Payment: the chat runs add_cash_payment as the agent (#7
   });
 });
 
+describe("a Cash Payment from a File: the chat runs add_cash_payment_from_file as the agent (#789)", () => {
+  const args = { fileId: "f-coffee", sourceId: "s-cash" };
+
+  it("answers what the shared tool answers as the agent, connected with the agent's origin", async () => {
+    const chat = wire(await tool("addCashPaymentFromFile").invoke(args, CONFIG)) as Record<string, unknown>;
+    expect(chat.success).toBe(true);
+    const row = (await db.collection("transactions").doc(chat.transactionId as string).get()).data()!;
+    expect(row).toMatchObject({ sourceId: "s-cash", amount: -900, addedByHand: true, fileIds: ["f-coffee"] });
+    const record = await db.collection("fileConnections").doc(chat.connectionId as string).get();
+    expect(record.data()?.origin).toBe("agent");
+
+    await seed();
+    const parsed = tool("addCashPaymentFromFile").schema.parse(args);
+    const agent = wire(await handleTool(USER, "add_cash_payment_from_file", parsed, AGENT)) as Record<string, unknown>;
+    const strip = ({ transactionId: _t, connectionId: _c, ...rest }: Record<string, unknown>) => rest;
+    expect(strip(chat)).toEqual(strip(agent));
+  });
+
+  it("is refused on a File already connected, with MCP's message", async () => {
+    const { chat, mcp } = await both("addCashPaymentFromFile", { fileId: "f-amazon", sourceId: "s-cash" });
+    expect((chat as { error?: string }).error).toMatch(/already connected/);
+    expect(chat).toEqual(mcp);
+  });
+});
+
 describe("assigning a Partner to a Transaction: one write, the caller's provenance (#665)", () => {
   it("the chat records ai, learned from and shown in the re-match review; MCP records api", async () => {
     const chat = (await tool("assignPartnerToTransaction").invoke(
@@ -962,6 +987,7 @@ describe("guard: a chat tool with an MCP twin never touches the database itself"
       updateTransaction: { transactionId: "t-client", description: "probe" },
       createSource: { name: "Probe", iban: "AT611904300234573201" },
       addCashPayment: { sourceId: "s-cash", date: "2026-03-05", amount: -900, name: "Probe" },
+      addCashPaymentFromFile: { fileId: "f-coffee", sourceId: "s-cash" },
       assignPartnerToTransaction: { transactionId: "t-client", partnerId: "p-amazon" },
       assignPartnerToFile: { fileId: "f-coffee", partnerId: "p-amazon" },
       updatePartner: { partnerId: "p-amazon", website: "https://amazon.example" },

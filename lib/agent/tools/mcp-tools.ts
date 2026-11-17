@@ -39,6 +39,7 @@ export const MCP_TWINS = {
   updateTransaction: "update_transaction",
   createSource: "create_source",
   addCashPayment: "add_cash_payment",
+  addCashPaymentFromFile: "add_cash_payment_from_file",
   listFiles: "list_files",
   getFile: "get_file",
   listPartners: "list_partners",
@@ -370,6 +371,20 @@ export const addCashPaymentTool = wrap(
   mcpSchema("add_cash_payment")
 );
 
+/**
+ * A Cash Payment from a File (#789): the row is born connected to the File,
+ * and runTool calls the shared tool as the agent, so the File Connection's
+ * origin is `agent`.
+ */
+export const addCashPaymentFromFileTool = wrap(
+  "addCashPaymentFromFile",
+  "Turn an unconnected receipt the user paid in cash into a Cash Payment on their Cash Box, connected to the " +
+    "File in one step. The File's day, amount, name and Partner are used unless you pass others. Offer it when a " +
+    "File with no Transaction says it was paid in cash (getFile: extractedAdditionalFields paymentMethod cash). " +
+    "Omit sourceId when the user has one Cash Box; with none, offer to create one first. REQUIRES USER CONFIRMATION.",
+  mcpSchema("add_cash_payment_from_file")
+);
+
 // The writes that record who made them (#665): runTool calls them as the chat
 // agent, so the shared tool records the agent's provenance (`ai`, Connection
 // Origin `agent`) where MCP records its own.
@@ -539,6 +554,7 @@ export const MCP_TOOLS = [
   updateTransactionTool,
   createSourceTool,
   addCashPaymentTool,
+  addCashPaymentFromFileTool,
   assignPartnerToTransactionTool,
   assignPartnerToFileTool,
   updatePartnerTool,

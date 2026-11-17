@@ -31,6 +31,7 @@ export const TOOLS_REQUIRING_CONFIRMATION = [
   "rollbackTransaction",
   "createSource",
   "addCashPayment",
+  "addCashPaymentFromFile",
 ] as const;
 
 export function requiresConfirmation(toolName: string): boolean {
