@@ -15,6 +15,7 @@ import { drainTriggers, __resetTriggerShim } from "./trigger-shim";
 // REAL application code, unmodified:
 import "../invoicing/onFileConnectionWrite";
 import { repairApiTwins, surveyApiTwins } from "../transactions/repairApiTwins";
+import { connectFiles } from "../fileConnections/writer";
 
 const db = getFirestore();
 const ME = "twins-me";
@@ -68,6 +69,7 @@ async function seedLegacyConnection(fileId: string, transactionId: string) {
 
 async function seed() {
   await db.collection("sources").doc(SRC).set({ userId: ME, name: "Giro", iban: "AT000000000000000000" });
+  await db.collection("imports").doc(CSV).set({ userId: ME, sourceId: SRC, status: "completed" });
   await db.collection("partners").doc("p-shop").set({ userId: ME, name: "Shop" });
   await db
     .collection("subscriptions")
@@ -124,11 +126,25 @@ async function sourceTotal(from: string, to: string) {
     .reduce((sum, t) => sum + (t.amount as number), 0);
 }
 
+/**
+ * A dry run, then (with `apply`) the apply of exactly what it listed, as an
+ * operator runs it. No trigger is drained: a script process dispatches none.
+ */
 async function run(apply: boolean) {
-  const report = await repairApiTwins(db, { userId: ME, sourceId: SRC, apply });
-  await drainTriggers();
+  const dry = await repairApiTwins(db, { userId: ME, sourceId: SRC, apply: false });
+  if (!apply) return dry;
+  const report = await repairApiTwins(db, { userId: ME, sourceId: SRC, apply: true, reviewed: JSON.parse(JSON.stringify(dry.merges)) });
   await __whenShimIdle();
   return report;
+}
+
+const COLLECTIONS = ["transactions", "files", "fileConnections", "invoices", "subscriptions", "partners", "noReceiptCategories", "imports"];
+async function dump() {
+  const out: Record<string, unknown> = {};
+  for (const c of COLLECTIONS) {
+    out[c] = (await db.collection(c).get()).docs.map((d) => [d.id, d.data()]).sort();
+  }
+  return JSON.parse(JSON.stringify(out));
 }
 
 beforeEach(async () => {
@@ -138,7 +154,7 @@ beforeEach(async () => {
 });
 
 describe("repairing API twins", () => {
-  it("reports every pair on a dry run and writes nothing", async () => {
+  it("reports every pair on a dry run", async () => {
     const report = await run(false);
     expect(report.merges.map((m) => [m.apiId, m.csvId, m.done])).toEqual([
       ["a-clean", "c-clean", false],
@@ -148,8 +164,12 @@ describe("repairing API twins", () => {
     expect(report.blocked).toEqual([expect.objectContaining({ apiId: "a-copy", reason: "copy", fileId: "f-copy" })]);
     expect(report.unmatched).toEqual(["a-alone"]);
     expect(report.legacyImports).toEqual({ [API]: 5 });
-    expect(await tx("a-clean")).not.toBeNull();
-    expect((await tx("c-clean"))!.partnerId).toBeUndefined();
+  });
+
+  it("changes no stored record on a dry run", async () => {
+    const before = await dump();
+    await run(false);
+    expect(await dump()).toEqual(before);
   });
 
   it("moves a clean pair's Partner onto the CSV row and removes the API row", async () => {
@@ -223,6 +243,111 @@ describe("repairing API twins", () => {
     expect(second.failed).toEqual([]);
   });
 
+  it("only unlinks a File both twins hold, then removes the API row", async () => {
+    await seedTx("a-both", API, "2026-05-02", -900);
+    await seedTx("c-both", CSV, "2026-05-02", -900);
+    await seedFile("f-both");
+    await connectFiles(db, ME, [{ fileId: "f-both", transactionId: "a-both" }, { fileId: "f-both", transactionId: "c-both" }], { origin: "manual" });
+    const report = await run(true);
+    expect(report.merges.find((m) => m.apiId === "a-both")).toMatchObject({ moves: [], unlinkOnly: ["f-both"], done: true });
+    expect(await tx("a-both")).toBeNull();
+    expect(await recordsOf("f-both")).toEqual([expect.objectContaining({ transactionId: "c-both", origin: "manual" })]);
+    expect((await db.collection("files").doc("f-both").get()).data()!.transactionIds).toEqual(["c-both"]);
+  });
+
+  it("gives a CSV row over quota its counted twin's slot, without counting the line again", async () => {
+    await db.collection("transactions").doc("c-file").update({ quotaExceeded: true });
+    const report = await run(true);
+    expect(report.merges.find((m) => m.apiId === "a-file")).toMatchObject({ quota: "transfer", done: true });
+    expect(await tx("c-file")).toMatchObject({ quotaExceeded: false, fileIds: ["f-receipt"] });
+    // Only the clean pair's line was counted twice.
+    expect((await db.collection("subscriptions").doc(ME).get()).data()!.transactionCountCurrentMonth).toBe(9);
+  });
+
+  it("leaves the count alone once it is a later month than the twin's import", async () => {
+    await db.collection("subscriptions").doc(ME).update({ transactionCountMonth: "2026-11", transactionCountCurrentMonth: 3 });
+    await run(true);
+    expect((await db.collection("subscriptions").doc(ME).get()).data()!.transactionCountCurrentMonth).toBe(3);
+  });
+
+  it("applies only what the reviewed dry run listed, as it listed it", async () => {
+    const dry = await repairApiTwins(db, { userId: ME, sourceId: SRC, apply: false });
+    const reviewed = dry.merges.filter((m) => m.apiId === "a-file");
+    // The clean pair changes after the review: the CSV row gets a File.
+    const report = await repairApiTwins(db, { userId: ME, sourceId: SRC, apply: true, reviewed: [...reviewed, { ...dry.merges[0], quota: "none" }] });
+    expect(report.merges.map((m) => m.apiId)).toEqual(["a-file"]);
+    expect(report.skipped).toEqual([
+      { apiId: "a-clean", csvId: "c-clean", reason: "planned differently than in the reviewed dry run" },
+    ]);
+    expect(await tx("a-clean")).not.toBeNull();
+    const none = await repairApiTwins(db, { userId: ME, sourceId: SRC, apply: true });
+    expect(none.merges).toEqual([]);
+    expect(none.skipped.map((s) => s.reason)).toEqual(["not in the reviewed dry run"]);
+  });
+
+  it("skips a pair that changed between its read and its merge", async () => {
+    const dry = await repairApiTwins(db, { userId: ME, sourceId: SRC, apply: false });
+    const report = await repairApiTwins(db, {
+      userId: ME,
+      sourceId: SRC,
+      apply: true,
+      reviewed: dry.merges,
+      beforeChange: async () => {
+        await db.collection("transactions").doc("c-clean").update({ partnerId: "p-other" });
+      },
+    });
+    expect(report.skipped).toEqual([{ apiId: "a-clean", csvId: "c-clean", reason: "the pair changed since it was read" }]);
+    expect(await tx("a-clean")).not.toBeNull();
+  });
+
+  it("backs up the rows, records, Files, invoices and counts it may change", async () => {
+    await db.collection("invoices").doc("inv-1").set({ userId: ME, status: "paid", paidByTransactionId: "a-file" });
+    await db.collection("files").doc("f-receipt").update({ invoiceId: "inv-1" });
+    const dry = await repairApiTwins(db, { userId: ME, sourceId: SRC, apply: false });
+    let backup: Record<string, Array<{ id: string }> | { id: string } | null> = {};
+    await repairApiTwins(db, {
+      userId: ME, sourceId: SRC, apply: true, reviewed: dry.merges,
+      beforeChange: async (b) => {
+        backup = b as never;
+      },
+    });
+    const ids = (k: string) => (backup[k] as Array<{ id: string }>).map((d) => d.id).sort();
+    expect(ids("transactions")).toEqual(["a-clean", "a-file", "c-clean", "c-file"]);
+    expect(ids("fileConnections")).toEqual(["legacy-f-receipt"]);
+    expect(ids("files")).toEqual(["f-receipt"]);
+    expect(ids("invoices")).toEqual(["inv-1"]);
+    expect(ids("partners")).toEqual(["p-shop"]);
+    expect((backup.subscription as { id: string }).id).toBe(ME);
+  });
+
+  it("moves records of the automatic and accepted-suggestion origins with their origin", async () => {
+    await seedTx("a-auto", API, "2026-05-05", -1500);
+    await seedTx("c-auto", CSV, "2026-05-05", -1500);
+    await seedFile("f-auto");
+    await seedFile("f-sugg", { transactionSuggestions: [{ transactionId: "c-auto", confidence: 77, matchSources: ["amount"] }] });
+    await db.collection("transactions").doc("a-auto").update({ fileIds: ["f-auto", "f-sugg"], isComplete: true });
+    await db.collection("files").doc("f-auto").update({ transactionIds: ["a-auto"] });
+    await db.collection("files").doc("f-sugg").update({ transactionIds: ["a-auto"] });
+    await db.collection("fileConnections").doc("r-auto").set({
+      userId: ME, fileId: "f-auto", transactionId: "a-auto", connectionType: "auto_matched", matchConfidence: 93, createdAt: JUNE,
+    });
+    await db.collection("fileConnections").doc("r-sugg").set({
+      userId: ME, fileId: "f-sugg", transactionId: "a-auto", origin: "suggestion", connectionType: "suggestion_accepted", matchConfidence: 60, createdAt: JUNE,
+    });
+    const report = await run(true);
+    expect(report.merges.find((m) => m.apiId === "a-auto")!.moves.map((m) => [m.fileId, m.origin, m.dropped])).toEqual([
+      ["f-auto", "auto", ["createdAt"]],
+      ["f-sugg", "suggestion", ["createdAt", "matchConfidence"]],
+    ]);
+    expect(await recordsOf("f-auto")).toEqual([
+      expect.objectContaining({ transactionId: "c-auto", origin: "auto", connectionType: "auto_matched", matchConfidence: 93 }),
+    ]);
+    // An accepted suggestion takes the confidence the server reads: the File's stored one.
+    expect(await recordsOf("f-sugg")).toEqual([
+      expect.objectContaining({ transactionId: "c-auto", origin: "suggestion", connectionType: "suggestion_accepted", matchConfidence: 77 }),
+    ]);
+  });
+
   it("never touches another User's rows", async () => {
     await db.collection("transactions").doc("a-foreign").set({
       userId: OTHER, sourceId: SRC, importJobId: API, date: day("2026-03-02"), amount: -1999, name: "CARD PAYMENT", fileIds: [],
@@ -238,6 +363,7 @@ describe("surveying every account, read-only", () => {
     await db.collection("transactions").doc("o-api").set({
       userId: OTHER, sourceId: "src-o", importJobId: "api_1751111111111", date: day("2026-02-02"), amount: -100, name: "X", fileIds: [],
     });
+    await db.collection("imports").doc("import_1").set({ userId: OTHER, sourceId: "src-o", status: "completed" });
     await db.collection("transactions").doc("o-csv").set({
       userId: OTHER, sourceId: "src-o", importJobId: "import_1", date: day("2026-02-02"), amount: -100, name: "X", fileIds: [],
     });
