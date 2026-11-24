@@ -29,6 +29,7 @@ import {
   CreditCard,
   Gavel,
   Banknote,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -77,6 +78,8 @@ const TYPE_STYLE: Record<string, { icon: typeof History; color: string }> = {
   cash_payment_added: { icon: Banknote, color: "text-green-600" },
   cash_payment_corrected: { icon: PencilLine, color: "text-blue-500" },
   ruling_revoked: { icon: Gavel, color: "text-orange-500" },
+  booking_accounts_set: { icon: BookOpen, color: "text-blue-500" },
+  booking_accounts_cleared: { icon: BookOpen, color: "text-orange-500" },
 };
 
 function statusDot(status: AutomationHistoryEntry["status"]) {

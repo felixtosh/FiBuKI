@@ -17,6 +17,7 @@ import { TransactionDetails } from "@/components/sidebar/transaction-details";
 import { TransactionFilesSection } from "@/components/transactions/transaction-files-section";
 import { TransactionCorrectionRelated } from "./transaction-correction-related";
 import { CashPaymentActions } from "./cash-payment-actions";
+import { BookingAccountsSection } from "@/components/files/booking-accounts-section";
 import { ActivityLogOverlay } from "@/components/activity/activity-log-overlay";
 import { AutomationSummaryRow } from "@/components/activity/automation-summary-row";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -326,6 +327,9 @@ export function TransactionDetailPanel({
             transactionId={transaction.id}
             fileKey={(transaction.fileIds ?? []).join(",")}
           />
+
+          {/* The accounts an import booked this Transaction to (#785) */}
+          <BookingAccountsSection bookingAccounts={transaction.bookingAccounts} />
 
           {/* Files Section */}
           <SectionDivider />

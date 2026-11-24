@@ -583,6 +583,44 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "set_booking_accounts",
+    annotation: "write",
+    description:
+      "Set the Booking Accounts (Sachkonten) of one file or one transaction: the accounts another bookkeeping tool booked it to, kept so an import does not lose them. Pass exactly one of fileId / transactionId. The list REPLACES the stored one; pass [] to clear it. A list equal to the stored one changes nothing. Most items carry one entry without amount or vatPercent; an item whose rate groups were booked to different accounts carries one entry per group, each with its vatPercent and gross amount in cents. This is not a correction of the extracted record: it never locks the file against retry_file_extraction, and a re-extraction never touches it. Nothing else reads it yet: the BMD export and the UVA are unchanged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "The file ID (or pass transactionId)" },
+        transactionId: { type: "string", description: "The transaction ID (or pass fileId)" },
+        bookingAccounts: {
+          type: "array",
+          description: "The full list of Booking Accounts; [] clears it.",
+          items: {
+            type: "object",
+            properties: {
+              accountNumber: { type: "string", description: "Account number in the Austrian chart (skrAt), as a string" },
+              accountName: { type: "string", description: "Account name" },
+              skr03: { type: ["string", "null"], description: "Number in the German SKR03 chart, if known" },
+              skr04: { type: ["string", "null"], description: "Number in the German SKR04 chart, if known" },
+              isAsset: { type: "boolean", description: "Booked as a fixed asset (default false)" },
+              isGwg: { type: "boolean", description: "Booked as a low-value asset, GWG (default false)" },
+              vatPercent: { type: ["number", "null"], description: "VAT rate group this entry covers, 0-100; omit when it covers the whole item" },
+              amount: { type: ["number", "null"], description: "Gross amount in integer cents booked to this account; omit when it covers the whole item" },
+              origin: {
+                type: "string",
+                enum: ["sevdesk"],
+                description: "The bookkeeping tool the value came from",
+              },
+              externalId: { type: ["string", "null"], description: "The source tool's own id for the account, e.g. SevDesk's accounting type id" },
+            },
+            required: ["accountNumber", "accountName", "origin"],
+          },
+        },
+      },
+      required: ["bookingAccounts"],
+    },
+  },
+  {
     name: "dismiss_transaction_suggestion",
     annotation: "write",
     description:
