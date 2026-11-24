@@ -12,26 +12,30 @@ const API_A = "api_1750000000001";
 const API_B = "api_1750000000002";
 const CSV = "import_1755000000000_abc1234";
 
-function row(id: string, importJobId: string | null, day: string, amount: number, name = "SHOP"): TwinRow {
-  return { id, importJobId, day, amount, name };
+/** The imports a CSV upload recorded (an `imports` record of the User and Bank Account). */
+const CSV_IMPORTS = new Set([CSV]);
+
+function row(id: string, importJobId: string | null, day: string, amount: number, name = "SHOP", currency = "EUR"): TwinRow {
+  return { id, importJobId, day, amount, name, currency };
 }
+const pair = (rows: TwinRow[]) => pairTwins(rows, CSV_IMPORTS);
 
 describe("which import a row came from", () => {
-  it("knows the old MCP id format, the CSV import and everything else", () => {
-    expect(importKind("api_1750000000001")).toBe("legacy-api");
+  it("knows the old MCP id format, a recorded CSV import and everything else", () => {
+    expect(importKind("api_1750000000001", CSV_IMPORTS)).toBe("legacy-api");
     // The current tool id carries a random suffix and was deduplicated.
-    expect(importKind("api_1750000000001_ab12cd34")).toBe("other");
-    expect(importKind("import_1755000000000_abc1234")).toBe("csv");
-    expect(importKind("draftImportDocId")).toBe("csv");
-    expect(importKind("sync_src_1755000000000")).toBe("other");
-    expect(importKind("finapi_sync_src_1755000000000")).toBe("other");
-    expect(importKind(null)).toBe("other");
+    expect(importKind("api_1750000000001_ab12cd34", CSV_IMPORTS)).toBe("other");
+    expect(importKind(CSV, CSV_IMPORTS)).toBe("csv");
+    // An id the MCP caller chose, or a bank sync: no CSV import recorded it.
+    expect(importKind("cash_1", CSV_IMPORTS)).toBe("other");
+    expect(importKind("sync_src_1755000000000", CSV_IMPORTS)).toBe("other");
+    expect(importKind(null, CSV_IMPORTS)).toBe("other");
   });
 });
 
 describe("pairing API rows with their CSV twins", () => {
   it("pairs one API row with the one CSV row of the same day and amount", () => {
-    const result = pairTwins([
+    const result = pair([
       row("a1", API_A, "2026-03-02", -1999),
       row("c1", CSV, "2026-03-02", -1999, "Shop GmbH"),
       row("c2", CSV, "2026-03-02", -500),
@@ -42,7 +46,7 @@ describe("pairing API rows with their CSV twins", () => {
   });
 
   it("reports an API row with no CSV twin, and never pairs across days or amounts", () => {
-    const result = pairTwins([
+    const result = pair([
       row("a1", API_A, "2026-03-02", -1999),
       row("c1", CSV, "2026-03-03", -1999),
       row("c2", CSV, "2026-03-02", -2000),
@@ -52,7 +56,7 @@ describe("pairing API rows with their CSV twins", () => {
   });
 
   it("pairs a day-and-amount group of several by name, and reports what the name does not settle", () => {
-    const result = pairTwins([
+    const result = pair([
       row("a1", API_A, "2026-04-01", -1000, "AMAZON* 111"),
       row("a2", API_B, "2026-04-01", -1000, "AMAZON* 222"),
       row("c1", CSV, "2026-04-01", -1000, "amazon*  222"),
@@ -71,7 +75,7 @@ describe("pairing API rows with their CSV twins", () => {
   });
 
   it("reports more API rows than CSV rows on a day and amount as ambiguous", () => {
-    const result = pairTwins([
+    const result = pair([
       row("a1", API_A, "2026-04-01", -1000, "X"),
       row("a2", API_B, "2026-04-01", -1000, "Y"),
       row("c1", CSV, "2026-04-01", -1000, "Z"),
@@ -80,10 +84,23 @@ describe("pairing API rows with their CSV twins", () => {
     expect(result.ambiguous).toEqual([{ apiIds: ["a1", "a2"], csvIds: ["c1"] }]);
   });
 
+  it("never pairs a row without a finite amount, nor across currencies", () => {
+    const result = pair([
+      row("a1", API_A, "2026-03-02", NaN),
+      row("c1", CSV, "2026-03-02", NaN),
+      row("a2", API_A, "2026-03-03", -100, "X", "USD"),
+      row("c2", CSV, "2026-03-03", -100, "X", "EUR"),
+    ]);
+    expect(result.pairs).toEqual([]);
+    expect(result.unmatched).toEqual(["a2"]);
+    expect(result.unpairable).toEqual(["a1"]);
+  });
+
   it("ignores rows of other imports and API rows of the current id format", () => {
-    const result = pairTwins([
+    const result = pair([
       row("a1", "api_1750000000001_ab12cd34", "2026-03-02", -1999),
       row("s1", "sync_src_1", "2026-03-02", -1999),
+      row("m1", "cash_1", "2026-03-02", -1999),
       row("c1", CSV, "2026-03-02", -1999),
     ]);
     expect(result.pairs).toEqual([]);
@@ -237,5 +254,68 @@ describe("planning one pair's merge", () => {
     expect(
       planTwinMerge({ api: api({ isComplete: true }), csv: csv(), records: [], files: new Map(), originals: new Map() })
     ).toMatchObject({ kind: "merge", notes: ["api-complete-without-evidence"] });
+  });
+
+  it("leaves a pair for a decision when the API twin holds work the CSV row lacks and nothing would move", () => {
+    const base = { records: [], files: new Map(), originals: new Map() };
+    for (const [field, value] of [
+      ["rejectedFiles", [{ fileId: "f9" }]],
+      ["receiptOnlyAcceptance", { acceptedAt: 1 }],
+      ["partialPaymentAcceptance", { acceptedAt: 1 }],
+      ["receiptLostEntry", { reason: "lost" }],
+      ["vatRate", 20],
+      ["isReverseCharge", true],
+      ["foreignSupplyKind", "service"],
+      ["reconciledByBankTxId", "t-x"],
+    ] as const) {
+      expect(planTwinMerge({ ...base, api: api({ [field]: value }), csv: csv() }), field).toMatchObject({
+        kind: "decision",
+        reason: "api-holds-state",
+        fields: [field],
+      });
+    }
+    // The same on both twins: nothing is lost.
+    expect(planTwinMerge({ ...base, api: api({ vatRate: 20 }), csv: csv({ vatRate: 20 }) })).toMatchObject({ kind: "merge" });
+    // Another row points at the API twin.
+    expect(planTwinMerge({ ...base, api: api(), csv: csv(), referencedBy: ["t-cash"] })).toMatchObject({
+      kind: "decision",
+      reason: "referenced-by-other-rows",
+    });
+  });
+
+  it("notes a description the API twin holds that the CSV row does not", () => {
+    expect(
+      planTwinMerge({ records: [], files: new Map(), originals: new Map(), api: api({ description: "office chair" }), csv: csv() })
+    ).toMatchObject({ kind: "merge", notes: ["api-description-differs"] });
+  });
+
+  it("leaves the Partner for a decision when the User removed it from the CSV row", () => {
+    expect(
+      planTwinMerge({
+        records: [],
+        files: new Map(),
+        originals: new Map(),
+        api: api({ partnerId: "p1", partnerType: "user", partnerMatchedBy: "auto" }),
+        csv: csv(),
+        partners: new Map([["p1", { userId: "u", manualRemovals: [{ transactionId: "c1" }] }]]),
+      })
+    ).toMatchObject({ kind: "decision", reason: "partner-removed-on-csv" });
+  });
+
+  it("names what of the old record the writer does not keep", () => {
+    const plan = planTwinMerge({
+      api: api({ fileIds: ["f1", "f2"] }),
+      csv: csv(),
+      records: [
+        rec("f1", "a1", { origin: "manual", connectionType: "manual", confirmedFrom: "auto_matched", confirmedAt: 1, createdAt: 1 }),
+        rec("f2", "a1", { origin: "suggestion", connectionType: "suggestion_accepted", matchConfidence: 80 }),
+      ],
+      files: new Map([["f1", file()], ["f2", file()]]),
+      originals: new Map(),
+    });
+    expect(plan.kind === "merge" && plan.moves.map((m) => m.dropped)).toEqual([
+      ["createdAt", "confirmedFrom", "confirmedAt"],
+      ["matchConfidence"],
+    ]);
   });
 });

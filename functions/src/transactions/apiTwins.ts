@@ -20,7 +20,7 @@
 
 import { isLiveCopy } from "../files/copyOps";
 import { isTransactionDismissed } from "../matching/dismissedTransactions";
-import { isFileRejected } from "../matching/rejectedFiles";
+import { isFileRejected, readRejectedFileIds } from "../matching/rejectedFiles";
 import { ORIGIN_RULES, isConnectionOrigin, type ConnectionOrigin } from "../fileConnections/rules";
 import type { FileConnectionSourceInfo } from "../fileConnections/learning";
 
@@ -33,14 +33,16 @@ export type ImportKind = "legacy-api" | "csv" | "other";
 /** The MCP tool's import id before it gained a random suffix and the duplicate check. */
 export const LEGACY_API_IMPORT = /^api_\d{13}$/;
 
-/** Import ids that are neither a CSV import nor the old MCP one: bank syncs and the current tool. */
-const NOT_CSV_PREFIXES = ["api_", "sync_", "finapi_", "truelayer_"];
-
-export function importKind(importJobId: string | null | undefined): ImportKind {
+/**
+ * Which import a row came from. A CSV row is one whose import a CSV upload
+ * recorded (an `imports` record of the User and the Bank Account, read by
+ * the caller): the MCP tool accepts any import id its caller chooses, so a
+ * prefix proves nothing.
+ */
+export function importKind(importJobId: string | null | undefined, csvImportIds: ReadonlySet<string>): ImportKind {
   if (typeof importJobId !== "string" || !importJobId) return "other";
   if (LEGACY_API_IMPORT.test(importJobId)) return "legacy-api";
-  if (NOT_CSV_PREFIXES.some((p) => importJobId.startsWith(p))) return "other";
-  return "csv";
+  return csvImportIds.has(importJobId) ? "csv" : "other";
 }
 
 /** One Transaction of a Bank Account, as pairing sees it. */
@@ -52,14 +54,17 @@ export interface TwinRow {
   /** Integer cents. */
   amount: number;
   name: string;
+  currency: string;
 }
 
 export interface Pairing {
   pairs: Array<{ apiId: string; csvId: string }>;
-  /** API rows with no CSV row of the same day and amount. */
+  /** API rows with no CSV row of the same day, amount and currency. */
   unmatched: string[];
   /** Day-and-amount groups the name does not pair one to one. */
   ambiguous: Array<{ apiIds: string[]; csvIds: string[] }>;
+  /** API rows with no day or no finite amount: never paired. */
+  unpairable: string[];
 }
 
 export function normalizeName(name: string): string {
@@ -67,17 +72,22 @@ export function normalizeName(name: string): string {
 }
 
 /** Pair the legacy API rows of one Bank Account with its CSV rows. */
-export function pairTwins(rows: TwinRow[]): Pairing {
+export function pairTwins(rows: TwinRow[], csvImportIds: ReadonlySet<string>): Pairing {
   const groups = new Map<string, { api: TwinRow[]; csv: TwinRow[] }>();
+  const unpairable: string[] = [];
   for (const r of rows) {
-    const kind = importKind(r.importJobId);
+    const kind = importKind(r.importJobId, csvImportIds);
     if (kind === "other") continue;
-    const key = `${r.day}|${r.amount}`;
+    if (!Number.isFinite(r.amount) || !r.day) {
+      if (kind === "legacy-api") unpairable.push(r.id);
+      continue;
+    }
+    const key = `${r.day}|${r.amount}|${r.currency}`;
     if (!groups.has(key)) groups.set(key, { api: [], csv: [] });
     groups.get(key)![kind === "legacy-api" ? "api" : "csv"].push(r);
   }
 
-  const result: Pairing = { pairs: [], unmatched: [], ambiguous: [] };
+  const result: Pairing = { pairs: [], unmatched: [], ambiguous: [], unpairable };
   for (const { api, csv } of groups.values()) {
     if (api.length === 0) continue;
     if (csv.length === 0) {
@@ -131,6 +141,10 @@ export interface PlanInput {
   files: Map<string, Data>;
   /** The originals those Files name as Copies of (`copyOfFileId`). */
   originals: Map<string, Data>;
+  /** The Partner the API twin holds, by id (its `manualRemovals` are read). */
+  partners?: Map<string, Data>;
+  /** Other Transactions that point at the API twin (a reconciliation). */
+  referencedBy?: string[];
 }
 
 /** One File Connection to move from the API twin onto the CSV row, as the record holds it. */
@@ -144,6 +158,12 @@ export interface FileMove {
   autoConnectReason?: "remainder_same_day" | "paired" | "instalment";
   aiReasoning?: string;
   sourceInfo?: FileConnectionSourceInfo;
+  /**
+   * Fields of the old record the connect does not carry: the writer stamps a
+   * fresh `createdAt`, drops a confirmation of an automatic match, and for
+   * an accepted suggestion reads the confidence itself. Absent when none.
+   */
+  dropped?: string[];
 }
 
 export type PartnerMatchedBy = "manual" | "suggestion" | "auto" | "ai" | "api";
@@ -169,17 +189,31 @@ export type MergePlan =
       partner: { partnerId: string; partnerType: "global" | "user"; matchedBy: PartnerMatchedBy; confidence?: number } | null;
       category: { categoryId: string; matchedBy: CategoryMatchedBy; confidence: number | null } | null;
       quota: QuotaStep;
-      /** `api-complete-without-evidence`: the API twin is marked complete with no File and no Category; nothing moves it. */
+      /**
+       * `api-complete-without-evidence`: the API twin is marked complete with no File and no Category; nothing moves it.
+       * `api-description-differs`: the API twin's description is not the CSV row's; it goes with the API twin.
+       */
       notes: string[];
     }
   | {
       kind: "decision";
       apiId: string;
       csvId: string;
-      reason: "different-files" | "different-partners" | "different-categories" | "rejected-on-csv";
+      reason:
+        | "different-files"
+        | "different-partners"
+        | "different-categories"
+        | "rejected-on-csv"
+        | "partner-removed-on-csv"
+        | "api-holds-state"
+        | "referenced-by-other-rows";
       apiFileIds?: string[];
       csvFileIds?: string[];
       fileId?: string;
+      /** `api-holds-state`: the fields the API twin holds and the CSV row lacks. */
+      fields?: string[];
+      /** `referenced-by-other-rows`: the Transactions pointing at the API twin. */
+      referencedBy?: string[];
     }
   | {
       kind: "blocked";
@@ -211,6 +245,44 @@ const SOURCE_INFO_FIELDS: ReadonlyArray<keyof FileConnectionSourceInfo> = [
   "gmailMessageFromName",
   "resultType",
 ];
+
+/**
+ * The API twin's own work that no writer moves: Rejections, the § 11 and UVA
+ * rulings, VAT facts, a reconciliation. Held by the API twin and not by the
+ * CSV row, it would go with the API row, so the pair waits for a decision.
+ */
+const API_STATE_FIELDS = [
+  "rejectedFiles",
+  "receiptOnlyAcceptance",
+  "partialPaymentAcceptance",
+  "receiptLostEntry",
+  "vatRate",
+  "vatAmount",
+  "isReverseCharge",
+  "isEuTransaction",
+  "foreignSupplyKind",
+  "saleSupplyKind",
+  "reconciledByBankTxId",
+  "reconciliationGroupId",
+] as const;
+
+function held(value: unknown): boolean {
+  if (value === undefined || value === null || value === false || value === "") return false;
+  return !(Array.isArray(value) && value.length === 0);
+}
+
+/** The API state fields the CSV row would lose: held by the API twin and not equally by the CSV row. */
+function lostState(api: Data, csv: Data): string[] {
+  const lost: string[] = [];
+  const apiRejected = [...readRejectedFileIds(api)];
+  const csvRejected = readRejectedFileIds(csv);
+  if (apiRejected.some((id) => !csvRejected.has(id))) lost.push("rejectedFiles");
+  for (const field of API_STATE_FIELDS) {
+    if (field === "rejectedFiles") continue;
+    if (held(api[field]) && JSON.stringify(api[field]) !== JSON.stringify(csv[field])) lost.push(field);
+  }
+  return lost;
+}
 
 const AUTO_CONNECT_REASONS = new Set(["remainder_same_day", "paired", "instalment"]);
 const PARTNER_MATCHED_BY = new Set(["manual", "suggestion", "auto", "ai", "api"]);
@@ -257,6 +329,9 @@ function moveOf(fileId: string, origin: ConnectionOrigin, record: Data): FileMov
     if (typeof value === "string" && value) (sourceInfo as Record<string, string>)[key] = value;
   }
   if (Object.keys(sourceInfo).length > 0) move.sourceInfo = sourceInfo;
+  const dropped = ["createdAt", "confirmedFrom", "confirmedAt"].filter((k) => record[k] != null);
+  if (origin === "suggestion" && typeof record.matchConfidence === "number") dropped.push("matchConfidence");
+  if (dropped.length > 0) move.dropped = dropped;
   return move;
 }
 
@@ -295,6 +370,17 @@ export function planTwinMerge(input: PlanInput): MergePlan {
     typeof csv.data.noReceiptCategoryId === "string" && csv.data.noReceiptCategoryId ? csv.data.noReceiptCategoryId : null;
   if (apiCategory && csvCategory && apiCategory !== csvCategory) {
     return { kind: "decision", ...head, reason: "different-categories" };
+  }
+  if (apiPartner && !csvPartner) {
+    const removals = input.partners?.get(apiPartner)?.manualRemovals;
+    if (Array.isArray(removals) && removals.some((r) => (r as { transactionId?: unknown })?.transactionId === csv.id)) {
+      return { kind: "decision", ...head, reason: "partner-removed-on-csv" };
+    }
+  }
+  const fields = lostState(api.data, csv.data);
+  if (fields.length > 0) return { kind: "decision", ...head, reason: "api-holds-state", fields };
+  if (input.referencedBy && input.referencedBy.length > 0) {
+    return { kind: "decision", ...head, reason: "referenced-by-other-rows", referencedBy: input.referencedBy };
   }
 
   const quota: QuotaStep = api.data.quotaExceeded ? "none" : csv.data.quotaExceeded ? "transfer" : "decrement";
@@ -342,6 +428,7 @@ export function planTwinMerge(input: PlanInput): MergePlan {
       : null;
   const notes: string[] = [];
   if (api.data.isComplete === true && apiFiles.length === 0 && !apiCategory) notes.push("api-complete-without-evidence");
+  if (held(api.data.description) && api.data.description !== csv.data.description) notes.push("api-description-differs");
 
   return {
     kind: "merge",
