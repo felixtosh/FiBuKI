@@ -8,7 +8,7 @@ import { checkTransactionQuota, incrementTransactionCount } from "../billing/che
 import { toDateSafe } from "../utils/toDateSafe";
 import { normalizeTransactionType } from "./transactionType";
 import { computeDedupeHash, splitDuplicates } from "./dedupe";
-import { splitUntracked } from "../fiscalYears/fiscalYears";
+import { readFiscalYears, splitUntracked, stretchOf } from "../fiscalYears/fiscalYears";
 
 interface TransactionData {
   sourceId: string;
@@ -227,8 +227,11 @@ export const bulkCreateTransactionsCallable = createCallable<
       const existingOpeningDate = toDateSafe(sourceData.openingBalanceDate);
       const newOpeningDate = new Date(openingBalanceDate);
 
-      // Only update opening balance if no existing one or this one is earlier
-      const shouldUpdateOpening = !existingOpeningDate || newOpeningDate < existingOpeningDate;
+      // Only update opening balance if no existing one or this one is earlier. The browser
+      // derives it from the file's earliest row; when that row lies before Tracked From it
+      // was skipped, so the figure describes rows FiBuKI does not hold (#794).
+      const openingUntracked = stretchOf(await readFiscalYears(ctx.db, ctx.userId), newOpeningDate) === "untracked";
+      const shouldUpdateOpening = !openingUntracked && (!existingOpeningDate || newOpeningDate < existingOpeningDate);
 
       const balanceUpdates: Record<string, unknown> = {
         latestBalance,

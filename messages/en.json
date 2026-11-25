@@ -382,7 +382,21 @@
       "via": {
         "settings": "in Settings",
         "mcp": "by an MCP client",
-        "chat": "by the chat"
+        "chat": "by the chat",
+        "initial": "stored as the default"
+      },
+      "untrackedNotice": {
+        "title": "{count, plural, one {# row was} other {# rows were}} skipped: dated before Tracked From",
+        "year": "{year}: {count}",
+        "link": "Track these years in Settings, Fiscal Years"
+      },
+      "noChange": "Nothing changed.",
+      "refusal": {
+        "invalid": "That is not a valid month.",
+        "after-current-month": "A month after the current one cannot be set (the latest is {month}).",
+        "closed-before-tracked": "Closed through cannot lie before tracked from; the earliest is {month}.",
+        "tracked-after-gap": "Tracked from would leave a gap after the closed months; the latest is {month}. Move closed through first.",
+        "tracked-from-holds-data": "Tracked from cannot move past {month}: it holds transactions or documents. Close those months instead."
       }
     },
     "identity": {

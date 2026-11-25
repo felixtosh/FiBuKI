@@ -382,7 +382,21 @@
       "via": {
         "settings": "in den Einstellungen",
         "mcp": "von einem MCP-Client",
-        "chat": "vom Chat"
+        "chat": "vom Chat",
+        "initial": "als Vorgabe gespeichert"
+      },
+      "untrackedNotice": {
+        "title": "{count, plural, one {# Zeile wurde} other {# Zeilen wurden}} übersprungen: vor „Geführt ab“ datiert",
+        "year": "{year}: {count}",
+        "link": "Diese Jahre unter Einstellungen, Geschäftsjahre führen"
+      },
+      "noChange": "Nichts geändert.",
+      "refusal": {
+        "invalid": "Das ist kein gültiger Monat.",
+        "after-current-month": "Ein Monat nach dem aktuellen kann nicht gesetzt werden (spätestens {month}).",
+        "closed-before-tracked": "„Abgeschlossen bis“ darf nicht vor „Geführt ab“ liegen; frühestens {month}.",
+        "tracked-after-gap": "„Geführt ab“ würde eine Lücke nach den abgeschlossenen Monaten lassen; spätestens {month}. Zuerst „Abgeschlossen bis“ verschieben.",
+        "tracked-from-holds-data": "„Geführt ab“ kann nicht über {month} hinaus verschoben werden: Dort liegen Transaktionen oder Belege. Diese Monate stattdessen abschließen."
       }
     },
     "identity": {

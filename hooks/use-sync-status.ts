@@ -23,6 +23,8 @@ interface UseSyncStatusReturn {
   status: SyncStatus | null;
   isSyncing: boolean;
   syncError: string | null;
+  /** Rows the last sync skipped as dated before Tracked From (#794). */
+  untrackedByFiscalYear: Record<string, number> | null;
   triggerSync: () => Promise<void>;
   isApiSource: boolean;
   provider: BankingProvider;
@@ -36,6 +38,8 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  // Rows the last sync skipped as dated before Tracked From (#794), per fiscal year.
+  const [untrackedByFiscalYear, setUntrackedByFiscalYear] = useState<Record<string, number> | null>(null);
   const [isApiSource, setIsApiSource] = useState(false);
   const [provider, setProvider] = useState<BankingProvider>(null);
 
@@ -150,6 +154,7 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
         throw new Error(data.error || "Sync failed");
       }
 
+      setUntrackedByFiscalYear(data.untrackedByFiscalYear ?? null);
       // Success - status will update via onSnapshot
     } catch (err) {
       setSyncError(err instanceof Error ? err.message : "Sync failed");
@@ -162,6 +167,7 @@ export function useSyncStatus(sourceId: string | null): UseSyncStatusReturn {
     status,
     isSyncing,
     syncError,
+    untrackedByFiscalYear,
     triggerSync,
     isApiSource,
     provider,

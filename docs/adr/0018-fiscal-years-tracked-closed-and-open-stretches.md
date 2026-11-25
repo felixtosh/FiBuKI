@@ -34,18 +34,26 @@ Moving Tracked From later is refused when the months it would leave behind hold
 Transactions or Files. FiBuKI never hides what it stores; months that should be out of the
 way are closed instead.
 
-Without stored settings, Tracked From is the first month of the current Fiscal Year, or the
-month of the User's earliest Transaction or File when that is earlier. A new User tracks
-only the current year; a User who had data before Fiscal Years existed finds none of it
-untracked.
+Neither month may lie after the current one: nothing is tracked or closed ahead of time.
+
+The default is stored on the User's first read, with an `initial` change record, so it does
+not move when a new year begins. It is the first month of the current Fiscal Year, or the
+first month of the Fiscal Year holding the User's earliest Transaction or dated File when
+that is earlier. A new User tracks only the current year; a User who had data before Fiscal
+Years existed finds none of it untracked. A File in the bin does not count, and neither
+does a File without a date: its date is known only after the Extraction, so an undated
+File never sets the default or holds a month against moving Tracked From.
 
 ## The lock
 
 A Transaction dated in the Closed stretch cannot be edited or deleted. The refusal names
-Closed Through and how to lift it. It sits where every edit and delete already passes:
-the Transaction edit whitelist (both update callables and the tool surface's update,
-which a rollback goes through), the delete of a Bank Account's contents, a re-sync that
-would replace them, and a Cash Payment's correction and delete.
+Closed Through and how to lift it. It sits at every writer a User or a client reaches: the
+Transaction edit whitelist (both update callables and the tool surface's update, which a
+rollback goes through), the Partner, No-document Category and ruling writers, Booking
+Accounts, a suggestion's rejection, deleting or remapping an Import, the delete of a Bank
+Account's contents, a bank disconnect, a re-sync that would replace them, and a Cash
+Payment's correction and delete. The orphan cleanups keep a closed orphan. The browser
+writes no Transaction at all, so the data plane refuses every write to one.
 
 Inserts are not refused. A User moving from another tool imports old years into the
 Closed stretch with the normal tools.

@@ -280,7 +280,8 @@ export async function generateRemapPreview(
   if (parsedRows.length !== existingTransactions.size) {
     warnings.push(
       `Row count mismatch: CSV has ${parsedRows.length} rows, but ${existingTransactions.size} transactions exist. ` +
-        `Some rows may be skipped duplicates or failed during original import.`
+        `The others were skipped as duplicates, skipped as dated before Tracked From ` +
+        `(not tracked; see Settings, Fiscal Years), or failed during the original import.`
     );
   }
 

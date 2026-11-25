@@ -43,6 +43,8 @@ export interface ImportState {
     errors: number;
     errorDetails: { row: number; message: string; rowData: Record<string, string> }[];
     overLimitCount: number;
+    /** Rows before Tracked From, per fiscal year (#794); the server skipped them. */
+    untrackedByFiscalYear?: Record<string, number>;
     balanceDetected?: {
       openingBalance: number;
       openingBalanceDate: string;
@@ -646,6 +648,7 @@ export function useImport(
     // Batch write transactions using Cloud Function
     let importedCount = 0;
     let skippedCount = 0; // rows the server found already imported
+    const untrackedByFiscalYear: Record<string, number> = {}; // rows before Tracked From (#794)
     const transactionIds: string[] = [];
     const overLimitTransactionIds: string[] = [];
 
@@ -663,7 +666,7 @@ export function useImport(
       // Include balanceInfo only on the first batch
       const result = await callFunction<
         { transactions: typeof transactionsForCF; sourceId: string; balanceInfo?: typeof balanceInfo },
-        { transactionIds: string[]; duplicateCount?: number; quotaExceeded?: boolean; overLimitCount?: number; overLimitTransactionIds?: string[] }
+        { transactionIds: string[]; duplicateCount?: number; quotaExceeded?: boolean; overLimitCount?: number; overLimitTransactionIds?: string[]; untrackedByFiscalYear?: Record<string, number> }
       >("bulkCreateTransactions", {
         transactions: transactionsForCF,
         sourceId: source.id,
@@ -676,6 +679,9 @@ export function useImport(
       }
       importedCount += result.transactionIds.length;
       skippedCount += result.duplicateCount ?? 0;
+      for (const [year, count] of Object.entries(result.untrackedByFiscalYear ?? {})) {
+        untrackedByFiscalYear[year] = (untrackedByFiscalYear[year] ?? 0) + count;
+      }
 
       setState((s) => ({
         ...s,
@@ -747,6 +753,7 @@ export function useImport(
         errors: errors.length,
         errorDetails: errors,
         overLimitCount: overLimitTransactionIds.length,
+        untrackedByFiscalYear,
         balanceDetected: balanceInfo,
       },
     }));

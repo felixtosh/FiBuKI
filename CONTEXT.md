@@ -168,8 +168,10 @@ _Avoid (de)_: Veranlagungsjahr, Kalenderjahr (unless it starts in January), Zeit
 
 **Tracked From**:
 The first month FiBuKI holds data for. By default the first month of the current Fiscal
-Year, or for a User who already held older data, the month of the earliest of it. It can
-move later only over months that hold no Transactions or Files.
+Year, or for a User who already held older data, the first month of the Fiscal Year
+holding the earliest of it; the default is stored on first use, so it never moves on its
+own. It can move later only over months that hold no Transactions or Files, and never past
+the current month.
 _Deutsch_: Geführt ab
 _Avoid_: start date, import from
 

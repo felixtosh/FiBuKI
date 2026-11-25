@@ -27,6 +27,7 @@ import { deleteSourceCallable } from "../sources/deleteSource";
 import { addCashPaymentCallable, deleteCashPaymentCallable } from "../transactions/cashPayment";
 import { bulkCreateTransactionsCallable } from "../imports/bulkCreateTransactions";
 import { syncBankTransactionsCallable } from "../banking/syncBankTransactions";
+import { syncFinapiTransactions } from "../finapi/syncCallable";
 import { deleteImportRecordCallable } from "../imports/deleteImportRecord";
 import { applyImportRemapCallable } from "../imports/applyImportRemap";
 import { cleanupOrphanedTransactionsCallable } from "../banking/cleanupOrphanedTransactions";
@@ -485,6 +486,39 @@ describe("the Import writer skips Untracked rows and counts them per fiscal year
     expect(await storedDays()).toEqual(["2024-01-01"]);
   });
 
+  it("the CSV Import keeps no opening balance derived from a skipped row", async () => {
+    await account();
+    await change({ trackedFrom: "2024-01" });
+    const csvRow = (iso: string, i: number) => ({
+      sourceId: "src-1",
+      date: `${iso}T00:00:00.000Z`,
+      amount: -100 - i,
+      currency: "EUR",
+      name: `Vendor ${i}`,
+      importJobId: "job-1",
+      csvRowIndex: i,
+      _original: { date: iso, amount: "-1", rawRow: {} },
+    });
+
+    await bulkCreateTransactionsCallable.run({
+      data: {
+        sourceId: "src-1",
+        transactions: [csvRow("2023-12-31", 0), csvRow("2024-01-02", 1)],
+        balanceInfo: {
+          openingBalance: 100000,
+          openingBalanceDate: "2023-12-31T00:00:00.000Z",
+          latestBalance: 99799,
+          latestBalanceDate: "2024-01-02T00:00:00.000Z",
+        },
+      },
+      auth: AUTH,
+    } as never);
+
+    const source = (await db.collection("sources").doc("src-1").get()).data()!;
+    expect(source.openingBalance).toBeUndefined();
+    expect(source.latestBalance).toBe(99799);
+  });
+
   it("an Import with nothing before Tracked From reports none skipped", async () => {
     await account();
     await change({ trackedFrom: "2024-01" });
@@ -707,5 +741,50 @@ describe("deleting the account removes the Fiscal Years settings and their recor
 
     expect((await db.doc(`users/${USER}/settings/fiscalYears`).get()).exists).toBe(false);
     expect(await allRecords()).toEqual([]);
+  });
+});
+
+describe("the second finAPI sync skips Untracked months too", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("writes the tracked row and counts the other under a fiscal year starting in July", async () => {
+    process.env.FINAPI_CLIENT_ID = "test-client";
+    process.env.FINAPI_CLIENT_SECRET = "test-secret";
+    await db.collection("sources").doc("fin-1").set({
+      userId: USER,
+      name: "Bank",
+      type: "api",
+      isActive: true,
+      apiConfig: {
+        provider: "finapi",
+        accountId: "7",
+        userAccessToken: "token",
+        tokenExpiresAt: Timestamp.fromDate(new Date(Date.now() + 3_600_000)),
+      },
+    });
+    await change({ startMonth: 7, trackedFrom: "2024-07" });
+    const lines = [
+      { id: 1, accountId: 7, valueDate: "2024-06-28", bankBookingDate: "2024-06-28", amount: -10, counterpartName: "Old" },
+      { id: 2, accountId: 7, valueDate: "2024-07-01", bankBookingDate: "2024-07-01", amount: -20, counterpartName: "New" },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ transactions: lines, paging: { page: 1, perPage: 500, totalPages: 1, totalCount: 2 } }),
+      }))
+    );
+
+    const res = (await syncFinapiTransactions.run({ data: { sourceId: "fin-1" }, auth: AUTH } as never)) as {
+      imported: number;
+      untrackedCount: number;
+      untrackedByFiscalYear: Record<string, number>;
+    };
+
+    expect(res).toMatchObject({ imported: 1, untrackedCount: 1, untrackedByFiscalYear: { "2023/24": 1 } });
+    const stored = await db.collection("transactions").where("sourceId", "==", "fin-1").get();
+    expect(stored.docs.map((d) => d.data().name)).toEqual(["New"]);
   });
 });
