@@ -630,6 +630,7 @@
         "amount": "Amount",
         "date": "Document date",
         "tipAmount": "Tip",
+        "currency": "Currency",
         "other": "other fields"
       }
     },

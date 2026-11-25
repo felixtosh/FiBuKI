@@ -37,6 +37,7 @@ const FIELD_LABEL_KEY: Record<string, string> = {
   lineItems: "extracted.lineItems.title",
   invoiceDirection: "detail.direction",
   tipAmount: "handCorrection.fields.tipAmount",
+  currency: "handCorrection.fields.currency",
   dueDate: "extracted.fields.dueDate",
   debitDate: "extracted.fields.debitDate",
 };

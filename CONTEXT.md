@@ -314,16 +314,19 @@ Pre-OCR'd text from a document management system is not an input to it. If that 
 returns, it is an ingestion question.
 
 **Hand Correction**:
-A User's change to an Extraction's figures, its direction, or the Due Date or Debit Date,
-recorded on the File so a re-extraction does not discard it: a re-extraction of a File
-carrying one is refused as a whole unless it is forced. Made in the File detail panel or
-through the MCP correction tool, which take the same fields. Changing the counterparty's
-name, VAT id, IBAN or address is not recorded. One that moves the amount, the date, the
-Due Date, the Debit Date, or the counterparty's name, VAT id or IBAN re-scores the File's
-suggestions; none connects or disconnects a Transaction, a Receipt Link's paired File
-included: after one, the pair check only suggests. The identity sweep keeps a direction
-set by hand. Marking the File not an invoice clears the figures and the record with them,
-so un-marking it re-extracts it freely.
+A User's change to an Extraction's figures, its currency, its direction, or the Due Date
+or Debit Date, recorded on the File so a re-extraction does not discard it: a re-
+extraction of a File carrying one is refused as a whole unless it is forced. Made in the
+File detail panel or through the MCP correction tool, which take the same fields. Facts
+given with an upload (date, amount, currency, VAT) are recorded the same way; until the
+first reading of that File lands, its Extraction fills only the fields they leave empty
+instead of being refused. Changing the counterparty's name, VAT id, IBAN or address is not
+recorded. One that moves the amount, the currency, the date, the Due Date, the Debit Date,
+or the counterparty's name, VAT id or IBAN re-scores the File's suggestions; none connects
+or disconnects a Transaction, a Receipt Link's paired File included: after one, the pair
+check only suggests. The identity sweep keeps a direction set by hand. Marking the File
+not an invoice clears the figures and the record with them, so un-marking it re-extracts
+it freely.
 _Deutsch_: von Hand geändert
 _Avoid_: correction (that is the **Invoice Correction**), override, edit
 _Avoid (de)_: Korrektur, Rechnungskorrektur (both name the **Invoice Correction**)
