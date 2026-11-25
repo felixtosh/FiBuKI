@@ -58,6 +58,7 @@ import {
 } from "../fileFacts/handCorrection";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
 import { applyFactChange } from "../fileFacts/applyFactChange";
+import { decideFactChange } from "../fileFacts/factChange";
 import {
   CORRECTABLE_FIELDS,
   correctedFieldsOf,
@@ -1607,6 +1608,8 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     file: {
       fileName: after.fileName ?? null,
       extractedAmount: after.extractedAmount ?? null,
+      // #795: the currency that amount is in.
+      extractedCurrency: after.extractedCurrency ?? null,
       // #217: reported beside the total precisely so a caller can see it was
       // not taken out of it.
       extractedTipAmount: after.extractedTipAmount ?? null,
@@ -3439,6 +3442,10 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
   if (!mimeType) throw new Error("mimeType is required");
   if (!url && !base64) throw new Error("Either file, url or base64 is required");
 
+  // The facts the caller already knows (#795). Checked before anything is
+  // stored, so a refused value leaves no File behind.
+  const given = await checkGivenFacts(userId, args);
+
   let fileBuffer: Buffer;
 
   if (base64) {
@@ -3518,6 +3525,10 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
     updatedAt: now,
   });
 
+  // A byte-identical File already on record keeps its own facts.
+  let givenFacts: string[] = [];
+  if (!duplicate) givenFacts = await writeGivenFacts(userId, fileId, given);
+
   return {
     success: true,
     fileId,
@@ -3525,7 +3536,76 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
     storagePath,
     fileSize: fileBuffer.length,
     duplicate,
+    ...(givenFacts.length > 0 ? { givenFacts } : {}),
   };
+}
+
+/** The facts `upload_file` takes beside the bytes (#795), in the correction's own names. */
+const GIVEN_FACT_FIELDS = ["date", "amount", "currency", "vatAmount", "vatPercent"] as const;
+
+interface GivenFacts {
+  correction: FileExtractionCorrection;
+  partnerId: string | null;
+}
+
+/**
+ * Read and check the given facts: the figures through the File facts module's
+ * own validation (the same refusals `update_file_extraction` gives), the
+ * Partner as one the User may assign.
+ */
+async function checkGivenFacts(userId: string, args: Record<string, unknown>): Promise<GivenFacts> {
+  const correction: Record<string, unknown> = {};
+  for (const key of GIVEN_FACT_FIELDS) {
+    if (args[key] !== undefined && args[key] !== null) correction[key] = args[key];
+  }
+  if (Object.keys(correction).length > 0) {
+    const outcome = decideFactChange(
+      { record: {}, linkedTransactions: [] },
+      { origin: "upload", correction: correction as FileExtractionCorrection }
+    );
+    if (outcome.refused) throw new Error(outcome.message);
+  }
+
+  let partnerId: string | null = null;
+  if (args.partnerId !== undefined && args.partnerId !== null) {
+    const { loadUsablePartner } = await import("../files/filePartner");
+    await loadUsablePartner(db, userId, args.partnerId as string, "user");
+    partnerId = args.partnerId as string;
+  }
+
+  return { correction: correction as FileExtractionCorrection, partnerId };
+}
+
+/**
+ * Store the given facts on the new File (#795): the figures as hand-given
+ * facts through the File facts module, so the Extraction fills only what they
+ * leave empty; the Partner as a manual assignment, which Partner matching
+ * never overwrites. Returns the names of what was stored.
+ */
+async function writeGivenFacts(userId: string, fileId: string, given: GivenFacts): Promise<string[]> {
+  const stored: string[] = [];
+  if (Object.keys(given.correction).length > 0) {
+    const result = await applyFactChange(db, {
+      fileId,
+      userId,
+      change: { origin: "upload", correction: given.correction },
+    });
+    if (result.refused) throw new Error(result.message);
+    stored.push(...result.changed);
+  }
+  if (given.partnerId) {
+    const { assignPartnerToFile } = await import("../files/filePartner");
+    await assignPartnerToFile(db, userId, {
+      fileId,
+      partnerId: given.partnerId,
+      partnerType: "user",
+      matchedBy: "manual",
+      confidence: 100,
+      actor: "ai",
+    });
+    stored.push("partnerId");
+  }
+  return stored;
 }
 
 export async function scoreFileTransactionMatch(userId: string, args: Record<string, unknown>) {

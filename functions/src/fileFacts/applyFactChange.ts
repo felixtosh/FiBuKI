@@ -122,6 +122,7 @@ function factsNamed(keys: string[]): string | null {
 const ORIGIN_ACTOR: Record<FactChange["origin"], ActivityActor> = {
   "ui-correction": "manual",
   "mcp-correction": "ai",
+  upload: "ai",
   extraction: "ai",
   "not-invoice": "manual",
   "identity-sweep": "auto",
@@ -169,6 +170,8 @@ export function factChangeActivity(
       return activityEntry({ type: "facts_derived", actor: who, summary: `Re-derived from your company details: ${listed}` });
     case "generated-invoice":
       return activityEntry({ type: "facts_derived", actor: who, summary: `Taken from the invoice FiBuKI generated: ${listed}` });
+    case "upload":
+      return activityEntry({ type: "facts_corrected", actor: who, summary: `Given at upload: ${listed}` });
     default:
       return activityEntry({ type: "facts_corrected", actor: who, summary: `Corrected: ${listed}` });
   }

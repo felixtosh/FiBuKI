@@ -70,7 +70,7 @@ async function loadOwnFile(db: Db, userId: string, fileId: string) {
  * Merged Partner is refused naming its survivor, so a caller holding a stale
  * id corrects itself (ADR-0005).
  */
-async function loadUsablePartner(
+export async function loadUsablePartner(
   db: Db,
   userId: string,
   partnerId: string,

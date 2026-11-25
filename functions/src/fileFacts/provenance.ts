@@ -52,6 +52,11 @@ export const CORRECTABLE_FIELDS = [
    * the extractor, so the bank line stayed unexplainable forever.
    */
   "tipAmount",
+  /**
+   * #795. The document's own currency (a receipt in USD keeps its amount in
+   * USD; reports convert). A misread currency is corrected like any figure.
+   */
+  "currency",
 ] as const;
 
 export type CorrectableField = (typeof CORRECTABLE_FIELDS)[number];
