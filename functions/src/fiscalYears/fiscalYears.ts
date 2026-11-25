@@ -31,6 +31,8 @@ import {
   readFiscalYears,
   settingsRef,
   stretchOf,
+  closedRefusal,
+  untrackedRefusal,
   type FiscalYearChangeRecord,
   type FiscalYearSettings,
   type FiscalYearsVia,
@@ -48,23 +50,6 @@ export type FiscalYearsRefusal =
   | "closed-before-tracked"
   | "tracked-after-gap"
   | "tracked-from-holds-data";
-
-/** What a refusal says: Closed Through, and how to lift it. */
-export function closedRefusal(settings: FiscalYearSettings, what: string): string {
-  return (
-    `${what} is dated in a closed month: Closed Through is ${settings.closedThrough}. ` +
-    "To change it, move Closed Through back before that month (Settings, Fiscal Years, or the set_fiscal_years tool), " +
-    "make the change, then move it forward again."
-  );
-}
-
-/** What a refusal says when a write would land before Tracked From. */
-export function untrackedRefusal(settings: FiscalYearSettings, what: string): string {
-  return (
-    `${what} would be dated before Tracked From ${settings.trackedFrom}, a month FiBuKI does not track. ` +
-    "Move Tracked From back first (Settings, Fiscal Years, or the set_fiscal_years tool)."
-  );
-}
 
 /** The User's settings once, and the checks against them, for a caller with many rows. */
 export async function fiscalYearsGuard(db: Db, userId: string) {

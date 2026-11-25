@@ -9,6 +9,7 @@
  */
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { assertTransactionIdEditable } from "../transactions/writableFields";
 import { createCallable, HttpsError, type HandlerContext } from "../utils/createCallable";
 import { cancelPartnerWorkersForTransaction } from "../utils/cancelWorkers";
 import { deriveActivityLevel } from "../utils/activityLevel";
@@ -87,6 +88,7 @@ export async function assignPartnerToTransactionInternal(
   if (!transactionSnap.exists) {
     throw new HttpsError("not-found", "Transaction not found");
   }
+  await assertTransactionIdEditable(ctx.db, ctx.userId, transactionId);
 
   const txData = transactionSnap.data()!;
   if (txData.userId !== ctx.userId) {

@@ -4,7 +4,9 @@
 
 import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { assertTransactionEditable, assertWritableFields, BULK_WRITABLE_FIELDS } from "./writableFields";
+import { assertWritableFields, BULK_WRITABLE_FIELDS } from "./writableFields";
+import { fiscalYearsGuard } from "../fiscalYears/fiscalYears";
+import { toDateSafe } from "../utils/toDateSafe";
 import { activityEntry, type ActivityActor } from "../utils/activity";
 
 interface BulkUpdateTransactionsRequest {
@@ -135,6 +137,9 @@ export const bulkUpdateTransactionsCallable = createCallable<
     const editActivity = await bulkEditActivity(ctx.db, data, request.actor === "ai" ? "ai" : "manual");
     if (editActivity.length > 0) updateData.automationHistory = FieldValue.arrayUnion(...editActivity);
 
+    // The Closed stretch (#794): the User's settings read once for every row.
+    const fiscalYears = await fiscalYearsGuard(ctx.db, ctx.userId);
+
     // Process in batches
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
       const batchIds = ids.slice(i, i + BATCH_SIZE);
@@ -161,7 +166,7 @@ export const bulkUpdateTransactionsCallable = createCallable<
           }
 
           try {
-            await assertTransactionEditable(ctx.db, ctx.userId, transactionData ?? {});
+            fiscalYears.refuseClosed([toDateSafe(transactionData?.date)], "This Transaction");
           } catch (err) {
             result.failed++;
             result.errors.push({ id, error: (err as Error).message });

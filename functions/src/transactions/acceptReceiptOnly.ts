@@ -11,6 +11,7 @@
  */
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { assertTransactionEditable } from "./writableFields";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import type { ReceiptOnlyAcceptance } from "../documents/receiptOnlyAcceptance";
 import { activityEntry, logActivity } from "../utils/activity";
@@ -87,6 +88,7 @@ export const acceptReceiptOnlyCallable = createCallable<
     if (transactionData.userId !== ctx.userId) {
       throw new HttpsError("permission-denied", "Access denied");
     }
+    await assertTransactionEditable(ctx.db, ctx.userId, transactionData);
 
     if (action === "revoke") {
       if (!transactionData.receiptOnlyAcceptance) {

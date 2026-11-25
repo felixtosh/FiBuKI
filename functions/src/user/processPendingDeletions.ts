@@ -236,6 +236,8 @@ async function deleteUserAccount(
 
   // 3. Delete user subcollections
   await deleteSubcollection(db, `users/${userId}/notifications`);
+  await deleteSubcollection(db, `users/${userId}/fiscalYearChanges`);
+  await db.doc(`users/${userId}/settings/fiscalYears`).delete();
   await db.collection("users").doc(userId).delete();
   deletedCollections.push("users");
 

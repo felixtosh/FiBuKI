@@ -7,6 +7,7 @@
  * land in the same state.
  */
 
+import { assertTransactionIdEditable } from "../transactions/writableFields";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import {
   buildDismissSuggestionUpdates,
@@ -44,6 +45,7 @@ export const dismissTransactionSuggestionCallable = createCallable<
       throw new HttpsError("invalid-argument", reasonProblem);
     }
 
+    await assertTransactionIdEditable(ctx.db, ctx.userId, transactionId);
     const fileRef = ctx.db.collection("files").doc(fileId);
 
     // Read and write in one transaction: the builder rewrites whole arrays, so

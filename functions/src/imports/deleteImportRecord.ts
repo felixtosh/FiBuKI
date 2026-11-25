@@ -6,6 +6,8 @@
 import { getStorage } from "firebase-admin/storage";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { detachTransactions } from "../fileConnections/writer";
+import { assertNotClosed } from "../fiscalYears/fiscalYears";
+import { toDateSafe } from "../utils/toDateSafe";
 
 interface DeleteImportRecordRequest {
   importId: string;
@@ -42,6 +44,20 @@ export const deleteImportRecordCallable = createCallable<
     if (importData.userId !== ctx.userId) {
       throw new HttpsError("permission-denied", "Import access denied");
     }
+
+    // Filed years keep their evidence (#794): refused whole, before the CSV
+    // file or any File Connection goes.
+    const ownRows = await ctx.db
+      .collection("transactions")
+      .where("importJobId", "==", importId)
+      .where("userId", "==", ctx.userId)
+      .get();
+    await assertNotClosed(
+      ctx.db,
+      ctx.userId,
+      ownRows.docs.map((d) => toDateSafe(d.data().date)),
+      "A Transaction of this Import"
+    );
 
     // Delete CSV file from storage if it exists
     if (importData.csvStoragePath) {

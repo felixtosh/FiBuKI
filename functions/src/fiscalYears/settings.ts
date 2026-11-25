@@ -183,6 +183,23 @@ export async function readFiscalYears(db: Db, userId: string): Promise<FiscalYea
   });
 }
 
+/** What a refusal says: Closed Through, and how to lift it. */
+export function closedRefusal(settings: FiscalYearSettings, what: string): string {
+  return (
+    `${what} is dated in a closed month: Closed Through is ${settings.closedThrough}. ` +
+    "To change it, move Closed Through back before that month (Settings, Fiscal Years, or the set_fiscal_years tool), " +
+    "make the change, then move it forward again."
+  );
+}
+
+/** What a refusal says when a write would land before Tracked From. */
+export function untrackedRefusal(settings: FiscalYearSettings, what: string): string {
+  return (
+    `${what} would be dated before Tracked From ${settings.trackedFrom}, a month FiBuKI does not track. ` +
+    "Move Tracked From back first (Settings, Fiscal Years, or the set_fiscal_years tool)."
+  );
+}
+
 export interface UntrackedSplit<T> {
   /** Rows on or after Tracked From: written. */
   tracked: T[];

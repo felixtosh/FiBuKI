@@ -37,6 +37,8 @@ export interface CleanupOrphanedTransactionsResponse {
   orphanedCount: number;
   orphanedBySource: Record<string, number>;
   deleted?: number;
+  /** Orphans dated in the Closed stretch (#794), kept. */
+  keptClosed?: number;
 }
 
 // ============================================================================

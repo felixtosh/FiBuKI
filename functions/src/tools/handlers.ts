@@ -112,7 +112,7 @@ import {
 } from "../matching/billingCycle";
 import { getPeriodStatus, listPendingMatches } from "./periodStatus";
 import { changeFiscalYears, listFiscalYearChanges, readFiscalYears, splitUntracked } from "../fiscalYears/fiscalYears";
-import { assertTransactionEditable } from "../transactions/writableFields";
+import { assertTransactionEditable, assertTransactionIdEditable } from "../transactions/writableFields";
 import { PLANS, resolvePlanId } from "../billing/config";
 import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
 import { runUvaForPeriod } from "../reports/uvaPeriodRun";
@@ -851,6 +851,7 @@ export async function acceptReceiptOnly(userId: string, args: Record<string, unk
     throw new Error("Transaction not found");
   }
   const data = doc.data()!;
+  await assertTransactionEditable(db, userId, data);
 
   if (revoke === true) {
     if (!data.receiptOnlyAcceptance) {
@@ -1870,6 +1871,7 @@ export async function unconfirmFileRecipientIsUser(userId: string, args: Record<
  * MCP client or chat agent, is an AI actor in the activity log.
  */
 export async function setBookingAccountsTool(userId: string, args: Record<string, unknown>) {
+  await assertTransactionIdEditable(db, userId, args.transactionId);
   return setBookingAccounts(
     db,
     userId,
@@ -2017,6 +2019,7 @@ export async function dismissTransactionSuggestion(userId: string, args: Record<
   }
   const reason = args.reason as string | undefined;
 
+  await assertTransactionIdEditable(db, userId, args.transactionId);
   const { fileId, transactionId, dismissedConfidence, alreadyDismissed } =
     await applyDismissalUpdate(userId, args, (fileData, txId) =>
       buildDismissSuggestionUpdates(fileData, txId, reason)
@@ -2044,6 +2047,7 @@ export async function undismissTransactionSuggestion(
   userId: string,
   args: Record<string, unknown>
 ) {
+  await assertTransactionIdEditable(db, userId, args.transactionId);
   const { fileId, transactionId, wasDismissed } = await applyDismissalUpdate(
     userId,
     args,
@@ -2179,6 +2183,7 @@ export async function removeNoReceiptCategory(userId: string, transactionId: str
   if (!transactionId) throw new Error("transactionId is required");
 
   const txDoc = await db.collection("transactions").doc(transactionId).get();
+  await assertTransactionIdEditable(db, userId, transactionId);
   if (!txDoc.exists || txDoc.data()?.userId !== userId) {
     throw new Error("Transaction not found");
   }
@@ -2866,6 +2871,7 @@ export async function removePartnerFromTx(userId: string, args: Record<string, u
   if (!transactionId) throw new Error("transactionId is required");
 
   const txDoc = await db.collection("transactions").doc(transactionId as string).get();
+  await assertTransactionIdEditable(db, userId, transactionId);
   if (!txDoc.exists || txDoc.data()?.userId !== userId) {
     throw new Error("Transaction not found");
   }

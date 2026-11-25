@@ -79,3 +79,20 @@ export async function assertTransactionEditable(
 ): Promise<void> {
   await assertNotClosed(db, userId, [toDateSafe(transaction.date)], "This Transaction");
 }
+
+/**
+ * The same refusal for a writer that holds only the Transaction's id (a
+ * Partner, a category, a ruling, Booking Accounts, a rejection). A missing or
+ * foreign Transaction passes through: the writer's own check answers it.
+ */
+export async function assertTransactionIdEditable(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  transactionId: unknown
+): Promise<void> {
+  if (typeof transactionId !== "string" || !transactionId || transactionId.includes("/")) return;
+  const snap = await db.collection("transactions").doc(transactionId).get();
+  const data = snap.exists ? snap.data() : undefined;
+  if (!data || data.userId !== userId) return;
+  await assertTransactionEditable(db, userId, data);
+}

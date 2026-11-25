@@ -4,6 +4,7 @@
  */
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { assertTransactionEditable } from "../transactions/writableFields";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { CLEAR_TX_PROVENANCE } from "../matching/partnerProvenance";
 
@@ -41,6 +42,7 @@ export const removePartnerFromTransactionCallable = createCallable<
     if (txData.userId !== ctx.userId) {
       throw new HttpsError("permission-denied", "Access denied");
     }
+    await assertTransactionEditable(ctx.db, ctx.userId, txData);
 
     const previousPartnerId = txData.partnerId;
     const previousMatchedBy = txData.partnerMatchedBy;

@@ -23,7 +23,7 @@ import { checkTransactionQuota, incrementTransactionCount } from "../billing/che
 import { periodKeyOf } from "../uva/reconcile";
 import { connectFileToNewTransaction, FILE_ALREADY_CONNECTED_MESSAGE } from "../fileConnections/writer";
 import { cashPaymentDefaultsFromFile } from "./cashPaymentDefaults";
-import { assertNotClosed } from "../fiscalYears/fiscalYears";
+import { assertNotClosed, assertTracked } from "../fiscalYears/fiscalYears";
 import { toDateSafe } from "../utils/toDateSafe";
 
 type Db = FirebaseFirestore.Firestore;
@@ -256,6 +256,7 @@ export async function addCashPayment(
   const name = cashPaymentName(input?.name);
   const description = cashPaymentDescription(input?.description);
   const source = await loadCashBox(db, userId, input?.sourceId);
+  await assertTracked(db, userId, [date.toDate()], "This Cash Payment");
   const partner =
     input?.partnerId === undefined || input?.partnerId === null
       ? null
@@ -441,6 +442,7 @@ export async function addCashPaymentFromFile(
   const name = cashPaymentName(pick(input?.name, defaults.name));
   const description = cashPaymentDescription(input?.description);
   const source = await cashBoxFor(db, userId, input?.sourceId);
+  await assertTracked(db, userId, [date.toDate()], "This Cash Payment");
   const partnerSent = input?.partnerId !== undefined && input?.partnerId !== null;
   const partner = partnerSent
     ? await loadPartner(db, userId, input.partnerId)
@@ -634,7 +636,8 @@ export async function correctCashPayment(
   }
   if (changes.length === 0) return { changed: false };
 
-  // A Closed stretch (#794) refuses the correction, and a move into one.
+  // A Closed stretch (#794) refuses the correction, and a move into one; no move goes before Tracked From.
+  if (update.date) await assertTracked(db, userId, [toDateSafe(update.date)], "This Cash Payment");
   await assertNotClosed(db, userId, [toDateSafe(data.date), update.date ? toDateSafe(update.date) : null], "This Cash Payment");
   // The old day, and for a new day that one too: a filed return keeps agreeing with the books.
   await refuseInFiledPeriod(db, userId, data.date as Timestamp, "correct");

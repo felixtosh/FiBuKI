@@ -19,6 +19,8 @@ import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { TransactionSource } from "@/types/source";
 import { computeDedupeHash } from "@/functions/src/imports/dedupe";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { splitUntracked } from "@/functions/src/fiscalYears/settings";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -174,7 +176,10 @@ export async function POST(request: NextRequest) {
     let imported = 0;
     let skipped = 0;
 
-    for (const tx of transactions) {
+    // Rows before Tracked From are skipped without asking and counted per fiscal year (#794).
+    const { tracked, ...untracked } = await splitUntracked(getAdminDb(), userId, transactions, (tx) => new Date(tx.timestamp));
+
+    for (const tx of tracked) {
       // Determine if income or expense
       // TrueLayer returns amounts in whole currency units (e.g., 42.50)
       // We store amounts in cents (e.g., 4250)
@@ -243,6 +248,7 @@ export async function POST(request: NextRequest) {
       imported,
       skipped,
       total: transactions.length,
+      ...untracked,
     });
   } catch (error) {
     const unauthorized = unauthorizedResponse(error);
