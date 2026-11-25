@@ -134,6 +134,9 @@ export const SUBTREE_DOC_POLICIES: Readonly<Record<string, CollectionPolicy>> = 
   // The lock that keeps a User at one active inbound email address
   // (email-inbound/inboundAddressCallables.ts, #626). Server-only, like the one above.
   "settings/inboundEmail": { read: "none", create: "none", update: "none", delete: "none" },
+  // Fiscal Years (#794, ADR-0018): the settings page reads them; only their writer
+  // (fiscalYears/fiscalYears.ts) changes them, because every change appends a record.
+  "settings/fiscalYears": { read: "authed", create: "none", update: "none", delete: "none" },
 };
 
 /** users/{uid}/<name>/... — uid must equal auth.uid, then this table. */

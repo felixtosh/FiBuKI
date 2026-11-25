@@ -61,6 +61,9 @@ export function useCategories() {
 ## Available Callables
 
 **Transactions:**
+
+A Transaction dated in the Closed stretch (#794, ADR-0018) is refused by every edit and delete below, naming Closed Through: both update callables (the bulk one per row), `rollbackTransactionCallable` through `update_transaction`, `deleteTransactionsBySourceCallable` and `deleteSourceCallable` (whole, before anything is taken apart), a sync that replaces a Bank Account's rows, and a Cash Payment's correction and delete. Inserts are never refused.
+
 - `updateTransactionCallable` - Write what a foreign or 0% line is for the UVA (`foreignSupplyKind`, `saleSupplyKind`); refuses any other field (#621)
 - `bulkUpdateTransactionsCallable` - Write description, completion, Partner or no-receipt category onto many transactions; refuses any other field, and a Partner or category the caller may not use (#621)
 - `deleteTransactionsBySourceCallable` - Delete all transactions for a source
@@ -107,6 +110,10 @@ Next API route connects through the callable as the user (`lib/api/connect-file.
 **Business identity (#632):**
 - `saveIdentityCallable` (`saveIdentity`) - The settings screen's and the Partner panel's "this is me" save. The identity module (`functions/src/identity/identity.ts`) is the one writer of what the User enters into `users/{uid}/settings/userData`, MCP's `create_identity_entity` / `update_identity_entity` included: it normalises as the browser did, merges (the FinanzOnline status survives), refuses fields the identity does not hold and a Partner id that is not the User's own. The browser only reads the document. Server-side write-backs (the identity Partner sync, Partner merging, account import) still write it directly (#734)
 
+**Fiscal Years (#794, ADR-0018):**
+- `getFiscalYearsCallable` (`getFiscalYears`) - The User's fiscal year start month, Tracked From and Closed Through (stored or default), with the latest change records
+- `updateFiscalYearsCallable` (`updateFiscalYears`) - Change any of the three; the only writer of `users/{uid}/settings/fiscalYears` beside MCP's `set_fiscal_years`, both through `fiscalYears/fiscalYears.ts`. Refuses a gap or a closed stretch inside untracked time, and Tracked From moved later over months holding Transactions or Files. Every change appends one record to `fiscalYearChanges` (who, when, via, previous, next) and returns it
+
 **UVA filing:**
 - `markUvaPeriodFiledCallable` - Record what was filed for a period (append-only, editable figures); refused while the period has blockers
 - `getUvaFiledStatusCallable` - Blockers, filed vs now per Kennzahl, and earlier filed periods whose figures moved
@@ -115,5 +122,5 @@ Next API route connects through the callable as the user (`lib/api/connect-file.
 - `createInboundEmailAddressCallable` / `updateInboundEmailAddressCallable` / `regenerateInboundEmailAddressCallable` / `deleteInboundEmailAddressCallable` - The table's only writers. The User sets the display name, allowed domains and active/paused; the daily limit and the counters are the server's, and a request naming them is refused. One active address per User: create returns the active one if there is one, and resuming or regenerating while another is active is refused (decided in a transaction on `users/{uid}/settings/inboundEmail`)
 
 **Imports:**
-- `bulkCreateTransactionsCallable` - Bulk create transactions from CSV
+- `bulkCreateTransactionsCallable` - Bulk create transactions from CSV. Skips rows before Tracked From and returns `untrackedCount` and `untrackedByFiscalYear`, as `import_transactions` and the bank syncs do (#794)
 - `createImportRecordCallable` - Create import record

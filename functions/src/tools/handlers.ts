@@ -111,6 +111,8 @@ import {
   type ResolvedEffectiveCycle,
 } from "../matching/billingCycle";
 import { getPeriodStatus, listPendingMatches } from "./periodStatus";
+import { changeFiscalYears, listFiscalYearChanges, readFiscalYears, splitUntracked } from "../fiscalYears/fiscalYears";
+import { assertTransactionEditable } from "../transactions/writableFields";
 import { PLANS, resolvePlanId } from "../billing/config";
 import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
 import { runUvaForPeriod } from "../reports/uvaPeriodRun";
@@ -264,6 +266,10 @@ export async function handleTool(
       return importTransactions(userId, args);
     case "get_period_status":
       return getPeriodStatus(userId, args);
+    case "get_fiscal_years":
+      return getFiscalYearsTool(userId);
+    case "set_fiscal_years":
+      return setFiscalYearsTool(userId, args, caller);
     case "list_pending_matches":
       return listPendingMatches(userId, args);
 
@@ -714,6 +720,7 @@ export async function updateTransaction(
   if (!doc.exists || doc.data()?.userId !== userId) {
     throw new Error("Transaction not found");
   }
+  await assertTransactionEditable(db, userId, doc.data()!);
 
   const updates: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (description !== undefined) updates.description = description;
@@ -3253,6 +3260,26 @@ export async function addCashPaymentFromFileTool(
   return { success: true, ...result };
 }
 
+// ============================================================================
+// Fiscal Years (#794)
+// ============================================================================
+
+export async function getFiscalYearsTool(userId: string) {
+  return {
+    settings: await readFiscalYears(db, userId),
+    changes: await listFiscalYearChanges(db, userId),
+  };
+}
+
+export async function setFiscalYearsTool(userId: string, args: Record<string, unknown>, caller: ToolCaller) {
+  return changeFiscalYears(
+    db,
+    userId,
+    { startMonth: args.startMonth, trackedFrom: args.trackedFrom, closedThrough: args.closedThrough },
+    caller.kind === "agent" ? "chat" : "mcp"
+  );
+}
+
 export async function deleteSource(userId: string, args: Record<string, unknown>) {
   const { sourceId, confirm } = args;
   if (!sourceId) throw new Error("sourceId is required");
@@ -3330,12 +3357,14 @@ export async function importTransactions(userId: string, args: Record<string, un
     };
   });
 
+  // Rows before Tracked From are skipped and counted per fiscal year (#794); no setting moves.
+  const { tracked, ...untracked } = await splitUntracked(db, userId, candidates, (tx) => tx.date);
   // Rows an earlier import already stored are skipped here, on the server, for every caller.
   const { fresh: transactions, duplicates } = await splitDuplicates(
     db,
     userId,
     sourceId as string,
-    candidates,
+    tracked,
     importJobId
   );
   const duplicateCount = duplicates.length;
@@ -3346,6 +3375,7 @@ export async function importTransactions(userId: string, args: Record<string, un
       transactionIds: [] as string[],
       count: 0,
       duplicateCount,
+      ...untracked,
       quotaExceeded: false,
       overLimitCount: 0,
     };
@@ -3438,6 +3468,7 @@ export async function importTransactions(userId: string, args: Record<string, un
     transactionIds,
     count: transactionIds.length,
     duplicateCount,
+    ...untracked,
     quotaExceeded: overLimitTransactionIds.length > 0,
     overLimitCount: overLimitTransactionIds.length,
   };

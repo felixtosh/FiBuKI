@@ -23,6 +23,8 @@ import { checkTransactionQuota, incrementTransactionCount } from "../billing/che
 import { periodKeyOf } from "../uva/reconcile";
 import { connectFileToNewTransaction, FILE_ALREADY_CONNECTED_MESSAGE } from "../fileConnections/writer";
 import { cashPaymentDefaultsFromFile } from "./cashPaymentDefaults";
+import { assertNotClosed } from "../fiscalYears/fiscalYears";
+import { toDateSafe } from "../utils/toDateSafe";
 
 type Db = FirebaseFirestore.Firestore;
 
@@ -632,6 +634,8 @@ export async function correctCashPayment(
   }
   if (changes.length === 0) return { changed: false };
 
+  // A Closed stretch (#794) refuses the correction, and a move into one.
+  await assertNotClosed(db, userId, [toDateSafe(data.date), update.date ? toDateSafe(update.date) : null], "This Cash Payment");
   // The old day, and for a new day that one too: a filed return keeps agreeing with the books.
   await refuseInFiledPeriod(db, userId, data.date as Timestamp, "correct");
   if (update.date) await refuseInFiledPeriod(db, userId, update.date as Timestamp, "move");
@@ -687,6 +691,7 @@ export async function deleteCashPayment(
   author: CashPaymentAuthor
 ): Promise<DeleteCashPaymentResult> {
   const row = await loadHandAddedCashPayment(db, userId, input?.transactionId);
+  await assertNotClosed(db, userId, [toDateSafe(row.data()!.date)], "This Cash Payment");
   await refuseInFiledPeriod(db, userId, row.data()!.date as Timestamp, "delete");
 
   const { detachTransactions } = await import("../fileConnections/writer");

@@ -8,6 +8,7 @@ import {
   Link2,
   Download,
   Gift,
+  CalendarRange,
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { TelegramIcon } from "@/components/ui/telegram-icon";
@@ -28,6 +29,7 @@ export const settingsNavItems: SettingsNavItem[] = [
   { href: "/settings/billing", label: "Billing & Plan", icon: CreditCard },
   { href: "/settings/notifications", label: "Notifications", icon: Bell },
   { href: "/settings/usage", label: "Usage", icon: Activity, feature: "aiMatching" },
+  { href: "/settings/fiscal-years", label: "Fiscal Years", icon: CalendarRange },
   { href: "/settings/categories", label: "Categories", icon: Tag },
   { href: "/settings/integrations", label: "Integrations", icon: Link2, feature: "aiMatching" },
   { href: "/settings/import-export", label: "Import / Export", icon: Download },

@@ -5,7 +5,7 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { SALE_SUPPLY_KINDS, type SaleSupplyKind } from "../uva/types";
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { assertWritableFields, WRITABLE_FIELDS } from "./writableFields";
+import { assertTransactionEditable, assertWritableFields, WRITABLE_FIELDS } from "./writableFields";
 
 interface UpdateTransactionRequest {
   /** Transaction ID to update */
@@ -76,6 +76,7 @@ export const updateTransactionCallable = createCallable<
     if (transactionData?.userId !== ctx.userId) {
       throw new HttpsError("permission-denied", "Access denied");
     }
+    await assertTransactionEditable(ctx.db, ctx.userId, transactionData ?? {});
 
     // Build update object, filtering out undefined values
     const updateData: Record<string, unknown> = {};

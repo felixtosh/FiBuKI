@@ -362,6 +362,29 @@
       "description": "Die Sprache der FiBuKI-Oberfläche. Noch nicht übersetzte Seiten bleiben auf Englisch.",
       "saveFailed": "Die Sprache konnte nicht gespeichert werden."
     },
+    "fiscalYears": {
+      "title": "Geschäftsjahre",
+      "description": "Für welche Monate FiBuKI Daten führt, und welche abgeschlossen sind, weil ihre Steuererklärung eingereicht ist.",
+      "pageDescription": "Geführte, abgeschlossene und offene Monate",
+      "startMonth": "Geschäftsjahr beginnt im",
+      "trackedFrom": "Geführt ab",
+      "trackedFromHelp": "Importe überspringen Zeilen vor diesem Monat.",
+      "closedThrough": "Abgeschlossen bis",
+      "closedThroughHelp": "Transaktionen bis Ende dieses Monats können nicht geändert oder gelöscht werden. Neue können weiter importiert werden. Für eine Korrektur den Monat zurücksetzen, korrigieren und wieder vorsetzen.",
+      "nothingClosed": "Nichts abgeschlossen",
+      "clear": "Entfernen",
+      "save": "Speichern",
+      "saved": "Gespeichert. Die Änderung ist protokolliert.",
+      "saveFailed": "Die Geschäftsjahre konnten nicht gespeichert werden.",
+      "changes": "Änderungen",
+      "noChanges": "Noch keine Änderungen.",
+      "changeLine": "{when}: {what}",
+      "via": {
+        "settings": "in den Einstellungen",
+        "mcp": "von einem MCP-Client",
+        "chat": "vom Chat"
+      }
+    },
     "identity": {
       "intro": "Wir brauchen all diese Angaben, um Ihre Rechnungen richtig zuzuordnen: So wissen wir, welcher Name, welche Firma oder welches Konto auf einer Rechnung Sie sind und welches zu einem Partner gehört.",
       "groups": {

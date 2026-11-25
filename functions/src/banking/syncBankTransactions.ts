@@ -17,6 +17,7 @@ import type {
   SyncBankTransactionsResponse,
 } from "../types/banking-sync";
 import { viennaYear } from "../utils/storedDay";
+import { assertNotClosed, splitUntracked } from "../fiscalYears/fiscalYears";
 
 // Define secrets for finAPI credentials
 const finapiClientId = defineSecret("FINAPI_CLIENT_ID");
@@ -275,6 +276,13 @@ export const syncBankTransactionsCallable = createCallable<
         .collection("transactions")
         .where("sourceId", "==", sourceId)
         .get();
+      // Filed years keep their evidence (#794): no re-sync deletes a closed row.
+      await assertNotClosed(
+        db,
+        userId,
+        existingTxQuery.docs.map((d) => toDateSafe(d.data().date)),
+        "A Transaction of this Bank Account"
+      );
 
       const BATCH_SIZE = 500;
       for (let i = 0; i < existingTxQuery.docs.length; i += BATCH_SIZE) {
@@ -422,7 +430,7 @@ export const syncBankTransactionsCallable = createCallable<
     const syncJobId = `sync_${sourceId}_${Date.now()}`;
     const ibanForHash = source.iban || sourceId;
 
-    const txDocs = transactions.map((tx: FinapiTransaction) => ({
+    const allTxDocs = transactions.map((tx: FinapiTransaction) => ({
       // Core fields
       name: tx.purpose || tx.counterpartName || "Unknown",
       description: tx.purpose || null,
@@ -479,6 +487,9 @@ export const syncBankTransactionsCallable = createCallable<
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
     }));
+
+    // Rows before Tracked From are skipped without asking and counted per fiscal year (#794).
+    const { tracked: txDocs, ...untracked } = await splitUntracked(db, userId, allTxDocs, (t) => t.date.toDate());
 
     // ========================================================================
     // 9. Deduplication - check by userId + dedupeHash (not sourceId)
@@ -568,6 +579,7 @@ export const syncBankTransactionsCallable = createCallable<
       totalRows: transactions.length,
       importedCount: imported,
       skippedCount: existingHashes.size,
+      ...untracked,
       reassignedCount,
       errorCount: 0,
       createdAt: Timestamp.now(),
@@ -617,6 +629,7 @@ export const syncBankTransactionsCallable = createCallable<
       reassigned: reassignedCount,
       total: transactions.length,
       importRecordId: syncJobId,
+      ...untracked,
     };
   }
 );

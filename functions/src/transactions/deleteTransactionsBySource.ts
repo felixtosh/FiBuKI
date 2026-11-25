@@ -8,6 +8,8 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { detachTransactions } from "../fileConnections/writer";
+import { assertNotClosed } from "../fiscalYears/fiscalYears";
+import { toDateSafe } from "../utils/toDateSafe";
 
 interface DeleteTransactionsBySourceRequest {
   /** Source ID whose transactions should be deleted */
@@ -61,6 +63,14 @@ export const deleteTransactionsBySourceCallable = createCallable<
     if (snapshot.empty) {
       return { success: true, deleted: 0 };
     }
+
+    // Filed years keep their evidence (#794): refused whole, before anything is taken apart.
+    await assertNotClosed(
+      ctx.db,
+      ctx.userId,
+      snapshot.docs.map((d) => toDateSafe(d.data().date)),
+      "A Transaction of this Bank Account"
+    );
 
     let deleted = 0;
 

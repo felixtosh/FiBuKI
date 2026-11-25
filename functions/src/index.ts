@@ -454,6 +454,12 @@ export {
   updateEmailPreferenceCallable as updateEmailPreference,
 } from "./digest";
 
+// Fiscal Years (#794)
+export {
+  getFiscalYearsCallable as getFiscalYears,
+  updateFiscalYearsCallable as updateFiscalYears,
+} from "./fiscalYears/fiscalYearsCallables";
+
 // UI language (#168)
 export { updateUserLocaleCallable as updateUserLocale } from "./users/updateUserLocale";
 

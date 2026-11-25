@@ -156,6 +156,13 @@ describe("the data plane enforces it", () => {
     expect((await getFirestore().doc(path).get()).exists).toBe(false);
   });
 
+  it("the Fiscal Years settings refuse a client write: only their writer keeps the change record (#794)", async () => {
+    const path = `users/${USER}/settings/fiscalYears`;
+    const r = await call("write", { ops: [{ type: "set", path, data: { trackedFrom: "2001-01", closedThrough: null } }] });
+    expect(r.status, r.text).toBe(403);
+    expect((await getFirestore().doc(path).get()).exists).toBe(false);
+  });
+
   it("users/{uid} refuses a client create when the document does not exist yet", async () => {
     await getFirestore().doc(`users/${USER}`).delete();
     for (const op of [

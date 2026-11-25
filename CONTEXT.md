@@ -151,6 +151,49 @@ _Deutsch_: Import
 _Avoid_: upload, sync (a **Sync** is the mailbox side)
 _Avoid (de)_: Upload, Synchronisierung
 
+## Fiscal Years
+
+Three settings per User, each with the month as its unit, split time into three stretches,
+always in the order Untracked, Closed, open, with no gaps
+([ADR-0018](docs/adr/0018-fiscal-years-tracked-closed-and-open-stretches.md)). Every change
+of any of the three is recorded: who, when, old value, new value.
+
+**Fiscal Year**:
+Twelve months starting in the User's fiscal year start month (January unless the User
+chose another). Named by its first year, `2024`, or by both years when it does not start in
+January, `2024/25`. It only groups months; the stretches are set by month.
+_Deutsch_: Geschäftsjahr
+_Avoid_: financial year, tax year, period (a **period** is a UVA month or quarter)
+_Avoid (de)_: Veranlagungsjahr, Kalenderjahr (unless it starts in January), Zeitraum
+
+**Tracked From**:
+The first month FiBuKI holds data for. By default the first month of the current Fiscal
+Year, or for a User who already held older data, the month of the earliest of it. It can
+move later only over months that hold no Transactions or Files.
+_Deutsch_: Geführt ab
+_Avoid_: start date, import from
+
+**Closed Through**:
+The last month of the Closed stretch, or none. Set by the User, never by a filing or an
+Import; moved back to make a correction and forward again afterwards.
+_Deutsch_: Abgeschlossen bis
+_Avoid_: Closing Date, lock date, filed through
+
+**Closed stretch**:
+The months from Tracked From through Closed Through, usually years whose tax return is
+filed. Its records are kept and readable, and new ones can still be imported into it, but
+a change or a delete of a Transaction dated in it is refused, naming Closed Through. Separate
+from a filed UVA period: marking a UVA filed closes nothing.
+_Deutsch_: Abgeschlossener Zeitraum
+_Avoid_: closed period (a **period** is a UVA month or quarter), archive, locked year
+
+**Untracked**:
+Before Tracked From. An Import skips a row dated there and counts it per Fiscal Year; no
+Import moves Tracked From. A File is never skipped, because its date is known only after
+the Extraction.
+_Deutsch_: Nicht geführt
+_Avoid_: ignored, excluded, out of range
+
 ## Evidence coming in
 
 **File**:

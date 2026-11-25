@@ -4,7 +4,7 @@
 
 import { FieldValue } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { assertWritableFields, BULK_WRITABLE_FIELDS } from "./writableFields";
+import { assertTransactionEditable, assertWritableFields, BULK_WRITABLE_FIELDS } from "./writableFields";
 import { activityEntry, type ActivityActor } from "../utils/activity";
 
 interface BulkUpdateTransactionsRequest {
@@ -157,6 +157,14 @@ export const bulkUpdateTransactionsCallable = createCallable<
           if (transactionData?.userId !== ctx.userId) {
             result.failed++;
             result.errors.push({ id, error: "Access denied" });
+            continue;
+          }
+
+          try {
+            await assertTransactionEditable(ctx.db, ctx.userId, transactionData ?? {});
+          } catch (err) {
+            result.failed++;
+            result.errors.push({ id, error: (err as Error).message });
             continue;
           }
 

@@ -8,6 +8,7 @@ import { checkTransactionQuota, incrementTransactionCount } from "../billing/che
 import { toDateSafe } from "../utils/toDateSafe";
 import { normalizeTransactionType } from "./transactionType";
 import { computeDedupeHash, splitDuplicates } from "./dedupe";
+import { splitUntracked } from "../fiscalYears/fiscalYears";
 
 interface TransactionData {
   sourceId: string;
@@ -51,6 +52,10 @@ interface BulkCreateTransactionsResponse {
   count: number;
   /** Rows an earlier import already stored for this Bank Account; not written. */
   duplicateCount: number;
+  /** Rows before Tracked From (#794); not written. */
+  untrackedCount?: number;
+  /** The same rows per fiscal year (`2023`, or `2023/24`). */
+  untrackedByFiscalYear?: Record<string, number>;
   quotaExceeded: boolean;
   overLimitCount: number;
   overLimitTransactionIds: string[];
@@ -122,11 +127,13 @@ export const bulkCreateTransactionsCallable = createCallable<
         }),
       };
     });
-    const { fresh, duplicates } = await splitDuplicates(ctx.db, ctx.userId, sourceId, hashed, importJobId);
+    // Rows before Tracked From are skipped and counted per fiscal year (#794).
+    const { tracked, ...untracked } = await splitUntracked(ctx.db, ctx.userId, hashed, (tx) => tx.date);
+    const { fresh, duplicates } = await splitDuplicates(ctx.db, ctx.userId, sourceId, tracked, importJobId);
     const duplicateCount = duplicates.length;
 
     if (fresh.length === 0) {
-      return { success: true, transactionIds: [], count: 0, duplicateCount, quotaExceeded: false, overLimitCount: 0, overLimitTransactionIds: [] };
+      return { success: true, transactionIds: [], count: 0, duplicateCount, ...untracked, quotaExceeded: false, overLimitCount: 0, overLimitTransactionIds: [] };
     }
 
     // Check transaction quota (soft limit — import all, mark over-limit ones)
@@ -256,6 +263,7 @@ export const bulkCreateTransactionsCallable = createCallable<
       transactionIds,
       count: transactionIds.length,
       duplicateCount,
+      ...untracked,
       quotaExceeded,
       overLimitCount: overLimitTransactionIds.length,
       overLimitTransactionIds,
