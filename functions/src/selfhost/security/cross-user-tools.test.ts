@@ -263,6 +263,8 @@ describe("the caller context is the server's, never the request's (#665)", () =>
       ["assign_partner_to_file", { fileId: A.file, partnerId: V.partner }],
       ["assign_partner_to_file", { fileId: V.file, partnerId: A.partner }],
       ["update_partner", { partnerId: V.partner, vatId: "ATU12345678", name: "Mine now" }],
+      // #795: a Partner given at upload is checked like one assigned afterwards.
+      ["upload_file", { fileName: "probe.pdf", mimeType: "application/pdf", base64: "cHJvYmU=", partnerId: V.partner }],
     ];
     for (const workerType of [null, "receipt_search", "partner_file_batch"]) {
       for (const [tool, args] of attacks) {

@@ -960,8 +960,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotation: "write",
     openWorld: true,
     description:
-      "Upload a file from a URL or base64 data. Byte-identical re-uploads create nothing: the existing file is returned with duplicate: true, and any given facts are ignored. " +
-      "Facts you already know about the document (date, amount, currency, VAT, partnerId), e.g. from another bookkeeping tool, can be given with the upload: they are stored as given, recorded as hand-corrected like update_file_extraction's fields, and extraction then fills only the fields you left empty. " +
+      "Upload a file from a URL or base64 data. Byte-identical re-uploads create nothing: the existing file is returned with duplicate: true, and any given facts are ignored (givenFactsIgnored: true). " +
+      "Facts you already know about the document (date, amount, currency, VAT, partnerId), e.g. from another bookkeeping tool, can be given with the upload: they are stored with the file as given, recorded as hand-corrected like update_file_extraction's fields, and the file's first extraction fills only the fields you left empty. An amount or vatAmount needs its currency; a vatAmount needs the amount, fits inside it and has its sign. " +
       "The response lists what was stored in givenFacts. The file is left unconnected; connect it with connect_file_to_transaction.",
     requiredFeature: "fileUpload",
     inputSchema: {
@@ -982,18 +982,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         mimeType: { type: "string", description: "MIME type (e.g. application/pdf, image/jpeg)" },
         date: { type: "string", description: "Given document date as YYYY-MM-DD. Optional." },
         amount: {
-          type: "number",
-          description: "Given document total in cents, in the document's own currency. Negative is legal (a credit note). Optional.",
+          type: "integer",
+          description: "Given document total in whole cents, in the document's own currency (give currency with it). Negative is legal (a credit note). Optional.",
         },
         currency: {
           type: "string",
           description: "Given document currency, ISO 4217 (EUR, USD). A foreign-currency file keeps its own amount; reports convert. Optional.",
         },
-        vatAmount: { type: "number", description: "Given document VAT in cents. Optional." },
+        vatAmount: { type: "integer", description: "Given document VAT in whole cents, with amount and currency. Optional." },
         vatPercent: { type: "number", description: "Given document VAT rate, 0-100. Optional." },
         partnerId: {
           type: "string",
-          description: "A partner of the user (list_partners, create_partner) to assign to the file by hand, as assign_partner_to_file does. Optional.",
+          description: "A partner of the user (list_partners, create_partner) to assign to the file, recorded as assign_partner_to_file records it. Optional.",
         },
       },
       required: ["fileName", "mimeType"],

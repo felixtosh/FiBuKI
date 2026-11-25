@@ -149,9 +149,18 @@ function normalizeLineItems(lineItems: unknown, field: string): ExtractedLineIte
  * upper case), then a three-letter code or nothing (#795). A person typing
  * "dollars" is told so rather than having it stored.
  */
+/**
+ * The ISO 4217 codes the runtime knows (Node 22's ICU: current and recently
+ * withdrawn ones such as HRK). A code with no ECB rate is still stored: it
+ * goes to the foreign-currency worklist, as an extracted one does.
+ */
+const ISO_CURRENCIES = new Set<string>(
+  (Intl as unknown as { supportedValuesOf(key: "currency"): string[] }).supportedValuesOf("currency")
+);
+
 function isoCurrency(value: unknown): string {
   const code = typeof value === "string" ? normalizeCurrency(value) : null;
-  if (!code || !/^[A-Z]{3}$/.test(code)) {
+  if (!code || !ISO_CURRENCIES.has(code)) {
     throw new ExtractionCorrectionError("currency must be a three-letter ISO 4217 code, e.g. EUR or USD");
   }
   return code;

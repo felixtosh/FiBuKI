@@ -280,16 +280,36 @@ export function reExtractionRefusal(
 }
 
 /**
+ * Set on a File created with given facts (#795) and cleared by the first
+ * reading that lands: while it stands, no reading of the document has ever
+ * been written, so the Extraction fills around the Hand Correction instead
+ * of being refused. A correction made before that reading does not end it.
+ */
+export const GIVEN_FACTS_AWAIT_READING_FIELD = "givenFactsAwaitReading";
+
+/**
  * Does an Extraction of this File fill around facts given at upload (#795)?
- * True while the last write of its facts was the upload's own: an importer
- * gave what it knew and no reading has been written since. The Extraction
- * then stores what it reads only in the fields the upload left empty. Once
- * a reading lands, or a person corrects the File, the given facts are an
- * ordinary Hand Correction and a re-extraction is refused as usual.
+ * True until a reading lands: the Extraction then stores what it reads only
+ * in the fields the Hand Correction record leaves empty. Afterwards the given
+ * facts are an ordinary Hand Correction and a re-extraction is refused.
  */
 export function fillsAroundGivenFacts(record: Record<string, unknown>): boolean {
-  const stamp = record[LAST_FACT_CHANGE_FIELD] as { origin?: unknown } | null | undefined;
-  return stamp?.origin === "upload" && correctedFieldsOf(record).length > 0;
+  return record[GIVEN_FACTS_AWAIT_READING_FIELD] === true && correctedFieldsOf(record).length > 0;
+}
+
+/**
+ * The fact fields of a File created with given facts (#795), for the record
+ * `upload_file` creates, so the facts and the File are one write and the
+ * Extraction the creation queues already sees them. Refused like the
+ * correction it is (`INVALID`); the caller checks before storing bytes.
+ */
+export function uploadedFileFacts(
+  correction: FileExtractionCorrection,
+  at: Timestamp = Timestamp.now()
+): FactOutcome {
+  const outcome = decideFactChange({ record: {}, linkedTransactions: [] }, { origin: "upload", correction, at });
+  if (outcome.refused) return outcome;
+  return { ...outcome, update: { ...outcome.update, [GIVEN_FACTS_AWAIT_READING_FIELD]: true } };
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +322,9 @@ export function fillsAroundGivenFacts(record: Record<string, unknown>): boolean 
  */
 const SCORED_FIELDS = [
   "extractedAmount",
+  // #795: the scorer compares amounts across currencies, so a corrected
+  // currency changes a score as much as a corrected amount.
+  "extractedCurrency",
   "extractedDate",
   "extractedDueDate",
   "extractedDebitDate",
@@ -500,6 +523,7 @@ function decideExtraction(current: CurrentFile, change: ExtractionChange): FactO
   }
   const update = extractionFields(record, reading);
   if (fillAround) keepGivenFacts(record, update);
+  if (record[GIVEN_FACTS_AWAIT_READING_FIELD] !== undefined) update[GIVEN_FACTS_AWAIT_READING_FIELD] = null;
 
   Object.assign(
     update,

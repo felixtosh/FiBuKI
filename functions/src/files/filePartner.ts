@@ -93,6 +93,11 @@ export async function loadUsablePartner(
       `Partner ${partnerId} is a Merged Partner (merged into ${mergedInto}); use ${mergedInto} instead`
     );
   }
+  // A deleted Partner answers like a missing one (#795). After the merge
+  // check: a Merged Partner is inactive too, and its refusal names the survivor.
+  if (partnerDoc.data()!.isActive === false) {
+    throw new HttpsError("not-found", "Partner not found");
+  }
   return partnerDoc;
 }
 
