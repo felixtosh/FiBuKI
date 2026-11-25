@@ -332,7 +332,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Import pre-mapped transactions into a source. Transactions must include date, amount, name, and currency. " +
       "Lines an earlier import already stored for the same bank account are skipped (same date, amount and reference), " +
       "so re-sending an overlapping export is safe; the response says how many in duplicateCount. " +
-      "When a file is sent in several calls, pass the same importJobId on each so identical lines of that file are all kept.",
+      "When a file is sent in several calls, pass the same importJobId on each so identical lines of that file are all kept. " +
+      "Give each line an externalRowId when you can: a line whose externalRowId the bank account already stores is skipped " +
+      "whatever the importJobId, so a retried or resumed import never writes it twice, and lines with different ids are all kept.",
     inputSchema: {
       type: "object",
       properties: {
@@ -356,6 +358,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
               partner: { type: "string", description: "Optional partner/counterparty name" },
               reference: { type: "string", description: "Optional reference number" },
               partnerIban: { type: "string", description: "Optional partner IBAN" },
+              externalRowId: {
+                type: "string",
+                description:
+                  "Optional. Your own id for this bank line, unique per bank account: the bank's transaction id, or one derived " +
+                  "from bank account, date, amount and the line's position among identical lines of that day (leave the booking " +
+                  "text out: text recognition on scans is not stable between runs).",
+              },
             },
             required: ["date", "amount", "currency", "name"],
           },

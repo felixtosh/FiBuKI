@@ -235,6 +235,13 @@ export interface Transaction {
   /** SHA256 hash for deduplication: hash(date + amount + iban + reference) */
   dedupeHash: string;
 
+  /**
+   * The importer's own id for this bank line (#796), unique per Bank Account:
+   * an Import skips a row whose id the Bank Account already stores. Absent on
+   * rows imported without one; never derived or backfilled by FiBuKI.
+   */
+  externalRowId?: string;
+
   // === Classification ===
 
   /** Array of connected file IDs (many-to-many relationship). Optional for backward compatibility. */

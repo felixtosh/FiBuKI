@@ -128,6 +128,18 @@ _Avoid_: cash transaction, manual transaction, cash entry
 _Avoid (de)_: Kassabuchung, Barumsatz (cash takings from sales, the Registrierkasse's
 subject)
 
+**External Row Id**:
+An importer's own id for one bank line, unique per Bank Account: the bank's transaction id
+where there is one, or an id the importer derives from Bank Account, date, amount and the
+line's position among identical lines of that day, leaving the booking text out because
+text recognition on scanned statements is not stable between runs. An Import skips a row
+whose id the Bank Account already stores, whatever the import job, so a retried or resumed
+Import never writes a line twice. A row without one goes through the duplicate check on
+date, amount and reference. FiBuKI never derives one and never backfills stored rows.
+_Deutsch_: Externe Zeilen-ID
+_Avoid_: idempotency key, dedupe hash (the date, amount and reference check), transaction id
+bare
+
 **Import**:
 One batch of Transactions taken in at once, from a CSV or a connector, retaining the raw
 columns so a parse can be re-read later.

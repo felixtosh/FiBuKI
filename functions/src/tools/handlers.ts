@@ -3286,6 +3286,11 @@ export async function importTransactions(userId: string, args: Record<string, un
   const sourceIdentifier = (sourceDoc.data()?.iban as string | undefined) || (sourceId as string);
 
   const candidates = (rawTxs as Array<Record<string, unknown>>).map((tx, index) => {
+    // The importer's own id for the line (#796): unique per Bank Account, never derived here.
+    const externalRowId = tx.externalRowId;
+    if (externalRowId !== undefined && externalRowId !== null && (typeof externalRowId !== "string" || !externalRowId.trim())) {
+      throw new Error(`externalRowId must be a non-empty string (row ${index})`);
+    }
     const date = tx.date as string;
     const amount = tx.amount as number;
     const name = tx.name as string;
@@ -3303,6 +3308,7 @@ export async function importTransactions(userId: string, args: Record<string, un
       reference,
       partnerIban: (tx.partnerIban as string) || null,
       dedupeHash: computeDedupeHash({ date, amount, sourceIdentifier, reference }),
+      externalRowId: typeof externalRowId === "string" ? externalRowId.trim() : null,
       importJobId,
       csvRowIndex: index,
       _original: {
@@ -3383,6 +3389,7 @@ export async function importTransactions(userId: string, args: Record<string, un
         reference: txData.reference,
         partnerIban: txData.partnerIban,
         dedupeHash: txData.dedupeHash,
+        ...(txData.externalRowId ? { externalRowId: txData.externalRowId } : {}),
         importJobId: txData.importJobId,
         csvRowIndex: txData.csvRowIndex,
         _original: txData._original,
