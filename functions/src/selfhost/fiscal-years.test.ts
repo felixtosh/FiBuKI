@@ -41,7 +41,7 @@ type ChangeRecord = {
   changedBy: string;
   changedAt: string;
   via: string;
-  previous: Settings;
+  previous: Settings | null;
   next: Settings;
 };
 
@@ -53,9 +53,15 @@ function change(args: Record<string, unknown>, uid = USER) {
   return handleTool(uid, "set_fiscal_years", args) as Promise<{ settings: Settings; record: ChangeRecord | null }>;
 }
 
-async function storedRecords(uid = USER) {
-  const snap = await db.collection("fiscalYearChanges").where("userId", "==", uid).get();
+/** Every stored change record of a User, the initial one included. */
+async function allRecords(uid = USER) {
+  const snap = await db.collection(`users/${uid}/fiscalYearChanges`).get();
   return snap.docs.map((d) => d.data());
+}
+
+/** The change records a User or a client made: all but the initial one. */
+async function storedRecords(uid = USER) {
+  return (await allRecords(uid)).filter((r) => r.via !== "initial");
 }
 
 async function seedTransaction(id: string, iso: string, uid = USER) {
@@ -84,10 +90,50 @@ describe("the three settings and their defaults", () => {
     expect(await settingsOf()).toEqual({ startMonth: 1, trackedFrom: `${thisYear}-01`, closedThrough: null });
   });
 
-  it("a User with older data keeps it tracked: Tracked From defaults to its earliest month", async () => {
+  it("a User with older data keeps it tracked: Tracked From defaults to the start of its earliest fiscal year", async () => {
     await seedTransaction("tx-old", "2023-04-17");
 
-    expect((await settingsOf()).trackedFrom).toBe("2023-04");
+    expect((await settingsOf()).trackedFrom).toBe("2023-01");
+  });
+
+  it("a File in the bin does not move the default", async () => {
+    await db.collection("files").doc("f-old").set({
+      userId: USER,
+      fileName: "old.pdf",
+      extractedDate: day("1999-05-01"),
+      deletedAt: day("2026-01-01"),
+    });
+    await db.collection("files").doc("f-2024").set({ userId: USER, fileName: "a.pdf", extractedDate: day("2024-08-01") });
+
+    expect((await settingsOf()).trackedFrom).toBe("2024-01");
+  });
+
+  it("the first read stores the default with one initial record", async () => {
+    const first = await settingsOf();
+    await settingsOf();
+
+    const records = await allRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ via: "initial", previous: null, next: first, changedBy: USER });
+  });
+
+  it("the stored default does not move at New Year", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-15T12:00:00Z"));
+      await db.collection("sources").doc("src-1").set({ userId: USER, name: "Giro", type: "manual", isActive: true });
+      expect((await settingsOf()).trackedFrom).toBe("2026-01");
+
+      vi.setSystemTime(new Date("2027-02-03T12:00:00Z"));
+      const res = (await handleTool(USER, "import_transactions", {
+        sourceId: "src-1",
+        transactions: [{ date: "2026-11-10", amount: -100, name: "November", reference: "r-1" }],
+      })) as { count: number; untrackedCount: number };
+      expect(res).toMatchObject({ count: 1, untrackedCount: 0 });
+      expect((await settingsOf()).trackedFrom).toBe("2026-01");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("another User's data does not move the default", async () => {
@@ -194,6 +240,33 @@ describe("the order untracked, closed, open always holds", () => {
     await expect(change({ startMonth: 0 })).rejects.toThrow(/startMonth/);
     expect(await storedRecords()).toHaveLength(0);
   });
+
+  it("refuses Closed Through or Tracked From after the current month", async () => {
+    const next = `${Number(thisYear) + 1}-01`;
+
+    await expect(change({ closedThrough: next })).rejects.toMatchObject({ details: { reason: "after-current-month" } });
+    await expect(change({ trackedFrom: next })).rejects.toMatchObject({ details: { reason: "after-current-month" } });
+    expect(await storedRecords()).toHaveLength(0);
+  });
+
+  it("names the refusal for a screen to translate", async () => {
+    await change({ trackedFrom: "2024-01" });
+
+    await expect(change({ closedThrough: "2023-01" })).rejects.toMatchObject({
+      details: { reason: "closed-before-tracked", month: "2023-12" },
+    });
+  });
+
+  it("two changes at once each record the other's result as their previous value", async () => {
+    await settingsOf();
+
+    await Promise.all([change({ trackedFrom: "2022-01" }), change({ startMonth: 4 })]);
+
+    const [a, b] = await storedRecords();
+    const chained = (x: typeof a, y: typeof a) => JSON.stringify(y.previous) === JSON.stringify(x.next);
+    expect(chained(a, b) || chained(b, a)).toBe(true);
+    expect(await settingsOf()).toEqual({ startMonth: 4, trackedFrom: "2022-01", closedThrough: null });
+  });
 });
 
 describe("moving Tracked From later", () => {
@@ -209,7 +282,22 @@ describe("moving Tracked From later", () => {
     await change({ trackedFrom: "2022-01" });
     await db.collection("files").doc("f-2022").set({ userId: USER, fileName: "a.pdf", extractedDate: day("2022-03-01") });
 
-    await expect(change({ trackedFrom: "2023-01" })).rejects.toThrow(/Tracked From/);
+    await expect(change({ trackedFrom: "2023-01" })).rejects.toMatchObject({
+      message: expect.stringMatching(/Tracked From cannot move to 2023-01: 2022-03/),
+      details: { reason: "tracked-from-holds-data", month: "2022-03" },
+    });
+  });
+
+  it("a File in the bin does not hold the months", async () => {
+    await change({ trackedFrom: "2022-01" });
+    await db.collection("files").doc("f-2022").set({
+      userId: USER,
+      fileName: "a.pdf",
+      extractedDate: day("2022-03-01"),
+      deletedAt: day("2026-01-01"),
+    });
+
+    await expect(change({ trackedFrom: "2023-01" })).resolves.toBeTruthy();
   });
 
   it("succeeds when they hold nothing, another User's rows included", async () => {
