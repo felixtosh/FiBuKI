@@ -118,7 +118,8 @@ describe("data plane: positive controls", () => {
     expect(q.body.docs.map((d: { id: string }) => d.id)).toEqual([A.transaction]);
     const g = await call("get", { path: `users/${ATTACKER}/notifications/${A.notification}` });
     expect(g.body.exists).toBe(true);
-    const w = await call("write", { ops: [{ type: "update", path: `transactions/${A.transaction}`, data: { description: "mine, edited" } }] });
+    // Transactions are read-only for the browser since #794; a Partner is still the owner's to write.
+    const w = await call("write", { ops: [{ type: "update", path: `partners/${A.partner}`, data: { notes: "mine, edited" } }] });
     expect(w.status).toBe(200);
     const h = await call("query", { path: `transactions/${A.transaction}/history` });
     expect(h.status).toBe(200);
