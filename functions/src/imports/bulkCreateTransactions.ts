@@ -109,8 +109,11 @@ export const bulkCreateTransactionsCallable = createCallable<
       if (isNaN(new Date(tx.date).getTime())) {
         throw new HttpsError("invalid-argument", `Invalid date for transaction: ${tx.date}`);
       }
+      // The web CSV path takes no External Row Id yet (#804): a browser-sent one is
+      // dropped here, so it neither decides a skip nor reaches the stored row.
+      const { externalRowId: _ignored, ...row } = tx as TransactionData & { externalRowId?: unknown };
       return {
-        ...tx,
+        ...row,
         dedupeHash: computeDedupeHash({
           date: tx.date,
           amount: tx.amount,

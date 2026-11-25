@@ -101,6 +101,7 @@ export const transactionsColumns = [
   { key: "reference", header: "reference" },
   { key: "partnerIban", header: "partnerIban" },
   { key: "dedupeHash", header: "dedupeHash" },
+  { key: "externalRowId", header: "externalRowId" },
   { key: "isComplete", header: "isComplete" },
   { key: "fileIds", header: "fileIds" },
   { key: "rejectedFileIds", header: "rejectedFileIds" },

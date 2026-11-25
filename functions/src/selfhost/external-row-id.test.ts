@@ -16,6 +16,7 @@ import { __resetTriggerShim } from "./trigger-shim";
 
 // REAL application code, unmodified:
 import { handleTool } from "../tools/handlers";
+import { bulkCreateTransactionsCallable } from "../imports/bulkCreateTransactions";
 
 const db = getFirestore();
 const USER = "eri-user";
@@ -57,10 +58,35 @@ describe("import_transactions stores an External Row Id per row", () => {
     expect((await db.collection("transactions").doc(res.transactionIds[0]).get()).data()!.externalRowId).toBe("bank-1");
   });
 
-  it("refuses one that is not a non-empty string", async () => {
-    await expect(importRows([line("")])).rejects.toThrow(/externalRowId/);
+  it("refuses one that is not a string, or longer than 256 characters", async () => {
     await expect(importRows([{ ...line(undefined), externalRowId: 42 }])).rejects.toThrow(/externalRowId/);
+    await expect(importRows([line("x".repeat(257))])).rejects.toThrow(/externalRowId/);
     expect(await storedIds()).toEqual([]);
+  });
+
+  it("reads an empty or blank one as no id", async () => {
+    const res = await importRows([line(""), line("   ", { date: "2026-07-07" })]);
+
+    expect(res.count).toBe(2);
+    expect(await storedIds()).toEqual([null, null]);
+  });
+
+  it("trims it, and keeps its case: ids differing only in case are two lines", async () => {
+    await importRows([line("  bank-1  ")]);
+
+    const res = await importRows([line("bank-1"), line("BANK-1")]);
+
+    expect(res).toMatchObject({ count: 1, duplicateCount: 1 });
+    expect(await storedIds()).toEqual(["BANK-1", "bank-1"]);
+  });
+
+  it("finds stored ids beyond the first 30 of a call", async () => {
+    const ids = Array.from({ length: 45 }, (_, i) => `bank-${i}`);
+    await importRows(ids.map((id, i) => line(id, { amount: -100 - i })));
+
+    const res = await importRows(ids.map((id, i) => line(id, { amount: -100 - i })));
+
+    expect(res).toMatchObject({ count: 0, duplicateCount: 45 });
   });
 });
 
@@ -130,20 +156,56 @@ describe("rows without an External Row Id keep today's duplicate check", () => {
     expect(await storedIds()).toEqual([null, null, null]);
   });
 
-  it("stored rows without an id are not backfilled", async () => {
-    await importRows([line(undefined)]);
-    await importRows([line("bank-1", { date: "2026-07-08" })]);
-
-    expect(await storedIds()).toEqual(["bank-1", null].sort());
-  });
-
-  it("stays the backstop for a row with an id against a stored row without one", async () => {
+  it("stays the backstop for a row with an id against a stored row without one, which keeps no id", async () => {
     await importRows([line(undefined)]);
 
     const same = await importRows([line("bank-1")]);
     expect(same).toMatchObject({ count: 0, duplicateCount: 1 });
+    expect(await storedIds()).toEqual([null]);
 
     const other = await importRows([line("bank-2", { amount: -460 })]);
     expect(other).toMatchObject({ count: 1, duplicateCount: 0 });
+  });
+
+  it("the backstop skips no more rows than there are stored lines without an id", async () => {
+    await importRows([line(undefined)]);
+
+    const res = await importRows([line("b1"), line("b2")]);
+
+    expect(res).toMatchObject({ count: 1, duplicateCount: 1 });
+    expect(await storedIds()).toEqual([null, "b2"].sort());
+  });
+
+  it("the backstop holds within one import job too: a resume that adds ids", async () => {
+    await importRows([line(undefined)], { importJobId: "job-c" });
+
+    const res = await importRows([line("b1")], { importJobId: "job-c" });
+
+    expect(res).toMatchObject({ count: 0, duplicateCount: 1 });
+  });
+});
+
+describe("the web CSV Import ignores an External Row Id until #804", () => {
+  it("neither stores one a browser sends nor skips on it", async () => {
+    await importRows([line("bank-1")]);
+    const csv = (i: number) => ({
+      sourceId: "src-1",
+      date: "2026-07-09T00:00:00.000Z",
+      amount: -200 - i,
+      currency: "EUR",
+      name: `CSV ${i}`,
+      externalRowId: "bank-1",
+      importJobId: "job-web",
+      csvRowIndex: i,
+      _original: { date: "09.07.2026", amount: "-2", rawRow: {} },
+    });
+
+    const res = (await bulkCreateTransactionsCallable.run({
+      data: { sourceId: "src-1", transactions: [csv(1), csv(2)] },
+      auth: { uid: USER, token: {} },
+    } as never)) as { count: number; duplicateCount: number };
+
+    expect(res).toMatchObject({ count: 2, duplicateCount: 0 });
+    expect(await storedIds()).toEqual(["bank-1", null, null].sort());
   });
 });

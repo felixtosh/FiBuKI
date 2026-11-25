@@ -334,7 +334,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "so re-sending an overlapping export is safe; the response says how many in duplicateCount. " +
       "When a file is sent in several calls, pass the same importJobId on each so identical lines of that file are all kept. " +
       "Give each line an externalRowId when you can: a line whose externalRowId the bank account already stores is skipped " +
-      "whatever the importJobId, so a retried or resumed import never writes it twice, and lines with different ids are all kept.",
+      "whatever the importJobId, so a retried or resumed import never writes it twice, and lines with different ids are all kept. " +
+      "A line with an id is also skipped when it matches a stored line without one (same date, amount and reference), but only " +
+      "as many such lines as are stored. Keep the id scheme stable for a bank account across every importer and run: a changed " +
+      "scheme writes the lines again. Ids are trimmed and case-sensitive; an empty one counts as none. Do not send two calls " +
+      "for one bank account in parallel: the skip is checked before writing, so parallel calls can both write a line.",
     inputSchema: {
       type: "object",
       properties: {
@@ -361,7 +365,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
               externalRowId: {
                 type: "string",
                 description:
-                  "Optional. Your own id for this bank line, unique per bank account: the bank's transaction id, or one derived " +
+                  "Optional, at most 256 characters, trimmed, case-sensitive. Your own id for this bank line, unique per bank account: the bank's transaction id, or one derived " +
                   "from bank account, date, amount and the line's position among identical lines of that day (leave the booking " +
                   "text out: text recognition on scans is not stable between runs).",
               },

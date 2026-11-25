@@ -134,8 +134,11 @@ where there is one, or an id the importer derives from Bank Account, date, amoun
 line's position among identical lines of that day, leaving the booking text out because
 text recognition on scanned statements is not stable between runs. An Import skips a row
 whose id the Bank Account already stores, whatever the import job, so a retried or resumed
-Import never writes a line twice. A row without one goes through the duplicate check on
-date, amount and reference. FiBuKI never derives one and never backfills stored rows.
+Import never writes a line twice. Against stored rows without an id, the duplicate check on
+date, amount and reference stays a backstop that counts: N such stored lines hold back at
+most N rows with an id. A row without one goes through that duplicate check unchanged.
+Trimmed and case-sensitive; an empty one is none. FiBuKI never derives one and never
+backfills stored rows.
 _Deutsch_: Externe Zeilen-ID
 _Avoid_: idempotency key, dedupe hash (the date, amount and reference check), transaction id
 bare

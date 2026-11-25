@@ -16,8 +16,10 @@
  * A row with an External Row Id (#796) is decided by its id instead: it is a
  * duplicate when the Bank Account already stores that id, whatever the import
  * job (a resume included), or when the same call carries the id twice. The
- * hash stays its backstop only against stored rows that have no id, so two
- * identical lines with different ids are both kept.
+ * hash stays its backstop only against stored rows that have no id, of any
+ * import job, and counts: N stored lines without an id hold back at most N
+ * rows with an id of the same hash, so two identical lines with different
+ * ids beside one stored line keep one of them.
  */
 
 import { createHash } from "crypto";
@@ -66,16 +68,19 @@ export async function findEarlierImportHashes(
   return (await earlierImportHashes(db, userId, sourceId, hashes, currentImportJobId)).all;
 }
 
-/** The earlier hashes, and among them those stored on a row without an External Row Id. */
+/**
+ * The earlier hashes, and how many stored rows without an External Row Id
+ * carry each hash, whatever their import job.
+ */
 async function earlierImportHashes(
   db: Firestore,
   userId: string,
   sourceId: string,
   hashes: string[],
   currentImportJobId?: string
-): Promise<{ all: Set<string>; withoutId: Set<string> }> {
+): Promise<{ all: Set<string>; withoutId: Map<string, number> }> {
   const existing = new Set<string>();
-  const withoutId = new Set<string>();
+  const withoutId = new Map<string, number>();
   const unique = [...new Set(hashes)];
 
   for (let i = 0; i < unique.length; i += IN_QUERY_LIMIT) {
@@ -88,10 +93,10 @@ async function earlierImportHashes(
 
     for (const doc of snapshot.docs) {
       const data = doc.data();
-      if (data.dedupeHash && (!currentImportJobId || data.importJobId !== currentImportJobId)) {
-        existing.add(data.dedupeHash as string);
-        if (!data.externalRowId) withoutId.add(data.dedupeHash as string);
-      }
+      if (!data.dedupeHash) continue;
+      const hash = data.dedupeHash as string;
+      if (!currentImportJobId || data.importJobId !== currentImportJobId) existing.add(hash);
+      if (!data.externalRowId) withoutId.set(hash, (withoutId.get(hash) ?? 0) + 1);
     }
   }
 
@@ -127,27 +132,26 @@ export async function splitDuplicates<T extends { dedupeHash: string; externalRo
   rows: T[],
   currentImportJobId?: string
 ): Promise<{ fresh: T[]; duplicates: T[] }> {
-  const earlier = await earlierImportHashes(
-    db,
-    userId,
-    sourceId,
-    rows.map((r) => r.dedupeHash),
-    currentImportJobId
-  );
-  const storedIds = await findStoredExternalRowIds(
-    db,
-    userId,
-    sourceId,
-    rows.flatMap((r) => (r.externalRowId ? [r.externalRowId] : []))
-  );
+  const [earlier, storedIds] = await Promise.all([
+    earlierImportHashes(db, userId, sourceId, rows.map((r) => r.dedupeHash), currentImportJobId),
+    findStoredExternalRowIds(db, userId, sourceId, rows.flatMap((r) => (r.externalRowId ? [r.externalRowId] : []))),
+  ]);
   const fresh: T[] = [];
   const duplicates: T[] = [];
   const seenIds = new Set<string>();
+  const backstop = new Map(earlier.withoutId);
   for (const row of rows) {
     const id = row.externalRowId;
-    const duplicate = id
-      ? storedIds.has(id) || seenIds.has(id) || earlier.withoutId.has(row.dedupeHash)
-      : earlier.all.has(row.dedupeHash);
+    let duplicate: boolean;
+    if (!id) {
+      duplicate = earlier.all.has(row.dedupeHash);
+    } else if (storedIds.has(id) || seenIds.has(id)) {
+      duplicate = true;
+    } else {
+      const left = backstop.get(row.dedupeHash) ?? 0;
+      duplicate = left > 0;
+      if (duplicate) backstop.set(row.dedupeHash, left - 1);
+    }
     if (id) seenIds.add(id);
     (duplicate ? duplicates : fresh).push(row);
   }
