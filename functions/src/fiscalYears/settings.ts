@@ -352,7 +352,7 @@ export async function splitUntracked<T>(
 }
 
 /** A change of Tracked From (and Closed Through) that brings untracked rows in. */
-export interface UntrackedChoice {
+export interface UntrackedChoiceChange {
   trackedFrom: Month;
   closedThrough?: Month;
 }
@@ -372,7 +372,7 @@ export interface UntrackedPreview {
    * - open: Tracked From back the same way; only while nothing is closed, as
    *   an open stretch may never lie before a closed one.
    */
-  choices: { closed: UntrackedChoice | null; open: UntrackedChoice | null };
+  choices: { closed: UntrackedChoiceChange | null; open: UntrackedChoiceChange | null };
 }
 
 /**

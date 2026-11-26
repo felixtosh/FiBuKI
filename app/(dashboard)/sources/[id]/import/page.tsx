@@ -23,7 +23,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
 import { UntrackedImportChoice } from "@/components/import/untracked-import-choice";
-import type { UntrackedChoice, UntrackedImportPreview } from "@/types/fiscal-years";
+import type { UntrackedChoiceKind, UntrackedImportPreview } from "@/types/fiscal-years";
 
 type UntrackedPreviewState =
   | { status: "idle" | "loading" }
@@ -85,7 +85,7 @@ export default function ImportPage({ params }: ImportPageProps) {
   // The preview asks about rows before Tracked From (#805) once the columns
   // are matched and before anything is written.
   const [untracked, setUntracked] = useState<UntrackedPreviewState>({ status: "idle" });
-  const [untrackedChoice, setUntrackedChoice] = useState<UntrackedChoice | null>(null);
+  const [untrackedChoice, setUntrackedChoice] = useState<UntrackedChoiceKind | null>(null);
   const onPreviewStep = effectiveStep === "preview";
   useEffect(() => {
     if (!onPreviewStep) return;
