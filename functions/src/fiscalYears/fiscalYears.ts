@@ -34,6 +34,7 @@ import {
   closedRefusal,
   untrackedRefusal,
   fileDateOf,
+  CLOSED_FILE,
   type FiscalYearChangeRecord,
   type FiscalYearSettings,
   type FiscalYearsVia,
@@ -88,11 +89,6 @@ export async function assertNotClosed(
   if (!dates.some((d) => d instanceof Date && !isNaN(d.getTime()))) return;
   (await fiscalYearsGuard(db, userId)).refuseClosed(dates, what);
 }
-
-/** What a File refusal names (#801). */
-export const CLOSED_FILE = "This File";
-/** What a File Connection refusal names: its Transaction decides (#801). */
-export const CLOSED_CONNECTION = "The Transaction of this File Connection";
 
 /**
  * Refuse a change to a File dated in the Closed stretch (#801): its facts, its

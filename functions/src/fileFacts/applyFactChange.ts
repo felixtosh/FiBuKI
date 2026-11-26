@@ -14,7 +14,7 @@ import { syncDocumentationStateForTransactions } from "../documents/syncDocument
 import { rescoreFileSuggestions } from "../matching/rescoreFileSuggestions";
 import { decideFactChange, type FactChange, type FactUpdate, type FollowUp } from "./factChange";
 import { activityEntry, logActivity, type ActivityActor } from "../utils/activity";
-import { closedRefusal, fileStretchOf, readFiscalYears } from "../fiscalYears/settings";
+import { CLOSED_FILE, closedRefusal, fileStretchOf, readFiscalYears } from "../fiscalYears/settings";
 
 /**
  * The changes a person or a client starts, refused on a File dated in the
@@ -80,14 +80,14 @@ export async function applyFactChange(
 
   const settings = LOCKED_FACT_ORIGINS.has(change.origin) ? await readFiscalYears(db, userId) : null;
   if (settings && fileStretchOf(settings, record) === "closed") {
-    return { refused: true, code: "CLOSED", message: closedRefusal(settings, "This File") };
+    return { refused: true, code: "CLOSED", message: closedRefusal(settings, CLOSED_FILE) };
   }
 
   const outcome = decideFactChange({ record, linkedTransactions }, change);
   if (outcome.refused) return outcome;
   // A correction that would date the File in the Closed stretch changes it too.
   if (settings && "extractedDate" in outcome.update && fileStretchOf(settings, outcome.update) === "closed") {
-    return { refused: true, code: "CLOSED", message: closedRefusal(settings, "This File, as corrected,") };
+    return { refused: true, code: "CLOSED", message: closedRefusal(settings, `${CLOSED_FILE}, as corrected,`) };
   }
 
   if (Object.keys(outcome.update).length > 0) {
