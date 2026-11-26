@@ -126,14 +126,16 @@ describe("poll bus: end-to-end through the client shim", () => {
     __resetListens();
   });
 
+  // A Partner, not a Transaction: Transactions are read-only for the browser
+  // since #794, and this needs a write the client shim may make.
   it("a write refreshes an active listener without waiting for the interval", async () => {
-    await serverDb.doc("transactions/t1").set({ userId: USER, text: "before" });
+    await serverDb.doc("partners/p1").set({ userId: USER, text: "before" });
 
     const seen: string[] = [];
     // A deliberately huge interval: if the listener updates during this test, it
     // can only be because the write poked it, never because a timer fired.
     process.env.NEXT_PUBLIC_FIBUKI_POLL_MS = "600000";
-    const unsub = onSnapshot(doc(db, "transactions", "t1"), (snap) => {
+    const unsub = onSnapshot(doc(db, "partners", "p1"), (snap) => {
       const d = snap.data() as { text?: string } | undefined;
       if (d?.text) seen.push(d.text);
     });
@@ -141,7 +143,7 @@ describe("poll bus: end-to-end through the client shim", () => {
     // Wait for the initial (immediate) emission.
     await vi.waitFor(() => expect(seen).toEqual(["before"]), { timeout: 3000 });
 
-    await setDoc(doc(db, "transactions", "t1"), { userId: USER, text: "after" });
+    await setDoc(doc(db, "partners", "p1"), { userId: USER, text: "after" });
 
     // No timer can have elapsed — 600s — so observing "after" proves the poke.
     await vi.waitFor(() => expect(seen).toEqual(["before", "after"]), { timeout: 3000 });

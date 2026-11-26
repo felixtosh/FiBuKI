@@ -19,6 +19,8 @@
  */
 
 import { HttpsError } from "../utils/createCallable";
+import { assertNotClosed } from "../fiscalYears/fiscalYears";
+import { toDateSafe } from "../utils/toDateSafe";
 
 /**
  * What `updateTransaction` writes on one row: the Reports page's answers to
@@ -63,4 +65,34 @@ export function assertWritableFields(
   if (refused.length > 0) {
     throw new HttpsError("invalid-argument", `${callable} does not write ${refused.join(", ")}`);
   }
+}
+
+/**
+ * Refuse an edit of a Transaction dated in the Closed stretch (#794,
+ * ADR-0018), naming Closed Through and how to lift it. Every edit path that
+ * checks the fields above checks this too.
+ */
+export async function assertTransactionEditable(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  transaction: Record<string, unknown>
+): Promise<void> {
+  await assertNotClosed(db, userId, [toDateSafe(transaction.date)], "This Transaction");
+}
+
+/**
+ * The same refusal for a writer that holds only the Transaction's id (a
+ * Partner, a category, a ruling, Booking Accounts, a rejection). A missing or
+ * foreign Transaction passes through: the writer's own check answers it.
+ */
+export async function assertTransactionIdEditable(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  transactionId: unknown
+): Promise<void> {
+  if (typeof transactionId !== "string" || !transactionId || transactionId.includes("/")) return;
+  const snap = await db.collection("transactions").doc(transactionId).get();
+  const data = snap.exists ? snap.data() : undefined;
+  if (!data || data.userId !== userId) return;
+  await assertTransactionEditable(db, userId, data);
 }

@@ -30,6 +30,9 @@ const LOCKED_TOP_LEVEL = [
   "precisionSearchQueue",
   "inboundEmailAddresses",
   "imports",
+  // A Transaction in the Closed stretch must refuse every change (#794): the
+  // browser has no writer left, so the table is read-only for it.
+  "transactions",
 ] as const;
 
 describe("the policy", () => {
@@ -77,6 +80,7 @@ describe("the data plane enforces it", () => {
     ["precisionSearchQueue/ps-1", { userId: USER, status: "pending" }],
     ["inboundEmailAddresses/ia-1", { userId: USER, email: "invoices-x@fibuki.com", isActive: true, dailyLimit: 100, todayCount: 0 }],
     ["imports/im-1", { userId: USER, sourceId: "s-1", status: "completed", fieldMappings: [] }],
+    ["transactions/tx-1", { userId: USER, sourceId: "s-1", name: "Vendor", amount: -100 }],
     [`users/${USER}/reports/r-1`, { status: "draft" }],
     [`users/${USER}/settings/userData`, { personalEntity: { name: "Max Muster" }, finanzonline: { isConfigured: true } }],
     [`users/${USER}`, { email: "me@example.test" }],
@@ -152,6 +156,13 @@ describe("the data plane enforces it", () => {
     const path = `users/${USER}/settings/userData`;
     await getFirestore().doc(path).delete();
     const r = await call("write", { ops: [{ type: "set", path, data: { personalEntity: { name: "Planted" } } }] });
+    expect(r.status, r.text).toBe(403);
+    expect((await getFirestore().doc(path).get()).exists).toBe(false);
+  });
+
+  it("the Fiscal Years settings refuse a client write: only their writer keeps the change record (#794)", async () => {
+    const path = `users/${USER}/settings/fiscalYears`;
+    const r = await call("write", { ops: [{ type: "set", path, data: { trackedFrom: "2001-01", closedThrough: null } }] });
     expect(r.status, r.text).toBe(403);
     expect((await getFirestore().doc(path).get()).exists).toBe(false);
   });

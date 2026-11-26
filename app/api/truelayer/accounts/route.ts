@@ -15,6 +15,8 @@ import { getTrueLayerClient, getAccountIban } from "@/lib/truelayer";
 import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { normalizeIban } from "@/lib/import/deduplication";
 import { computeDedupeHash } from "@/functions/src/imports/dedupe";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { splitUntracked } from "@/functions/src/fiscalYears/settings";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 // Initialize Firebase for server-side
@@ -285,10 +287,11 @@ async function triggerInitialSync(
       return;
     }
 
-    // Import transactions
+    // Import transactions; rows before Tracked From are skipped (#794).
     const nowTs = Timestamp.now();
+    const { tracked } = await splitUntracked(getAdminDb(), userId, transactions, (tx) => new Date(tx.timestamp));
 
-    for (const tx of transactions) {
+    for (const tx of tracked) {
       const isCredit = tx.transaction_type === "CREDIT";
       const amount = isCredit ? Math.abs(tx.amount) : -Math.abs(tx.amount);
       const txDate = new Date(tx.timestamp);

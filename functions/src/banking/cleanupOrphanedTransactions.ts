@@ -7,6 +7,8 @@
 
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { isAdminCaller } from "../utils/adminCaller";
+import { readFiscalYears, stretchOf } from "../fiscalYears/fiscalYears";
+import { toDateSafe } from "../utils/toDateSafe";
 import type {
   CleanupOrphanedTransactionsRequest,
   CleanupOrphanedTransactionsResponse,
@@ -103,12 +105,21 @@ export const cleanupOrphanedTransactionsCallable = createCallable<
     // ========================================================================
     // Delete orphaned transactions
     // ========================================================================
+    // Filed years keep their evidence (#794): a closed orphan stays.
+    const fiscalYears = await readFiscalYears(db, cleanupUserId);
+    const isClosed = (d: FirebaseFirestore.QueryDocumentSnapshot) => {
+      const date = toDateSafe(d.data().date);
+      return !!date && stretchOf(fiscalYears, date) === "closed";
+    };
+    const deletable = orphanedDocs.filter((d) => !isClosed(d));
+    const keptClosed = orphanedDocs.length - deletable.length;
+
     const BATCH_SIZE = 500;
     let deleted = 0;
 
-    for (let i = 0; i < orphanedDocs.length; i += BATCH_SIZE) {
+    for (let i = 0; i < deletable.length; i += BATCH_SIZE) {
       const batch = db.batch();
-      const slice = orphanedDocs.slice(i, i + BATCH_SIZE);
+      const slice = deletable.slice(i, i + BATCH_SIZE);
 
       for (const doc of slice) {
         batch.delete(doc.ref);
@@ -127,6 +138,7 @@ export const cleanupOrphanedTransactionsCallable = createCallable<
       orphanedCount: orphanedDocs.length,
       orphanedBySource: Object.fromEntries(orphanedBySource),
       deleted,
+      keptClosed,
     };
   }
 );

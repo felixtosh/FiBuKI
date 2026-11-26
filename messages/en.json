@@ -362,6 +362,43 @@
       "description": "The language FiBuKI's screens use. Screens not translated yet stay in English.",
       "saveFailed": "Could not save the language."
     },
+    "fiscalYears": {
+      "title": "Fiscal Years",
+      "description": "Which months FiBuKI holds data for, and which are closed because their tax return is filed.",
+      "pageDescription": "Tracked, closed and open months",
+      "startMonth": "Fiscal year starts in",
+      "trackedFrom": "Tracked from",
+      "trackedFromHelp": "Imports skip rows dated before this month.",
+      "closedThrough": "Closed through",
+      "closedThroughHelp": "Transactions up to the end of this month cannot be changed or deleted. New ones can still be imported. To correct one, move this back, fix it, then move it forward again.",
+      "nothingClosed": "Nothing closed",
+      "clear": "Clear",
+      "save": "Save",
+      "saved": "Saved. The change is recorded.",
+      "saveFailed": "Could not save the Fiscal Years.",
+      "changes": "Changes",
+      "noChanges": "No changes yet.",
+      "changeLine": "{when}: {what}",
+      "via": {
+        "settings": "in Settings",
+        "mcp": "by an MCP client",
+        "chat": "by the chat",
+        "initial": "stored as the default"
+      },
+      "untrackedNotice": {
+        "title": "{count, plural, one {# row was} other {# rows were}} skipped: dated before Tracked From",
+        "year": "{year}: {count}",
+        "link": "Track these years in Settings, Fiscal Years"
+      },
+      "noChange": "Nothing changed.",
+      "refusal": {
+        "invalid": "That is not a valid month.",
+        "after-current-month": "A month after the current one cannot be set (the latest is {month}).",
+        "closed-before-tracked": "Closed through cannot lie before tracked from; the earliest is {month}.",
+        "tracked-after-gap": "Tracked from would leave a gap after the closed months; the latest is {month}. Move closed through first.",
+        "tracked-from-holds-data": "Tracked from cannot move past {month}: it holds transactions or documents. Close those months instead."
+      }
+    },
     "identity": {
       "intro": "We need all of this to match your invoices correctly: it tells us which name, company or account on an invoice is you and which belongs to a partner.",
       "groups": {

@@ -5,6 +5,8 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { detachTransactions } from "../fileConnections/writer";
+import { assertNotClosed } from "../fiscalYears/fiscalYears";
+import { toDateSafe } from "../utils/toDateSafe";
 
 interface DeleteSourceRequest {
   sourceId: string;
@@ -73,6 +75,19 @@ export async function deleteSourceInternal(
   if (sourceData.userId !== userId) {
     throw new HttpsError("permission-denied", "Access denied");
   }
+
+  // Filed years keep their evidence (#794): refused whole, before anything is taken apart.
+  const ownRows = await dbRef
+    .collection("transactions")
+    .where("userId", "==", userId)
+    .where("sourceId", "==", sourceId)
+    .get();
+  await assertNotClosed(
+    dbRef,
+    userId,
+    ownRows.docs.map((d) => toDateSafe(d.data().date)),
+    "A Transaction of this Bank Account"
+  );
 
   const now = Timestamp.now();
   let deletedImports = 0;

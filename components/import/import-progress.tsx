@@ -5,6 +5,7 @@ import { Progress } from "@/components/ui/progress";
 import { CheckCircle2, XCircle, AlertCircle, Loader2, Lock, Wallet } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 import Link from "next/link";
+import { UntrackedNotice } from "@/components/import/untracked-notice";
 
 interface ImportProgressProps {
   progress: number;
@@ -15,6 +16,8 @@ interface ImportProgressProps {
     errors: number;
     errorDetails: { row: number; message: string; rowData: Record<string, string> }[];
     overLimitCount?: number;
+    /** Rows before Tracked From, per fiscal year (#794); not imported. */
+    untrackedByFiscalYear?: Record<string, number>;
     balanceDetected?: {
       openingBalance: number;
       openingBalanceDate: string;
@@ -72,6 +75,8 @@ export function ImportProgress({
           ))}
         </div>
       )}
+
+      {isComplete && results ? <UntrackedNotice byFiscalYear={results.untrackedByFiscalYear} /> : null}
 
       {/* Over-limit notice */}
       {isComplete && results && (results.overLimitCount ?? 0) > 0 && (

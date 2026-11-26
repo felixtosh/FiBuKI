@@ -13,6 +13,7 @@
  * a trigger.
  */
 
+import { assertTransactionEditable } from "./writableFields";
 import { FieldValue, Timestamp, type Firestore } from "firebase-admin/firestore";
 import {
   partialPaymentFigures,
@@ -75,6 +76,7 @@ export async function rulePartialPayment(
   if (tx.userId !== userId) {
     throw new PartialPaymentRulingError("permission-denied", "Access denied");
   }
+  await assertTransactionEditable(db, userId, tx);
 
   if (action === "revoke") {
     if (!tx.partialPaymentAcceptance) {

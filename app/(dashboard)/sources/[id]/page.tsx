@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useImports } from "@/hooks/use-imports";
 import { ImportHistoryCard } from "@/components/sources/import-history-card";
+import { UntrackedNotice } from "@/components/import/untracked-notice";
 import { DraftImportsSection } from "@/components/sources/draft-imports-section";
 import { EditSourceDialog } from "@/components/sources/edit-source-dialog";
 import { AddCashPaymentDialog } from "@/components/sources/add-cash-payment-dialog";
@@ -65,6 +66,8 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
   const { imports, drafts, loading: importsLoading, deleteImport, deleteDraft } = useImports(id);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  // Rows the last sync skipped as dated before Tracked From (#794), per fiscal year.
+  const [syncUntracked, setSyncUntracked] = useState(null as Record<string, number> | null);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isAddCashPaymentOpen, setIsAddCashPaymentOpen] = useState(false);
   const [isEditingBalance, setIsEditingBalance] = useState(false);
@@ -159,13 +162,14 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
       const { callFunction } = await import("@/lib/firebase/callable");
       const result = await callFunction<
         { sourceId: string; fromYear?: number },
-        { success: boolean; imported: number; skipped: number; reassigned: number; total: number }
+        { success: boolean; imported: number; skipped: number; reassigned: number; total: number; untrackedByFiscalYear?: Record<string, number> }
       >("syncBankTransactions", {
         sourceId: source.id,
         fromYear: currentSyncYear,
       });
 
       console.log("Sync complete:", result);
+      setSyncUntracked(result.untrackedByFiscalYear ?? null);
     } catch (error) {
       console.error("Failed to sync:", error);
       const message = error instanceof Error ? error.message : "Failed to sync";
@@ -588,6 +592,8 @@ export default function SourceDetailPage({ params }: SourceDetailPageProps) {
             onDeleteDraft={deleteDraft}
             isLoading={importsLoading}
           />
+
+          <UntrackedNotice byFiscalYear={syncUntracked} />
 
           {/* Import/Sync History */}
           <ImportHistoryCard

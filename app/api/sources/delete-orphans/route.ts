@@ -11,6 +11,9 @@ import {
   doc,
 } from "firebase/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { readFiscalYears, stretchOf } from "@/functions/src/fiscalYears/settings";
+import { toDateSafe } from "@/lib/utils";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -128,7 +131,10 @@ export async function POST(request: NextRequest) {
     const transactionsSnap = await getDocs(transactionsQuery);
 
     let orphanTransactionCount = 0;
+    let keptClosedTransactions = 0;
     const orphanSourceIds = new Set<string>();
+    // Filed years keep their evidence (#794): a closed orphan stays.
+    const fiscalYears = await readFiscalYears(getAdminDb(), userId);
 
     for (const txDoc of transactionsSnap.docs) {
       const txData = txDoc.data();
@@ -137,6 +143,11 @@ export async function POST(request: NextRequest) {
       // A transaction is orphaned if its sourceId doesn't match any valid source
       if (sourceId && !validSourceIds.has(sourceId)) {
         orphanSourceIds.add(sourceId);
+        const date = toDateSafe(txData.date);
+        if (date && stretchOf(fiscalYears, date) === "closed") {
+          keptClosedTransactions++;
+          continue;
+        }
         await deleteDoc(txDoc.ref);
         orphanTransactionCount++;
       }
@@ -151,6 +162,7 @@ export async function POST(request: NextRequest) {
       deletedSources: orphanSources.length,
       deletedConnections: orphanConnections.length,
       deletedTransactions: orphanTransactionCount,
+      keptClosedTransactions,
       orphanSourceIds: Array.from(orphanSourceIds),
       sources: orphanSources,
       connections: orphanConnections,

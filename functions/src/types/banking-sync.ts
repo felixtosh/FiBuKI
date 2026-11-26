@@ -14,6 +14,10 @@ export interface SyncBankTransactionsResponse {
   reassigned: number;
   total: number;
   importRecordId?: string;
+  /** Rows before Tracked From (#794); not written. */
+  untrackedCount?: number;
+  /** The same rows per fiscal year (`2023`, or `2023/24`). */
+  untrackedByFiscalYear?: Record<string, number>;
 }
 
 export interface CleanupOrphanedTransactionsRequest {
@@ -26,6 +30,8 @@ export interface CleanupOrphanedTransactionsResponse {
   orphanedCount: number;
   orphanedBySource: Record<string, number>;
   deleted?: number;
+  /** Orphans dated in the Closed stretch (#794), kept. */
+  keptClosed?: number;
 }
 
 // ============================================================================

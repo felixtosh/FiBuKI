@@ -1,0 +1,931 @@
+/**
+ * Fiscal Years (#794, spec #800, ADR-0018): a User's fiscal year start month,
+ * Tracked From and Closed Through split time into untracked, closed and open
+ * stretches, always in that order.
+ *
+ * Driven through the MCP tools and the callables (the settings page) against
+ * the self-host in-memory database. What is asserted is what the User or a
+ * later surface sees: the settings a read returns, the change records, the
+ * stored rows, and the refusals with their messages.
+ */
+
+process.env.FIBUKI_STORAGE = "memory";
+
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { getFirestore, Timestamp, __resetFirestoreShim, __whenShimIdle } from "./firestore-shim";
+import { __resetTriggerShim } from "./trigger-shim";
+
+// REAL application code, unmodified:
+import { handleTool } from "../tools/handlers";
+import { agentCaller } from "../tools/caller";
+import { getFiscalYearsCallable, updateFiscalYearsCallable } from "../fiscalYears/fiscalYearsCallables";
+import { viennaToday } from "../utils/storedDay";
+import { updateTransactionCallable } from "../transactions/updateTransaction";
+import { bulkUpdateTransactionsCallable } from "../transactions/bulkUpdateTransactions";
+import { deleteTransactionsBySourceCallable } from "../transactions/deleteTransactionsBySource";
+import { deleteSourceCallable } from "../sources/deleteSource";
+import { addCashPaymentCallable, deleteCashPaymentCallable } from "../transactions/cashPayment";
+import { bulkCreateTransactionsCallable } from "../imports/bulkCreateTransactions";
+import { getBalanceAtDateCallable } from "../sources/getBalanceAtDate";
+import { syncBankTransactionsCallable } from "../banking/syncBankTransactions";
+import { syncFinapiTransactions } from "../finapi/syncCallable";
+import { deleteImportRecordCallable } from "../imports/deleteImportRecord";
+import { applyImportRemapCallable } from "../imports/applyImportRemap";
+import { cleanupOrphanedTransactionsCallable } from "../banking/cleanupOrphanedTransactions";
+import { assignPartnerToTransactionCallable } from "../partners/assignPartnerToTransaction";
+import { removePartnerFromTransactionCallable } from "../partners/removePartnerFromTransaction";
+import { assignNoReceiptCategoryCallable } from "../matching/assignNoReceiptCategory";
+import {
+  assignReceiptLostCategoryCallable,
+  migrateNoReceiptCategoryRefsCallable,
+  removeNoReceiptCategoryCallable,
+} from "../matching/noReceiptCategoryWriters";
+import { acceptReceiptOnlyCallable } from "../transactions/acceptReceiptOnly";
+import { acceptPartialPaymentCallable } from "../transactions/acceptPartialPayment";
+import { dismissTransactionSuggestionCallable } from "../files/dismissTransactionSuggestion";
+import { undismissTransactionSuggestionCallable } from "../files/undismissTransactionSuggestion";
+import { correctCashPaymentCallable } from "../transactions/cashPayment";
+import { deleteUserData } from "../user/deleteUserAccountCallable";
+
+const db = getFirestore();
+const USER = "fy-user";
+const OTHER = "fy-other";
+const AUTH = { uid: USER, token: {} };
+
+const day = (iso: string) => Timestamp.fromDate(new Date(`${iso}T00:00:00Z`));
+
+type Settings = { startMonth: number; trackedFrom: string; closedThrough: string | null };
+type ChangeRecord = {
+  id: string;
+  changedBy: string;
+  changedAt: string;
+  via: string;
+  previous: Settings | null;
+  next: Settings;
+};
+
+async function settingsOf(uid = USER): Promise<Settings> {
+  return ((await handleTool(uid, "get_fiscal_years", {})) as { settings: Settings }).settings;
+}
+
+function change(args: Record<string, unknown>, uid = USER) {
+  return handleTool(uid, "set_fiscal_years", args) as Promise<{ settings: Settings; record: ChangeRecord | null }>;
+}
+
+/** Every stored change record of a User, the initial one included. */
+async function allRecords(uid = USER) {
+  const snap = await db.collection(`users/${uid}/fiscalYearChanges`).get();
+  return snap.docs.map((d) => d.data());
+}
+
+/** The change records a User or a client made: all but the initial one. */
+async function storedRecords(uid = USER) {
+  return (await allRecords(uid)).filter((r) => r.via !== "initial");
+}
+
+async function seedTransaction(id: string, iso: string, uid = USER) {
+  await db.collection("transactions").doc(id).set({
+    userId: uid,
+    sourceId: "src-1",
+    date: day(iso),
+    amount: -1000,
+    currency: "EUR",
+    name: "Vendor",
+    fileIds: [],
+    isComplete: false,
+  });
+}
+
+const thisYear = viennaToday().toISOString().slice(0, 4);
+
+beforeEach(async () => {
+  await __whenShimIdle();
+  await __resetFirestoreShim();
+  __resetTriggerShim();
+});
+
+describe("the three settings and their defaults", () => {
+  it("a new User tracks the current fiscal year from January, with nothing closed", async () => {
+    expect(await settingsOf()).toEqual({ startMonth: 1, trackedFrom: `${thisYear}-01`, closedThrough: null });
+  });
+
+  it("a User with older data keeps it tracked: Tracked From defaults to the start of its earliest fiscal year", async () => {
+    await seedTransaction("tx-old", "2023-04-17");
+
+    expect((await settingsOf()).trackedFrom).toBe("2023-01");
+  });
+
+  it("a File in the bin does not move the default", async () => {
+    await db.collection("files").doc("f-old").set({
+      userId: USER,
+      fileName: "old.pdf",
+      extractedDate: day("1999-05-01"),
+      deletedAt: day("2026-01-01"),
+    });
+    await db.collection("files").doc("f-2024").set({ userId: USER, fileName: "a.pdf", extractedDate: day("2024-08-01") });
+
+    expect((await settingsOf()).trackedFrom).toBe("2024-01");
+  });
+
+  it("an undated File does not hide a dated one behind it (review round 2)", async () => {
+    await db.collection("files").doc("f-undated").set({ userId: USER, fileName: "scan.pdf", extractedDate: null });
+    await db.collection("files").doc("f-2019").set({ userId: USER, fileName: "a.pdf", extractedDate: day("2019-03-01") });
+
+    expect((await settingsOf()).trackedFrom).toBe("2019-01");
+  });
+
+  it("a full page of undated Files does not either", async () => {
+    for (let i = 0; i < 55; i++) {
+      await db.collection("files").doc(`f-undated-${i}`).set({ userId: USER, fileName: `s${i}.pdf`, extractedDate: null });
+    }
+    await db.collection("files").doc("f-2019").set({ userId: USER, fileName: "a.pdf", extractedDate: day("2019-03-01") });
+
+    expect((await settingsOf()).trackedFrom).toBe("2019-01");
+  });
+
+  it("the first read stores the default with one initial record", async () => {
+    const first = await settingsOf();
+    await settingsOf();
+
+    const records = await allRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ via: "initial", previous: null, next: first, changedBy: USER });
+  });
+
+  it("the stored default does not move at New Year", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-15T12:00:00Z"));
+      await db.collection("sources").doc("src-1").set({ userId: USER, name: "Giro", type: "manual", isActive: true });
+      expect((await settingsOf()).trackedFrom).toBe("2026-01");
+
+      vi.setSystemTime(new Date("2027-02-03T12:00:00Z"));
+      const res = (await handleTool(USER, "import_transactions", {
+        sourceId: "src-1",
+        transactions: [{ date: "2026-11-10", amount: -100, name: "November", reference: "r-1" }],
+      })) as { count: number; untrackedCount: number };
+      expect(res).toMatchObject({ count: 1, untrackedCount: 0 });
+      expect((await settingsOf()).trackedFrom).toBe("2026-01");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("another User's data does not move the default", async () => {
+    await seedTransaction("tx-old", "2023-04-17", OTHER);
+
+    expect((await settingsOf()).trackedFrom).toBe(`${thisYear}-01`);
+  });
+});
+
+describe("every change writes one append-only record", () => {
+  it("stores the new settings and returns the record it wrote: who, when, old and new value", async () => {
+    const before = await settingsOf();
+
+    const { settings, record } = await change({ trackedFrom: "2022-01", closedThrough: "2024-12" });
+
+    expect(settings).toEqual({ startMonth: 1, trackedFrom: "2022-01", closedThrough: "2024-12" });
+    expect(await settingsOf()).toEqual(settings);
+    expect(record).toMatchObject({
+      changedBy: USER,
+      via: "mcp",
+      previous: before,
+      next: settings,
+    });
+    expect(Number.isNaN(Date.parse(record!.changedAt))).toBe(false);
+    expect(await storedRecords()).toHaveLength(1);
+  });
+
+  it("one record per change, the earlier ones left as written", async () => {
+    await change({ trackedFrom: "2022-01" });
+    await change({ closedThrough: "2023-12" });
+    await change({ closedThrough: null });
+
+    const records = await storedRecords();
+    expect(records).toHaveLength(3);
+    expect(records.map((r) => (r.next as Settings).closedThrough).sort()).toEqual(["2023-12", null, null].sort());
+  });
+
+  it("a change that changes nothing writes nothing", async () => {
+    await change({ trackedFrom: "2022-01" });
+
+    const { record } = await change({ trackedFrom: "2022-01" });
+
+    expect(record).toBeNull();
+    expect(await storedRecords()).toHaveLength(1);
+  });
+
+  it("the fiscal year start month is one of the three", async () => {
+    const { settings, record } = await change({ startMonth: 7 });
+
+    expect(settings.startMonth).toBe(7);
+    expect(record!.previous.startMonth).toBe(1);
+    expect(record!.next.startMonth).toBe(7);
+  });
+
+  it("the chat records itself as the one who changed it", async () => {
+    const { record } = (await handleTool(USER, "set_fiscal_years", { closedThrough: `${thisYear}-01` }, agentCaller(null))) as {
+      record: ChangeRecord;
+    };
+    expect(record.via).toBe("chat");
+  });
+
+  it("the settings page changes them through its callable, recording itself", async () => {
+    const res = (await updateFiscalYearsCallable.run({
+      data: { closedThrough: `${thisYear}-02` },
+      auth: AUTH,
+    } as never)) as { settings: Settings; record: ChangeRecord };
+
+    expect(res.record).toMatchObject({ changedBy: USER, via: "settings" });
+    const read = (await getFiscalYearsCallable.run({ data: {}, auth: AUTH } as never)) as { settings: Settings };
+    expect(read.settings.closedThrough).toBe(`${thisYear}-02`);
+  });
+
+  it("one User's change leaves another User's settings alone", async () => {
+    await change({ closedThrough: `${thisYear}-01` });
+
+    expect((await settingsOf(OTHER)).closedThrough).toBeNull();
+  });
+});
+
+describe("the order untracked, closed, open always holds", () => {
+  it("refuses Closed Through before the month ahead of Tracked From (a closed stretch inside untracked time)", async () => {
+    await change({ trackedFrom: "2024-01" });
+
+    await expect(change({ closedThrough: "2023-11" })).rejects.toThrow(/Closed Through/);
+    expect((await settingsOf()).closedThrough).toBeNull();
+  });
+
+  it("allows Closed Through the month before Tracked From: nothing closed yet", async () => {
+    await change({ trackedFrom: "2024-01" });
+
+    await expect(change({ closedThrough: "2023-12" })).resolves.toBeTruthy();
+  });
+
+  it("refuses Tracked From past the month after Closed Through (a gap between closed and open)", async () => {
+    await change({ trackedFrom: "2022-01", closedThrough: "2023-12" });
+
+    await expect(change({ trackedFrom: "2024-02" })).rejects.toThrow(/Tracked From/);
+    expect((await settingsOf()).trackedFrom).toBe("2022-01");
+  });
+
+  it("refuses values that are not a month, and a start month outside 1-12", async () => {
+    await expect(change({ trackedFrom: "2024-13" })).rejects.toThrow(/YYYY-MM/);
+    await expect(change({ closedThrough: "2024-01-31" })).rejects.toThrow(/YYYY-MM/);
+    await expect(change({ startMonth: 0 })).rejects.toThrow(/startMonth/);
+    expect(await storedRecords()).toHaveLength(0);
+  });
+
+  it("refuses Closed Through or Tracked From after the current month", async () => {
+    const next = `${Number(thisYear) + 1}-01`;
+
+    await expect(change({ closedThrough: next })).rejects.toMatchObject({ details: { reason: "after-current-month" } });
+    await expect(change({ trackedFrom: next })).rejects.toMatchObject({ details: { reason: "after-current-month" } });
+    expect(await storedRecords()).toHaveLength(0);
+  });
+
+  it("names the refusal for a screen to translate", async () => {
+    await change({ trackedFrom: "2024-01" });
+
+    await expect(change({ closedThrough: "2023-01" })).rejects.toMatchObject({
+      details: { reason: "closed-before-tracked", month: "2023-12" },
+    });
+  });
+
+  it("two changes at once each record the other's result as their previous value", async () => {
+    await settingsOf();
+
+    await Promise.all([change({ trackedFrom: "2022-01" }), change({ startMonth: 4 })]);
+
+    const [a, b] = await storedRecords();
+    const chained = (x: typeof a, y: typeof a) => JSON.stringify(y.previous) === JSON.stringify(x.next);
+    expect(chained(a, b) || chained(b, a)).toBe(true);
+    expect(await settingsOf()).toEqual({ startMonth: 4, trackedFrom: "2022-01", closedThrough: null });
+  });
+});
+
+describe("moving Tracked From later", () => {
+  it("is refused when the months it would leave behind hold a Transaction", async () => {
+    await change({ trackedFrom: "2022-01" });
+    await seedTransaction("tx-2022", "2022-06-10");
+
+    await expect(change({ trackedFrom: "2023-01" })).rejects.toThrow(/2022-06/);
+    expect((await settingsOf()).trackedFrom).toBe("2022-01");
+  });
+
+  it("is refused when those months hold a File", async () => {
+    await change({ trackedFrom: "2022-01" });
+    await db.collection("files").doc("f-2022").set({ userId: USER, fileName: "a.pdf", extractedDate: day("2022-03-01") });
+
+    await expect(change({ trackedFrom: "2023-01" })).rejects.toMatchObject({
+      message: expect.stringMatching(/Tracked From cannot move to 2023-01: 2022-03/),
+      details: { reason: "tracked-from-holds-data", month: "2022-03" },
+    });
+  });
+
+  it("a File in the bin does not hold the months", async () => {
+    await change({ trackedFrom: "2022-01" });
+    await db.collection("files").doc("f-2022").set({
+      userId: USER,
+      fileName: "a.pdf",
+      extractedDate: day("2022-03-01"),
+      deletedAt: day("2026-01-01"),
+    });
+
+    await expect(change({ trackedFrom: "2023-01" })).resolves.toBeTruthy();
+  });
+
+  it("succeeds when they hold nothing, another User's rows included", async () => {
+    await change({ trackedFrom: "2022-01" });
+    await seedTransaction("tx-other", "2022-06-10", OTHER);
+    await seedTransaction("tx-2023", "2023-02-01");
+
+    const { settings } = await change({ trackedFrom: "2023-01" });
+    expect(settings.trackedFrom).toBe("2023-01");
+  });
+});
+
+describe("a Transaction in the Closed stretch is locked", () => {
+  const LOCK = /Closed Through is 2024-12.*move Closed Through back/;
+
+  async function closedAccount() {
+    await db.collection("sources").doc("src-1").set({ userId: USER, name: "Giro", type: "manual", isActive: true });
+    await change({ trackedFrom: "2023-01", closedThrough: "2024-12" });
+    await seedTransaction("tx-closed", "2024-12-31");
+    await seedTransaction("tx-open", "2025-01-01");
+  }
+
+  async function stored(id: string) {
+    return (await db.collection("transactions").doc(id).get()).data();
+  }
+
+  it("refuses an edit through update_transaction, naming Closed Through and how to lift it", async () => {
+    await closedAccount();
+
+    await expect(handleTool(USER, "update_transaction", { transactionId: "tx-closed", description: "x" })).rejects.toThrow(LOCK);
+    expect((await stored("tx-closed"))!.description).toBeUndefined();
+  });
+
+  it("refuses an edit through the updateTransaction callable", async () => {
+    await closedAccount();
+
+    await expect(
+      updateTransactionCallable.run({ data: { id: "tx-closed", data: { saleSupplyKind: null } }, auth: AUTH } as never)
+    ).rejects.toMatchObject({ code: "failed-precondition", message: expect.stringMatching(LOCK) });
+  });
+
+  it("refuses the closed rows of a bulk edit and edits the open ones", async () => {
+    await closedAccount();
+
+    const res = (await bulkUpdateTransactionsCallable.run({
+      data: { ids: ["tx-closed", "tx-open"], data: { description: "bulk" } },
+      auth: AUTH,
+    } as never)) as { success: number; failed: number; errors: Array<{ id: string; error: string }> };
+
+    expect(res.success).toBe(1);
+    expect(res.errors).toEqual([{ id: "tx-closed", error: expect.stringMatching(LOCK) }]);
+    expect((await stored("tx-closed"))!.description).toBeUndefined();
+    expect((await stored("tx-open"))!.description).toBe("bulk");
+  });
+
+  it("leaves edits of open Transactions alone", async () => {
+    await closedAccount();
+
+    await handleTool(USER, "update_transaction", { transactionId: "tx-open", description: "fine" });
+    expect((await stored("tx-open"))!.description).toBe("fine");
+  });
+
+  it("refuses deleting the Bank Account's contents, and leaves every row", async () => {
+    await closedAccount();
+
+    await expect(
+      deleteTransactionsBySourceCallable.run({ data: { sourceId: "src-1" }, auth: AUTH } as never)
+    ).rejects.toMatchObject({ message: expect.stringMatching(LOCK) });
+    await expect(handleTool(USER, "delete_source", { sourceId: "src-1", confirm: true })).rejects.toThrow(LOCK);
+    await expect(deleteSourceCallable.run({ data: { sourceId: "src-1" }, auth: AUTH } as never)).rejects.toMatchObject({
+      message: expect.stringMatching(LOCK),
+    });
+
+    expect(await stored("tx-closed")).toBeDefined();
+    expect(await stored("tx-open")).toBeDefined();
+    expect((await db.collection("sources").doc("src-1").get()).exists).toBe(true);
+  });
+
+  it("refuses deleting a single Cash Payment dated in it", async () => {
+    await db.collection("sources").doc("cash-1").set({ userId: USER, name: "Kassa", type: "manual", accountKind: "cash", currency: "EUR", isActive: true });
+    await change({ trackedFrom: "2023-01" });
+    const { transactionId } = (await addCashPaymentCallable.run({
+      data: { sourceId: "cash-1", date: "2024-06-01", amount: -450, name: "Parkschein" },
+      auth: AUTH,
+    } as never)) as { transactionId: string };
+    await change({ closedThrough: "2024-12" });
+
+    await expect(deleteCashPaymentCallable.run({ data: { transactionId }, auth: AUTH } as never)).rejects.toMatchObject({
+      message: expect.stringMatching(/Closed Through is 2024-12/),
+    });
+    expect(await stored(transactionId)).toBeDefined();
+  });
+
+  it("after Closed Through is moved back, the same edit and delete succeed", async () => {
+    await closedAccount();
+    await change({ closedThrough: "2024-11" });
+
+    await handleTool(USER, "update_transaction", { transactionId: "tx-closed", description: "fixed" });
+    expect((await stored("tx-closed"))!.description).toBe("fixed");
+
+    const res = (await deleteTransactionsBySourceCallable.run({ data: { sourceId: "src-1" }, auth: AUTH } as never)) as {
+      deleted: number;
+    };
+    expect(res.deleted).toBe(2);
+  });
+});
+
+describe("the Import writer skips Untracked rows and counts them per fiscal year", () => {
+  async function account() {
+    await db.collection("sources").doc("src-1").set({ userId: USER, name: "Giro", type: "manual", isActive: true });
+  }
+
+  async function storedDays() {
+    const snap = await db.collection("transactions").where("userId", "==", USER).get();
+    return snap.docs.map((d) => (d.data().date as Timestamp).toDate().toISOString().slice(0, 10)).sort();
+  }
+
+  const row = (iso: string, i: number) => ({ date: iso, amount: -100 - i, name: `Vendor ${i}`, reference: `ref-${i}` });
+
+  it("import_transactions skips rows before Tracked From and writes the Closed and open ones", async () => {
+    await account();
+    await change({ trackedFrom: "2023-07", closedThrough: "2023-12" });
+
+    const res = (await handleTool(USER, "import_transactions", {
+      sourceId: "src-1",
+      transactions: [row("2022-03-01", 1), row("2022-11-30", 2), row("2023-06-30", 3), row("2023-07-01", 4), row("2024-02-02", 5)],
+    })) as { count: number; untrackedCount: number; untrackedByFiscalYear: Record<string, number> };
+
+    expect(res.count).toBe(2);
+    expect(res.untrackedCount).toBe(3);
+    expect(res.untrackedByFiscalYear).toEqual({ "2022": 2, "2023": 1 });
+    expect(await storedDays()).toEqual(["2023-07-01", "2024-02-02"]);
+    // No setting moves on an Import.
+    expect((await settingsOf()).trackedFrom).toBe("2023-07");
+  });
+
+  it("names a fiscal year that does not start in January by both its years", async () => {
+    await account();
+    await change({ startMonth: 7, trackedFrom: "2024-07" });
+
+    const res = (await handleTool(USER, "import_transactions", {
+      sourceId: "src-1",
+      transactions: [row("2023-06-30", 1), row("2023-07-01", 2), row("2024-06-30", 3)],
+    })) as { untrackedByFiscalYear: Record<string, number> };
+
+    expect(res.untrackedByFiscalYear).toEqual({ "2022/23": 1, "2023/24": 2 });
+  });
+
+  it("the CSV Import (bulkCreateTransactions) skips and counts the same way", async () => {
+    await account();
+    await change({ trackedFrom: "2024-01" });
+
+    const res = (await bulkCreateTransactionsCallable.run({
+      data: {
+        sourceId: "src-1",
+        transactions: ["2023-12-31", "2024-01-01"].map((iso, i) => ({
+          sourceId: "src-1",
+          date: `${iso}T00:00:00.000Z`,
+          amount: -100 - i,
+          currency: "EUR",
+          name: `Vendor ${i}`,
+          importJobId: "job-1",
+          csvRowIndex: i,
+          _original: { date: iso, amount: "-1", rawRow: {} },
+        })),
+      },
+      auth: AUTH,
+    } as never)) as { count: number; untrackedCount: number; untrackedByFiscalYear: Record<string, number> };
+
+    expect(res.count).toBe(1);
+    expect(res.untrackedCount).toBe(1);
+    expect(res.untrackedByFiscalYear).toEqual({ "2023": 1 });
+    expect(await storedDays()).toEqual(["2024-01-01"]);
+  });
+
+  const csvRow = (iso: string, i: number, amount: number) => ({
+    sourceId: "src-1",
+    date: `${iso}T00:00:00.000Z`,
+    amount,
+    currency: "EUR",
+    name: `Vendor ${i}`,
+    importJobId: "job-1",
+    csvRowIndex: i,
+    _original: { date: iso, amount: String(amount / 100), rawRow: {} },
+  });
+  const importChunk = (transactions: unknown[], balanceInfo?: Record<string, unknown>) =>
+    bulkCreateTransactionsCallable.run({ data: { sourceId: "src-1", transactions, ...(balanceInfo ? { balanceInfo } : {}) }, auth: AUTH } as never);
+  const balanceAt = async (date: string) =>
+    ((await getBalanceAtDateCallable.run({ data: { sourceId: "src-1", date }, auth: AUTH } as never)) as { balance: number }).balance;
+
+  it("a CSV Import with skipped rows carries the opening balance past them, to Tracked From (review round 2)", async () => {
+    await account();
+    await change({ trackedFrom: "2024-01" });
+
+    // The file opens at 1000.00; -5.00 on 2023-12-10 is skipped, -4.00 on 2024-01-15 is written.
+    await importChunk([csvRow("2023-12-10", 0, -500), csvRow("2024-01-15", 1, -400)], {
+      openingBalance: 100000,
+      openingBalanceDate: "2023-12-10T00:00:00.000Z",
+      latestBalance: 99100,
+      latestBalanceDate: "2024-01-15T00:00:00.000Z",
+    });
+
+    const source = (await db.collection("sources").doc("src-1").get()).data()!;
+    expect(source.openingBalance).toBe(99500);
+    expect((source.openingBalanceDate as Timestamp).toDate().toISOString()).toBe("2024-01-01T00:00:00.000Z");
+    expect(source.latestBalance).toBe(99100);
+    expect(await balanceAt("2024-01-31")).toBe(99100);
+  });
+
+  it("and when the first chunk is all skipped, the later chunks' skipped rows count too", async () => {
+    await account();
+    await change({ trackedFrom: "2024-01" });
+
+    await importChunk([csvRow("2023-11-02", 0, -500)], {
+      openingBalance: 100000,
+      openingBalanceDate: "2023-11-02T00:00:00.000Z",
+      latestBalance: 98900,
+      latestBalanceDate: "2024-01-15T00:00:00.000Z",
+    });
+    await importChunk([csvRow("2023-12-20", 1, -200), csvRow("2024-01-15", 2, -400)]);
+
+    expect(await balanceAt("2024-01-31")).toBe(98900);
+    expect(await balanceAt("2024-01-01")).toBe(99300);
+  });
+
+  it("a file newest first carries its skipped rows from the last chunk", async () => {
+    await account();
+    await change({ trackedFrom: "2024-01" });
+
+    await importChunk([csvRow("2024-01-15", 0, -400)], {
+      openingBalance: 100000,
+      openingBalanceDate: "2023-12-10T00:00:00.000Z",
+      latestBalance: 99100,
+      latestBalanceDate: "2024-01-15T00:00:00.000Z",
+    });
+    await importChunk([csvRow("2023-12-10", 1, -500)]);
+
+    expect(await balanceAt("2024-01-31")).toBe(99100);
+  });
+
+  it("an Import with nothing before Tracked From reports none skipped", async () => {
+    await account();
+    await change({ trackedFrom: "2024-01" });
+
+    const res = (await handleTool(USER, "import_transactions", { sourceId: "src-1", transactions: [row("2024-05-05", 1)] })) as {
+      count: number;
+      untrackedCount: number;
+      untrackedByFiscalYear: Record<string, number>;
+    };
+    expect(res).toMatchObject({ count: 1, untrackedCount: 0, untrackedByFiscalYear: {} });
+  });
+});
+
+describe("a bank sync skips Untracked months without asking", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("writes the tracked rows, counts the rest per fiscal year, and records them on the Import", async () => {
+    process.env.FINAPI_CLIENT_ID = "test-client";
+    process.env.FINAPI_CLIENT_SECRET = "test-secret";
+    await db.collection("sources").doc("api-1").set({
+      userId: USER,
+      name: "Bank",
+      type: "api",
+      isActive: true,
+      apiConfig: { provider: "finapi", accountId: "7", userAccessToken: "token" },
+    });
+    await change({ trackedFrom: "2024-01" });
+    const lines = [
+      { id: 1, accountId: 7, valueDate: "2023-12-30", bankBookingDate: "2023-12-30", amount: -10, purpose: "Old" },
+      { id: 2, accountId: 7, valueDate: "2024-01-02", bankBookingDate: "2024-01-02", amount: -20, purpose: "New" },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () =>
+          String(url).includes("/transactions")
+            ? { transactions: lines, paging: { page: 1, perPage: 500, totalPages: 1, totalCount: 2 } }
+            : { balance: 100 },
+      }))
+    );
+
+    const res = (await syncBankTransactionsCallable.run({
+      data: { sourceId: "api-1", fromYear: 2023 },
+      auth: AUTH,
+    } as never)) as { imported: number; untrackedCount: number; untrackedByFiscalYear: Record<string, number>; importRecordId: string };
+
+    expect(res.imported).toBe(1);
+    expect(res.untrackedCount).toBe(1);
+    expect(res.untrackedByFiscalYear).toEqual({ "2023": 1 });
+    const stored = await db.collection("transactions").where("sourceId", "==", "api-1").get();
+    expect(stored.docs.map((d) => d.data().name)).toEqual(["New"]);
+    const record = (await db.collection("imports").doc(res.importRecordId).get()).data()!;
+    expect(record).toMatchObject({ untrackedCount: 1, untrackedByFiscalYear: { "2023": 1 } });
+  });
+});
+
+describe("every other writer of a closed Transaction refuses too (review round 1)", () => {
+  const LOCK = /Closed Through is 2024-12/;
+
+  async function closedRow(extra: Record<string, unknown> = {}) {
+    await db.collection("sources").doc("src-1").set({ userId: USER, name: "Giro", type: "manual", isActive: true });
+    await change({ trackedFrom: "2023-01", closedThrough: "2024-12" });
+    await seedTransaction("tx-closed", "2024-06-03");
+    await db.collection("transactions").doc("tx-closed").update({ importJobId: "job-1", ...extra });
+    await db.collection("partners").doc("p-1").set({ userId: USER, name: "Billa" });
+    await db.collection("noReceiptCategories").doc("c-1").set({ userId: USER, name: "Bank fees", templateId: "bank-fees" });
+    await db.collection("files").doc("f-1").set({
+      userId: USER,
+      fileName: "r.pdf",
+      extractedDate: day("2025-02-01"),
+      transactionIds: [],
+      transactionSuggestions: [{ transactionId: "tx-closed", confidence: 80 }],
+    });
+  }
+
+  async function row() {
+    return (await db.collection("transactions").doc("tx-closed").get()).data();
+  }
+
+  const call = (callable: { run: (r: never) => Promise<unknown> }, data: Record<string, unknown>) =>
+    callable.run({ data, auth: AUTH } as never);
+
+  it("the tools refuse a Partner, a category, a ruling, Booking Accounts and a rejection", async () => {
+    await closedRow({ partnerId: "p-1", partnerType: "user", noReceiptCategoryId: "c-1", documentationState: "receipt-only" });
+    const tools: Array<[string, Record<string, unknown>]> = [
+      ["assign_partner_to_transaction", { transactionId: "tx-closed", partnerId: "p-1" }],
+      ["remove_partner_from_transaction", { transactionId: "tx-closed" }],
+      ["assign_no_receipt_category", { transactionId: "tx-closed", categoryId: "c-1" }],
+      ["remove_no_receipt_category", { transactionId: "tx-closed" }],
+      ["accept_receipt_only", { transactionId: "tx-closed", reason: "kept" }],
+      ["accept_partial_payment", { transactionId: "tx-closed", reason: "kept" }],
+      ["set_booking_accounts", { transactionId: "tx-closed", bookingAccounts: [] }],
+      ["dismiss_transaction_suggestion", { fileId: "f-1", transactionId: "tx-closed" }],
+      ["undismiss_transaction_suggestion", { fileId: "f-1", transactionId: "tx-closed" }],
+    ];
+    for (const [tool, args] of tools) {
+      await expect(handleTool(USER, tool, args), tool).rejects.toThrow(LOCK);
+    }
+    expect(await row()).toMatchObject({ partnerId: "p-1", noReceiptCategoryId: "c-1" });
+  });
+
+  it("the callables refuse the same", async () => {
+    await closedRow({ partnerId: "p-1", partnerType: "user", documentationState: "receipt-only" });
+    const calls: Array<[string, { run: (r: never) => Promise<unknown> }, Record<string, unknown>]> = [
+      ["assignPartner", assignPartnerToTransactionCallable as never, { transactionId: "tx-closed", partnerId: "p-1", partnerType: "user", matchedBy: "manual" }],
+      ["removePartner", removePartnerFromTransactionCallable as never, { transactionId: "tx-closed" }],
+      ["assignCategory", assignNoReceiptCategoryCallable as never, { transactionId: "tx-closed", categoryId: "c-1" }],
+      ["acceptReceiptOnly", acceptReceiptOnlyCallable as never, { id: "tx-closed", action: "accept", reason: "kept" }],
+      ["acceptPartialPayment", acceptPartialPaymentCallable as never, { id: "tx-closed", action: "accept", reason: "kept" }],
+      ["dismiss", dismissTransactionSuggestionCallable as never, { fileId: "f-1", transactionId: "tx-closed" }],
+      ["undismiss", undismissTransactionSuggestionCallable as never, { fileId: "f-1", transactionId: "tx-closed" }],
+    ];
+    for (const [name, callable, data] of calls) {
+      await expect(call(callable, data), name).rejects.toMatchObject({ message: expect.stringMatching(LOCK) });
+    }
+    expect((await row())!.partnerId).toBe("p-1");
+  });
+
+  it("deleting an Import with closed rows is refused, and leaves its rows and record", async () => {
+    await closedRow();
+    await db.collection("imports").doc("job-1").set({ userId: USER, sourceId: "src-1", status: "completed" });
+
+    await expect(call(deleteImportRecordCallable as never, { importId: "job-1" })).rejects.toMatchObject({
+      message: expect.stringMatching(LOCK),
+    });
+    expect(await row()).toBeDefined();
+    expect((await db.collection("imports").doc("job-1").get()).exists).toBe(true);
+  });
+
+  const remapRow = (date: string) => ({
+    transactionId: "tx-closed",
+    date: `${date}T00:00:00.000Z`,
+    amount: -999,
+    name: "Remapped",
+    partner: null,
+    reference: null,
+    partnerIban: null,
+    original: { date, amount: "-9.99", rawRow: {} },
+  });
+
+  it("remapping an Import refuses a closed row, and a move into a closed month", async () => {
+    await closedRow();
+    await db.collection("imports").doc("job-1").set({ userId: USER, sourceId: "src-1", status: "completed" });
+
+    await expect(
+      call(applyImportRemapCallable as never, { importJobId: "job-1", sourceId: "src-1", fieldMappings: [], rows: [remapRow("2025-03-01")] })
+    ).rejects.toMatchObject({ message: expect.stringMatching(LOCK) });
+    expect((await row())!.name).toBe("Vendor");
+
+    await change({ closedThrough: "2024-05" });
+    await expect(
+      call(applyImportRemapCallable as never, { importJobId: "job-1", sourceId: "src-1", fieldMappings: [], rows: [remapRow("2024-05-31")] })
+    ).rejects.toMatchObject({ message: expect.stringMatching(/Closed Through is 2024-05/) });
+  });
+
+  it("remapping refuses a move before Tracked From, and allows a move within open time", async () => {
+    await closedRow();
+    await change({ closedThrough: "2024-01" });
+    await db.collection("imports").doc("job-1").set({ userId: USER, sourceId: "src-1", status: "completed" });
+
+    await expect(
+      call(applyImportRemapCallable as never, { importJobId: "job-1", sourceId: "src-1", fieldMappings: [], rows: [remapRow("2022-12-31")] })
+    ).rejects.toMatchObject({ message: expect.stringMatching(/before Tracked From 2023-01/) });
+
+    await call(applyImportRemapCallable as never, { importJobId: "job-1", sourceId: "src-1", fieldMappings: [], rows: [remapRow("2024-07-01")] });
+    expect((await row())!.name).toBe("Remapped");
+  });
+
+  it("the orphan cleanup keeps closed orphans and deletes the open ones", async () => {
+    await change({ trackedFrom: "2023-01", closedThrough: "2024-12" });
+    await seedTransaction("orphan-closed", "2024-03-01");
+    await seedTransaction("orphan-open", "2025-03-01");
+
+    const res = (await call(cleanupOrphanedTransactionsCallable as never, { dryRun: false })) as { deleted: number; keptClosed: number };
+
+    expect(res).toMatchObject({ deleted: 1, keptClosed: 1 });
+    expect((await db.collection("transactions").doc("orphan-closed").get()).exists).toBe(true);
+    expect((await db.collection("transactions").doc("orphan-open").get()).exists).toBe(false);
+  });
+});
+
+describe("the web's category writers go through guarded callables (review round 2)", () => {
+  const LOCK = /Closed Through is 2024-12/;
+  const call = (callable: { run: (r: never) => Promise<unknown> }, data: Record<string, unknown>) =>
+    callable.run({ data, auth: AUTH } as never);
+  const tx = async (id: string) => (await db.collection("transactions").doc(id).get()).data()!;
+  const count = async (id: string) => (await db.collection("noReceiptCategories").doc(id).get()).data()!.transactionCount;
+
+  beforeEach(async () => {
+    await change({ trackedFrom: "2023-01", closedThrough: "2024-12" });
+    await db.collection("noReceiptCategories").doc("c-lost").set({ userId: USER, name: "Eigenbeleg", templateId: "receipt-lost", transactionCount: 0 });
+    await db.collection("noReceiptCategories").doc("c-fees").set({ userId: USER, name: "Bank fees", templateId: "bank-fees", transactionCount: 1 });
+    await db.collection("noReceiptCategories").doc("c-foreign").set({ userId: OTHER, name: "Bank fees", templateId: "bank-fees", transactionCount: 0 });
+    await seedTransaction("tx-closed", "2024-06-03");
+    await seedTransaction("tx-open", "2025-03-03");
+  });
+
+  it("refuse a closed Transaction and leave it as it was", async () => {
+    await db.collection("transactions").doc("tx-closed").update({ noReceiptCategoryId: "c-fees", noReceiptCategoryMatchedBy: "manual" });
+
+    await expect(
+      call(assignReceiptLostCategoryCallable as never, { transactionId: "tx-closed", categoryId: "c-lost", reason: "lost", description: "taxi" })
+    ).rejects.toMatchObject({ message: expect.stringMatching(LOCK) });
+    await expect(call(removeNoReceiptCategoryCallable as never, { transactionId: "tx-closed" })).rejects.toMatchObject({
+      message: expect.stringMatching(LOCK),
+    });
+
+    expect(await tx("tx-closed")).toMatchObject({ noReceiptCategoryId: "c-fees" });
+    expect(await count("c-lost")).toBe(0);
+    expect(await count("c-fees")).toBe(1);
+  });
+
+  it("assign Receipt Lost to an open Transaction, with its entry and the count", async () => {
+    await call(assignReceiptLostCategoryCallable as never, { transactionId: "tx-open", categoryId: "c-lost", reason: " lost ", description: " taxi " });
+
+    expect(await tx("tx-open")).toMatchObject({
+      noReceiptCategoryId: "c-lost",
+      noReceiptCategoryTemplateId: "receipt-lost",
+      noReceiptCategoryMatchedBy: "manual",
+      noReceiptCategoryConfidence: 100,
+      receiptLostEntry: { reason: "lost", description: "taxi", confirmed: true },
+      isComplete: true,
+    });
+    expect(await count("c-lost")).toBe(1);
+  });
+
+  it("refuse Receipt Lost with another User's category or another category", async () => {
+    await expect(
+      call(assignReceiptLostCategoryCallable as never, { transactionId: "tx-open", categoryId: "c-foreign", reason: "r", description: "d" })
+    ).rejects.toThrow();
+    await expect(
+      call(assignReceiptLostCategoryCallable as never, { transactionId: "tx-open", categoryId: "c-fees", reason: "r", description: "d" })
+    ).rejects.toThrow();
+    expect((await tx("tx-open")).noReceiptCategoryId).toBeUndefined();
+  });
+
+  it("remove a category from an open Transaction, in the activity log, and say what it was", async () => {
+    await db.collection("transactions").doc("tx-open").update({
+      noReceiptCategoryId: "c-fees",
+      noReceiptCategoryMatchedBy: "auto",
+      noReceiptCategoryConfidence: 90,
+      isComplete: true,
+    });
+
+    const res = await call(removeNoReceiptCategoryCallable as never, { transactionId: "tx-open" });
+
+    expect(res).toMatchObject({ removed: true, categoryId: "c-fees", matchedBy: "auto" });
+    const row = await tx("tx-open");
+    expect(row).toMatchObject({ noReceiptCategoryId: null, noReceiptCategoryConfidence: null, receiptLostEntry: null, isComplete: false });
+    expect(row.automationHistory.at(-1)).toMatchObject({ type: "category_removed", actor: "manual" });
+    expect(await count("c-fees")).toBe(0);
+  });
+
+  it("migrate orphaned category references, but keep a closed Transaction's", async () => {
+    await seedTransaction("tx-open-2", "2025-04-01");
+    await db.collection("transactions").doc("tx-open").update({ noReceiptCategoryId: "gone-1", noReceiptCategoryTemplateId: "bank-fees" });
+    await db.collection("transactions").doc("tx-open-2").update({ noReceiptCategoryId: "gone-2", noReceiptCategoryTemplateId: "unknown", isComplete: true });
+    await db.collection("transactions").doc("tx-closed").update({ noReceiptCategoryId: "gone-1", noReceiptCategoryTemplateId: "bank-fees" });
+
+    const res = await call(migrateNoReceiptCategoryRefsCallable as never, { targets: { "bank-fees": "c-fees", unknown: "c-foreign" } });
+
+    expect(res).toMatchObject({ migrated: 1, cleared: 1, keptClosed: 1 });
+    expect((await tx("tx-open")).noReceiptCategoryId).toBe("c-fees");
+    expect(await tx("tx-open-2")).toMatchObject({ noReceiptCategoryId: null, isComplete: false });
+    expect((await tx("tx-closed")).noReceiptCategoryId).toBe("gone-1");
+  });
+});
+
+describe("a Cash Payment is never added or moved before Tracked From", () => {
+  async function cashBox() {
+    await db.collection("sources").doc("cash-1").set({ userId: USER, name: "Kassa", type: "manual", accountKind: "cash", currency: "EUR", isActive: true });
+    await change({ trackedFrom: "2024-01" });
+  }
+
+  it("refuses adding one, naming Tracked From", async () => {
+    await cashBox();
+
+    await expect(handleTool(USER, "add_cash_payment", { sourceId: "cash-1", date: "2023-12-31", amount: -450, name: "Parkschein" })).rejects.toThrow(
+      /before Tracked From 2024-01/
+    );
+    await expect(
+      addCashPaymentCallable.run({ data: { sourceId: "cash-1", date: "2023-12-31", amount: -450, name: "Parkschein" }, auth: AUTH } as never)
+    ).rejects.toMatchObject({ message: expect.stringMatching(/before Tracked From 2024-01/) });
+  });
+
+  it("refuses moving one there", async () => {
+    await cashBox();
+    const { transactionId } = (await addCashPaymentCallable.run({
+      data: { sourceId: "cash-1", date: "2024-02-01", amount: -450, name: "Parkschein" },
+      auth: AUTH,
+    } as never)) as { transactionId: string };
+
+    await expect(
+      correctCashPaymentCallable.run({ data: { transactionId, date: "2023-11-30" }, auth: AUTH } as never)
+    ).rejects.toMatchObject({ message: expect.stringMatching(/before Tracked From 2024-01/) });
+  });
+});
+
+describe("deleting the account removes the Fiscal Years settings and their records", () => {
+  it("leaves nothing under the User", async () => {
+    await change({ closedThrough: `${thisYear}-01` });
+
+    await deleteUserData(db as never, USER);
+
+    expect((await db.doc(`users/${USER}/settings/fiscalYears`).get()).exists).toBe(false);
+    expect(await allRecords()).toEqual([]);
+  });
+});
+
+describe("the second finAPI sync skips Untracked months too", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("writes the tracked row and counts the other under a fiscal year starting in July", async () => {
+    process.env.FINAPI_CLIENT_ID = "test-client";
+    process.env.FINAPI_CLIENT_SECRET = "test-secret";
+    await db.collection("sources").doc("fin-1").set({
+      userId: USER,
+      name: "Bank",
+      type: "api",
+      isActive: true,
+      apiConfig: {
+        provider: "finapi",
+        accountId: "7",
+        userAccessToken: "token",
+        tokenExpiresAt: Timestamp.fromDate(new Date(Date.now() + 3_600_000)),
+      },
+    });
+    await change({ startMonth: 7, trackedFrom: "2024-07" });
+    const lines = [
+      { id: 1, accountId: 7, valueDate: "2024-06-28", bankBookingDate: "2024-06-28", amount: -10, counterpartName: "Old" },
+      { id: 2, accountId: 7, valueDate: "2024-07-01", bankBookingDate: "2024-07-01", amount: -20, counterpartName: "New" },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ transactions: lines, paging: { page: 1, perPage: 500, totalPages: 1, totalCount: 2 } }),
+      }))
+    );
+
+    const res = (await syncFinapiTransactions.run({ data: { sourceId: "fin-1" }, auth: AUTH } as never)) as {
+      imported: number;
+      untrackedCount: number;
+      untrackedByFiscalYear: Record<string, number>;
+    };
+
+    expect(res).toMatchObject({ imported: 1, untrackedCount: 1, untrackedByFiscalYear: { "2023/24": 1 } });
+    const stored = await db.collection("transactions").where("sourceId", "==", "fin-1").get();
+    expect(stored.docs.map((d) => d.data().name)).toEqual(["New"]);
+  });
+});

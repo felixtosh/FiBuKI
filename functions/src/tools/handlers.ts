@@ -90,6 +90,7 @@ import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
 import { connectFiles } from "../fileConnections/writer";
 import { toDateSafe } from "../utils/toDateSafe";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
+import { removeNoReceiptCategoryFromTransaction } from "../matching/noReceiptCategoryWriters";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
 import type { AccountKind } from "../sources/accountKind";
@@ -111,6 +112,8 @@ import {
   type ResolvedEffectiveCycle,
 } from "../matching/billingCycle";
 import { getPeriodStatus, listPendingMatches } from "./periodStatus";
+import { changeFiscalYears, listFiscalYearChanges, readFiscalYears, splitUntracked } from "../fiscalYears/fiscalYears";
+import { assertTransactionEditable, assertTransactionIdEditable } from "../transactions/writableFields";
 import { PLANS, resolvePlanId } from "../billing/config";
 import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
 import { runUvaForPeriod } from "../reports/uvaPeriodRun";
@@ -264,6 +267,10 @@ export async function handleTool(
       return importTransactions(userId, args);
     case "get_period_status":
       return getPeriodStatus(userId, args);
+    case "get_fiscal_years":
+      return getFiscalYearsTool(userId);
+    case "set_fiscal_years":
+      return setFiscalYearsTool(userId, args, caller);
     case "list_pending_matches":
       return listPendingMatches(userId, args);
 
@@ -714,6 +721,7 @@ export async function updateTransaction(
   if (!doc.exists || doc.data()?.userId !== userId) {
     throw new Error("Transaction not found");
   }
+  await assertTransactionEditable(db, userId, doc.data()!);
 
   const updates: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (description !== undefined) updates.description = description;
@@ -844,6 +852,7 @@ export async function acceptReceiptOnly(userId: string, args: Record<string, unk
     throw new Error("Transaction not found");
   }
   const data = doc.data()!;
+  await assertTransactionEditable(db, userId, data);
 
   if (revoke === true) {
     if (!data.receiptOnlyAcceptance) {
@@ -1863,6 +1872,7 @@ export async function unconfirmFileRecipientIsUser(userId: string, args: Record<
  * MCP client or chat agent, is an AI actor in the activity log.
  */
 export async function setBookingAccountsTool(userId: string, args: Record<string, unknown>) {
+  await assertTransactionIdEditable(db, userId, args.transactionId);
   return setBookingAccounts(
     db,
     userId,
@@ -2010,6 +2020,7 @@ export async function dismissTransactionSuggestion(userId: string, args: Record<
   }
   const reason = args.reason as string | undefined;
 
+  await assertTransactionIdEditable(db, userId, args.transactionId);
   const { fileId, transactionId, dismissedConfidence, alreadyDismissed } =
     await applyDismissalUpdate(userId, args, (fileData, txId) =>
       buildDismissSuggestionUpdates(fileData, txId, reason)
@@ -2037,6 +2048,7 @@ export async function undismissTransactionSuggestion(
   userId: string,
   args: Record<string, unknown>
 ) {
+  await assertTransactionIdEditable(db, userId, args.transactionId);
   const { fileId, transactionId, wasDismissed } = await applyDismissalUpdate(
     userId,
     args,
@@ -2172,42 +2184,17 @@ export async function removeNoReceiptCategory(userId: string, transactionId: str
   if (!transactionId) throw new Error("transactionId is required");
 
   const txDoc = await db.collection("transactions").doc(transactionId).get();
+  await assertTransactionIdEditable(db, userId, transactionId);
   if (!txDoc.exists || txDoc.data()?.userId !== userId) {
     throw new Error("Transaction not found");
   }
-
-  const txData = txDoc.data()!;
-  const categoryId = txData.noReceiptCategoryId;
-  if (!categoryId) {
+  if (!txDoc.data()!.noReceiptCategoryId) {
     throw new Error("Transaction has no category assigned");
   }
 
-  const hasFiles = txData.fileIds && txData.fileIds.length > 0;
-  const batch = db.batch();
-  const now = FieldValue.serverTimestamp();
-
-  const categoryName = ((await db.collection("noReceiptCategories").doc(categoryId).get()).data()?.name as string | undefined) ?? categoryId;
-  batch.update(txDoc.ref, {
-    noReceiptCategoryId: null,
-    noReceiptCategoryTemplateId: null,
-    noReceiptCategoryMatchedBy: null,
-    isComplete: hasFiles,
-    updatedAt: now,
-    ...logActivity(activityEntry({
-      type: "category_removed",
-      actor: "ai",
-      categoryName,
-      summary: `Category "${categoryName}" removed by the assistant`,
-    })),
-  });
-
-  batch.update(db.collection("noReceiptCategories").doc(categoryId), {
-    transactionCount: FieldValue.increment(-1),
-    updatedAt: now,
-  });
-
-  await batch.commit();
-  return { success: true, transactionId, isComplete: hasFiles };
+  // One writer with the web's removal (#794): the same fields, log and count.
+  const result = await removeNoReceiptCategoryFromTransaction(db, userId, transactionId, "ai");
+  return { success: true, transactionId, isComplete: result.isComplete };
 }
 
 // ============================================================================
@@ -2859,6 +2846,7 @@ export async function removePartnerFromTx(userId: string, args: Record<string, u
   if (!transactionId) throw new Error("transactionId is required");
 
   const txDoc = await db.collection("transactions").doc(transactionId as string).get();
+  await assertTransactionIdEditable(db, userId, transactionId);
   if (!txDoc.exists || txDoc.data()?.userId !== userId) {
     throw new Error("Transaction not found");
   }
@@ -3253,6 +3241,26 @@ export async function addCashPaymentFromFileTool(
   return { success: true, ...result };
 }
 
+// ============================================================================
+// Fiscal Years (#794)
+// ============================================================================
+
+export async function getFiscalYearsTool(userId: string) {
+  return {
+    settings: await readFiscalYears(db, userId),
+    changes: await listFiscalYearChanges(db, userId),
+  };
+}
+
+export async function setFiscalYearsTool(userId: string, args: Record<string, unknown>, caller: ToolCaller) {
+  return changeFiscalYears(
+    db,
+    userId,
+    { startMonth: args.startMonth, trackedFrom: args.trackedFrom, closedThrough: args.closedThrough },
+    caller.kind === "agent" ? "chat" : "mcp"
+  );
+}
+
 export async function deleteSource(userId: string, args: Record<string, unknown>) {
   const { sourceId, confirm } = args;
   if (!sourceId) throw new Error("sourceId is required");
@@ -3330,12 +3338,14 @@ export async function importTransactions(userId: string, args: Record<string, un
     };
   });
 
+  // Rows before Tracked From are skipped and counted per fiscal year (#794); no setting moves.
+  const { tracked, ...untracked } = await splitUntracked(db, userId, candidates, (tx) => tx.date);
   // Rows an earlier import already stored are skipped here, on the server, for every caller.
   const { fresh: transactions, duplicates } = await splitDuplicates(
     db,
     userId,
     sourceId as string,
-    candidates,
+    tracked,
     importJobId
   );
   const duplicateCount = duplicates.length;
@@ -3346,6 +3356,7 @@ export async function importTransactions(userId: string, args: Record<string, un
       transactionIds: [] as string[],
       count: 0,
       duplicateCount,
+      ...untracked,
       quotaExceeded: false,
       overLimitCount: 0,
     };
@@ -3438,6 +3449,7 @@ export async function importTransactions(userId: string, args: Record<string, un
     transactionIds,
     count: transactionIds.length,
     duplicateCount,
+    ...untracked,
     quotaExceeded: overLimitTransactionIds.length > 0,
     overLimitCount: overLimitTransactionIds.length,
   };

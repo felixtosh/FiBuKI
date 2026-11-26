@@ -12,6 +12,7 @@
  * undoes the other.
  */
 
+import { assertTransactionIdEditable } from "../transactions/writableFields";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import {
   buildUndismissSuggestionUpdates,
@@ -44,6 +45,7 @@ export const undismissTransactionSuggestionCallable = createCallable<
       throw new HttpsError("invalid-argument", "transactionId is required");
     }
 
+    await assertTransactionIdEditable(ctx.db, ctx.userId, transactionId);
     const fileRef = ctx.db.collection("files").doc(fileId);
 
     // Read and write in one transaction, for the same reason dismissal does:

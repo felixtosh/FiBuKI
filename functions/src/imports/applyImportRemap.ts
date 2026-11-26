@@ -16,6 +16,8 @@ import { Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { computeDedupeHash } from "./dedupe";
 import { validateFieldMappings, type StoredFieldMapping } from "./fieldMappings";
+import { fiscalYearsGuard } from "../fiscalYears/fiscalYears";
+import { toDateSafe } from "../utils/toDateSafe";
 
 export interface RemapRow {
   transactionId: string;
@@ -87,6 +89,22 @@ export const applyImportRemapCallable = createCallable<ApplyImportRemapRequest, 
     if (importRecord.sourceId !== sourceId) throw new HttpsError("invalid-argument", "Import is not from this bank account");
     if (importRecord.status === "draft") {
       throw new HttpsError("failed-precondition", "Cannot remap a draft import; the import wizard saves its mappings");
+    }
+
+    // Filed years keep their figures (#794): checked for every row before any
+    // chunk is written. A row stored in a closed month, or moved into one or
+    // before Tracked From, refuses the whole remap.
+    const guard = await fiscalYearsGuard(ctx.db, ctx.userId);
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const chunk = rows.slice(i, i + CHUNK);
+      const snaps = await Promise.all(chunk.map((row) => ctx.db.collection("transactions").doc(row.transactionId).get()));
+      chunk.forEach((row, index) => {
+        const data = snaps[index].exists ? snaps[index].data()! : null;
+        if (!data || data.userId !== ctx.userId || data.importJobId !== importJobId) return;
+        const moved = new Date(row.date);
+        guard.refuseClosed([toDateSafe(data.date), moved], "A Transaction of this Import");
+        guard.refuseUntracked([moved], "A remapped Transaction");
+      });
     }
 
     let updated = 0;

@@ -10,6 +10,7 @@ import { normalizeTransactionType } from "../imports/transactionType";
 import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
 import { toDateSafe } from "../utils/toDateSafe";
+import { splitUntracked } from "../fiscalYears/fiscalYears";
 
 // Define secrets
 const finapiClientId = defineSecret("FINAPI_CLIENT_ID");
@@ -246,7 +247,9 @@ export const syncFinapiTransactions = onCall(
     let imported = 0;
     const syncJobId = `finapi_sync_${sourceId}_${Date.now()}`;
 
-    for (const tx of transactions) {
+    // Rows before Tracked From are skipped without asking and counted per fiscal year (#794).
+    const { tracked, ...untracked } = await splitUntracked(db, userId, transactions, (tx) => new Date(tx.bankBookingDate));
+    for (const tx of tracked) {
       const dedupeHash = generateDedupeHash(tx, sourceId);
       if (existingHashes.has(dedupeHash)) continue;
 
@@ -294,6 +297,7 @@ export const syncFinapiTransactions = onCall(
       imported,
       skipped: existingHashes.size,
       total: transactions.length,
+      ...untracked,
     };
   }
 );

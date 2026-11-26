@@ -330,6 +330,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotation: "destructive",
     description:
       "Import pre-mapped transactions into a source. Transactions must include date, amount, name, and currency. " +
+      "Lines dated before the User's Tracked From (see get_fiscal_years) are skipped and counted per fiscal year in " +
+      "untrackedCount and untrackedByFiscalYear; tell the User, and never move a setting to bring them in unless they ask. " +
       "Lines an earlier import already stored for the same bank account are skipped (same date, amount and reference), " +
       "so re-sending an overlapping export is safe; the response says how many in duplicateCount. " +
       "When a file is sent in several calls, pass the same importJobId on each so identical lines of that file are all kept. " +
@@ -1010,6 +1012,35 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["fileName", "mimeType"],
+    },
+  },
+  {
+    name: "get_fiscal_years",
+    annotation: "read-only",
+    description:
+      "The User's Fiscal Years settings: fiscal year start month (1-12), Tracked From and Closed Through (months, " +
+      "YYYY-MM; Closed Through null when nothing is closed), plus the latest change records. Before Tracked From is " +
+      "Untracked (imports skip it), Tracked From through Closed Through is the Closed stretch (changes and deletes " +
+      "refused, inserts allowed), after that is open.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "set_fiscal_years",
+    annotation: "write",
+    description:
+      "Change the User's Fiscal Years settings, only when the User asks: any of startMonth, trackedFrom, closedThrough. " +
+      "Pass only what changes. The order Untracked, Closed, open always holds: closedThrough is at the earliest the " +
+      "month before trackedFrom, and trackedFrom at the latest the month after closedThrough. Moving trackedFrom later " +
+      "is refused when the months it leaves behind hold Transactions or Files; close them instead. To correct a record " +
+      "in the Closed stretch, move closedThrough back, make the change, then move it forward again. Every change is " +
+      "recorded; returns the settings and the record it wrote (null when nothing changed).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        startMonth: { type: "number", description: "Month a fiscal year starts in, 1 (January) to 12" },
+        trackedFrom: { type: "string", description: "First tracked month, YYYY-MM" },
+        closedThrough: { type: ["string", "null"], description: "Last closed month, YYYY-MM; null for none" },
+      },
     },
   },
   {

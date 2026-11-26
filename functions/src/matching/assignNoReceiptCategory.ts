@@ -9,6 +9,7 @@
  * web-driven one does.
  */
 
+import { assertTransactionEditable } from "../transactions/writableFields";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { activityEntry, logActivity, type ActivityActor } from "../utils/activity";
@@ -54,6 +55,7 @@ export async function assignNoReceiptCategoryToTransaction(
   if (!txSnap.exists || txSnap.data()?.userId !== userId) {
     throw new Error(`Transaction ${transactionId} not found or access denied`);
   }
+  await assertTransactionEditable(db, userId, txSnap.data()!);
   if (!categorySnap.exists || categorySnap.data()?.userId !== userId) {
     throw new Error(`Category ${categoryId} not found or access denied`);
   }

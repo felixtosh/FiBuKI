@@ -4,6 +4,8 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { FinapiClient, FinapiEnvironment } from "@/lib/finapi/client";
+import { closedRefusal, readFiscalYears, stretchOf } from "@/functions/src/fiscalYears/settings";
+import { toDateSafe } from "@/lib/utils";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -46,6 +48,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     const apiConfig = source.apiConfig;
+
+    // Filed years keep their evidence (#794): a disconnect deletes every row,
+    // so it is refused while one is dated in the Closed stretch.
+    const ownRows = await db.collection("transactions").where("userId", "==", userId).where("sourceId", "==", sourceId).get();
+    // Only a dated row can lie in the Closed stretch, so the settings are read
+    // only when there is one.
+    const dates = ownRows.docs.map((d) => toDateSafe(d.data().date)).filter((d): d is Date => d !== null);
+    const fiscalYears = dates.length > 0 ? await readFiscalYears(db, userId) : null;
+    if (fiscalYears && dates.some((date) => stretchOf(fiscalYears, date) === "closed")) {
+      return NextResponse.json(
+        { error: closedRefusal(fiscalYears, "A Transaction of this Bank Account") },
+        { status: 409 }
+      );
+    }
 
     // Delete finAPI bank connection if applicable
     if (apiConfig.provider === "finapi" && apiConfig.bankConnectionId && apiConfig.userAccessToken) {

@@ -2,12 +2,13 @@
  * Bulk create transactions from a CSV import
  */
 
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { checkTransactionQuota, incrementTransactionCount } from "../billing/checkTransactionQuota";
 import { toDateSafe } from "../utils/toDateSafe";
 import { normalizeTransactionType } from "./transactionType";
 import { computeDedupeHash, splitDuplicates } from "./dedupe";
+import { readFiscalYears, splitUntracked, stretchOf } from "../fiscalYears/fiscalYears";
 
 interface TransactionData {
   sourceId: string;
@@ -51,6 +52,10 @@ interface BulkCreateTransactionsResponse {
   count: number;
   /** Rows an earlier import already stored for this Bank Account; not written. */
   duplicateCount: number;
+  /** Rows before Tracked From (#794); not written. */
+  untrackedCount?: number;
+  /** The same rows per fiscal year (`2023`, or `2023/24`). */
+  untrackedByFiscalYear?: Record<string, number>;
   quotaExceeded: boolean;
   overLimitCount: number;
   overLimitTransactionIds: string[];
@@ -122,11 +127,64 @@ export const bulkCreateTransactionsCallable = createCallable<
         }),
       };
     });
-    const { fresh, duplicates } = await splitDuplicates(ctx.db, ctx.userId, sourceId, hashed, importJobId);
+    // Rows before Tracked From are skipped and counted per fiscal year (#794).
+    const { tracked, ...untracked } = await splitUntracked(ctx.db, ctx.userId, hashed, (tx) => tx.date);
+    const trackedRows = new Set(tracked);
+    const skippedSum = hashed.filter((tx) => !trackedRows.has(tx)).reduce((sum, tx) => sum + (tx.amount ?? 0), 0);
+
+    // Persist balance info on the source. A Cash Box keeps none (#787): a CSV
+    // of cash payments says nothing about what is in the box. Only the first
+    // chunk of a file carries balanceInfo.
+    //
+    // The browser derives the opening balance from the file's earliest row.
+    // When that row lies before Tracked From, the rows up to Tracked From are
+    // skipped (#794), so the stored opening carries the file's opening past
+    // them and is dated at Tracked From: every stored row of the file comes
+    // after it. A later chunk of the same Import adds its own skipped rows.
+    const persistBalance = async () => {
+      const sourceData = sourceSnap.data()!;
+      if (sourceData.accountKind === "cash") return;
+      if (!request.balanceInfo) {
+        if (skippedSum !== 0 && importJobId && sourceData.openingBalanceImportJobId === importJobId) {
+          await sourceRef.update({ openingBalance: FieldValue.increment(skippedSum), updatedAt: Timestamp.now() });
+        }
+        return;
+      }
+      const { openingBalance, openingBalanceDate, latestBalance, latestBalanceDate } = request.balanceInfo;
+      const existingOpeningDate = toDateSafe(sourceData.openingBalanceDate);
+      const settings = await readFiscalYears(ctx.db, ctx.userId);
+      const fileOpeningDate = new Date(openingBalanceDate);
+      const carried = stretchOf(settings, fileOpeningDate) === "untracked";
+      const newOpeningDate = carried ? new Date(`${settings.trackedFrom}-01T00:00:00Z`) : fileOpeningDate;
+
+      // Only update the opening balance if there is none or this one is earlier.
+      const shouldUpdateOpening = !existingOpeningDate || newOpeningDate < existingOpeningDate;
+
+      const balanceUpdates: Record<string, unknown> = {
+        latestBalance,
+        latestBalanceDate: Timestamp.fromDate(new Date(latestBalanceDate)),
+        updatedAt: Timestamp.now(),
+      };
+      if (shouldUpdateOpening) {
+        balanceUpdates.openingBalance = openingBalance + (carried ? skippedSum : 0);
+        balanceUpdates.openingBalanceDate = Timestamp.fromDate(newOpeningDate);
+        balanceUpdates.openingBalanceSource = "csv_derived";
+        balanceUpdates.openingBalanceImportJobId = carried && importJobId ? importJobId : null;
+      }
+
+      await sourceRef.update(balanceUpdates);
+      console.log(`[bulkCreateTransactions] Updated balance info on source ${sourceId}`, {
+        shouldUpdateOpening,
+        openingBalance,
+        latestBalance,
+      });
+    };
+    const { fresh, duplicates } = await splitDuplicates(ctx.db, ctx.userId, sourceId, tracked, importJobId);
     const duplicateCount = duplicates.length;
 
     if (fresh.length === 0) {
-      return { success: true, transactionIds: [], count: 0, duplicateCount, quotaExceeded: false, overLimitCount: 0, overLimitTransactionIds: [] };
+      await persistBalance();
+      return { success: true, transactionIds: [], count: 0, duplicateCount, ...untracked, quotaExceeded: false, overLimitCount: 0, overLimitTransactionIds: [] };
     }
 
     // Check transaction quota (soft limit — import all, mark over-limit ones)
@@ -212,36 +270,7 @@ export const bulkCreateTransactionsCallable = createCallable<
       sourceId,
     });
 
-    // Persist balance info on source if provided. A Cash Box keeps none (#787):
-    // a CSV of cash payments says nothing about what is in the box.
-    if (request.balanceInfo && sourceSnap.data()!.accountKind !== "cash") {
-      const { openingBalance, openingBalanceDate, latestBalance, latestBalanceDate } = request.balanceInfo;
-      const sourceData = sourceSnap.data()!;
-      const existingOpeningDate = toDateSafe(sourceData.openingBalanceDate);
-      const newOpeningDate = new Date(openingBalanceDate);
-
-      // Only update opening balance if no existing one or this one is earlier
-      const shouldUpdateOpening = !existingOpeningDate || newOpeningDate < existingOpeningDate;
-
-      const balanceUpdates: Record<string, unknown> = {
-        latestBalance,
-        latestBalanceDate: Timestamp.fromDate(new Date(latestBalanceDate)),
-        updatedAt: Timestamp.now(),
-      };
-
-      if (shouldUpdateOpening) {
-        balanceUpdates.openingBalance = openingBalance;
-        balanceUpdates.openingBalanceDate = Timestamp.fromDate(newOpeningDate);
-        balanceUpdates.openingBalanceSource = "csv_derived";
-      }
-
-      await sourceRef.update(balanceUpdates);
-      console.log(`[bulkCreateTransactions] Updated balance info on source ${sourceId}`, {
-        shouldUpdateOpening,
-        openingBalance,
-        latestBalance,
-      });
-    }
+    await persistBalance();
 
     // Only count within-quota transactions for billing
     const withinQuotaCount = transactionIds.length - overLimitTransactionIds.length;
@@ -256,6 +285,7 @@ export const bulkCreateTransactionsCallable = createCallable<
       transactionIds,
       count: transactionIds.length,
       duplicateCount,
+      ...untracked,
       quotaExceeded,
       overLimitCount: overLimitTransactionIds.length,
       overLimitTransactionIds,

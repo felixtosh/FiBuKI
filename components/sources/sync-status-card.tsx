@@ -17,6 +17,7 @@ import {
   formatLastSync,
   getSyncStatusColor,
 } from "@/hooks/use-sync-status";
+import { UntrackedNotice } from "@/components/import/untracked-notice";
 import { cn } from "@/lib/utils";
 
 interface SyncStatusCardProps {
@@ -25,7 +26,7 @@ interface SyncStatusCardProps {
 }
 
 export function SyncStatusCard({ sourceId, onReauth }: SyncStatusCardProps) {
-  const { status, isSyncing, syncError, triggerSync, isApiSource } = useSyncStatus(sourceId);
+  const { status, isSyncing, syncError, triggerSync, isApiSource, untrackedByFiscalYear } = useSyncStatus(sourceId);
 
   if (!isApiSource) {
     return null;
@@ -73,6 +74,7 @@ export function SyncStatusCard({ sourceId, onReauth }: SyncStatusCardProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        <UntrackedNotice byFiscalYear={untrackedByFiscalYear} />
         {/* Last sync info */}
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Last synced</span>

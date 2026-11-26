@@ -362,6 +362,43 @@
       "description": "Die Sprache der FiBuKI-Oberfläche. Noch nicht übersetzte Seiten bleiben auf Englisch.",
       "saveFailed": "Die Sprache konnte nicht gespeichert werden."
     },
+    "fiscalYears": {
+      "title": "Geschäftsjahre",
+      "description": "Für welche Monate FiBuKI Daten führt, und welche abgeschlossen sind, weil ihre Steuererklärung eingereicht ist.",
+      "pageDescription": "Geführte, abgeschlossene und offene Monate",
+      "startMonth": "Geschäftsjahr beginnt im",
+      "trackedFrom": "Geführt ab",
+      "trackedFromHelp": "Importe überspringen Zeilen vor diesem Monat.",
+      "closedThrough": "Abgeschlossen bis",
+      "closedThroughHelp": "Transaktionen bis Ende dieses Monats können nicht geändert oder gelöscht werden. Neue können weiter importiert werden. Für eine Korrektur den Monat zurücksetzen, korrigieren und wieder vorsetzen.",
+      "nothingClosed": "Nichts abgeschlossen",
+      "clear": "Entfernen",
+      "save": "Speichern",
+      "saved": "Gespeichert. Die Änderung ist protokolliert.",
+      "saveFailed": "Die Geschäftsjahre konnten nicht gespeichert werden.",
+      "changes": "Änderungen",
+      "noChanges": "Noch keine Änderungen.",
+      "changeLine": "{when}: {what}",
+      "via": {
+        "settings": "in den Einstellungen",
+        "mcp": "von einem MCP-Client",
+        "chat": "vom Chat",
+        "initial": "als Vorgabe gespeichert"
+      },
+      "untrackedNotice": {
+        "title": "{count, plural, one {# Zeile wurde} other {# Zeilen wurden}} übersprungen: vor „Geführt ab“ datiert",
+        "year": "{year}: {count}",
+        "link": "Diese Jahre unter Einstellungen, Geschäftsjahre führen"
+      },
+      "noChange": "Nichts geändert.",
+      "refusal": {
+        "invalid": "Das ist kein gültiger Monat.",
+        "after-current-month": "Ein Monat nach dem aktuellen kann nicht gesetzt werden (spätestens {month}).",
+        "closed-before-tracked": "„Abgeschlossen bis“ darf nicht vor „Geführt ab“ liegen; frühestens {month}.",
+        "tracked-after-gap": "„Geführt ab“ würde eine Lücke nach den abgeschlossenen Monaten lassen; spätestens {month}. Zuerst „Abgeschlossen bis“ verschieben.",
+        "tracked-from-holds-data": "„Geführt ab“ kann nicht über {month} hinaus verschoben werden: Dort liegen Transaktionen oder Belege. Diese Monate stattdessen abschließen."
+      }
+    },
     "identity": {
       "intro": "Wir brauchen all diese Angaben, um Ihre Rechnungen richtig zuzuordnen: So wissen wir, welcher Name, welche Firma oder welches Konto auf einer Rechnung Sie sind und welches zu einem Partner gehört.",
       "groups": {

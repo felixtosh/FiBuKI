@@ -285,6 +285,8 @@ export async function deleteUserData(
   // === 3. Delete user subcollections ===
   console.log("[DeleteAccount] Deleting user settings and notifications...");
   await deleteSubcollection(db, `users/${userId}/notifications`);
+  await deleteSubcollection(db, `users/${userId}/fiscalYearChanges`);
+  await deleteDocById(db, `users/${userId}/settings`, "fiscalYears");
   await deleteDocById(db, `users/${userId}/settings`, "userData");
   await db.collection("users").doc(userId).delete();
   deletedCollections.push("users");
