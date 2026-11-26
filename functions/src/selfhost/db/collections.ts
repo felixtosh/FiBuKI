@@ -127,6 +127,9 @@ export const FLATTENED: Readonly<Record<string, FlatSpec>> = {
       // Bank-sync dedupe: `in` chunks of 30 plus `>= iban| AND < iban|~`
       // prefix ranges (banking/syncBankTransactions.ts, finapi/syncCallable.ts).
       dedupeHash: { col: "dedupe_hash", kind: "text" },
+      // Import skip by the importer's own id (#796): `in` chunks of 30 per
+      // Bank Account (imports/dedupe.ts).
+      externalRowId: { col: "external_row_id", kind: "text" },
       partnerMatchedBy: { col: "partner_matched_by", kind: "text" },
       noReceiptCategoryMatchedBy: { col: "no_receipt_category_matched_by", kind: "text" },
       isComplete: { col: "is_complete", kind: "boolean" },
@@ -140,6 +143,7 @@ export const FLATTENED: Readonly<Record<string, FlatSpec>> = {
       ["tenant_id", "user_id", "date"],
       ["tenant_id", "user_id", "dedupe_hash"],
       ["tenant_id", "source_id"],
+      ["tenant_id", "source_id", "external_row_id"],
     ],
   },
   files: {

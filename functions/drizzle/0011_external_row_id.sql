@@ -1,0 +1,2 @@
+ALTER TABLE "transactions" ADD COLUMN "external_row_id" text GENERATED ALWAYS AS (CASE WHEN jsonb_typeof("data"->'externalRowId') = 'string' THEN "data"->'externalRowId' #>> '{}' END) STORED;--> statement-breakpoint
+CREATE INDEX "transactions_tenant_id_source_id_external_row_id_idx" ON "transactions" USING btree ("tenant_id","source_id","external_row_id");

@@ -3268,6 +3268,9 @@ export async function deleteSource(userId: string, args: Record<string, unknown>
 // Import
 // ============================================================================
 
+/** The longest External Row Id an Import takes (#796). */
+const MAX_EXTERNAL_ROW_ID = 256;
+
 export async function importTransactions(userId: string, args: Record<string, unknown>) {
   const { sourceId, transactions: rawTxs } = args;
   if (!sourceId) throw new Error("sourceId is required");
@@ -3290,6 +3293,15 @@ export async function importTransactions(userId: string, args: Record<string, un
   const sourceIdentifier = (sourceDoc.data()?.iban as string | undefined) || (sourceId as string);
 
   const candidates = (rawTxs as Array<Record<string, unknown>>).map((tx, index) => {
+    // The importer's own id for the line (#796): unique per Bank Account, never derived here.
+    // Trimmed and case-sensitive; empty or blank reads as none.
+    const externalRowId = tx.externalRowId;
+    if (externalRowId !== undefined && externalRowId !== null && typeof externalRowId !== "string") {
+      throw new Error(`externalRowId must be a string (row ${index})`);
+    }
+    if (typeof externalRowId === "string" && externalRowId.trim().length > MAX_EXTERNAL_ROW_ID) {
+      throw new Error(`externalRowId must be at most ${MAX_EXTERNAL_ROW_ID} characters (row ${index})`);
+    }
     const date = tx.date as string;
     const amount = tx.amount as number;
     const name = tx.name as string;
@@ -3307,6 +3319,7 @@ export async function importTransactions(userId: string, args: Record<string, un
       reference,
       partnerIban: (tx.partnerIban as string) || null,
       dedupeHash: computeDedupeHash({ date, amount, sourceIdentifier, reference }),
+      externalRowId: typeof externalRowId === "string" && externalRowId.trim() ? externalRowId.trim() : null,
       importJobId,
       csvRowIndex: index,
       _original: {
@@ -3387,6 +3400,7 @@ export async function importTransactions(userId: string, args: Record<string, un
         reference: txData.reference,
         partnerIban: txData.partnerIban,
         dedupeHash: txData.dedupeHash,
+        ...(txData.externalRowId ? { externalRowId: txData.externalRowId } : {}),
         importJobId: txData.importJobId,
         csvRowIndex: txData.csvRowIndex,
         _original: txData._original,
