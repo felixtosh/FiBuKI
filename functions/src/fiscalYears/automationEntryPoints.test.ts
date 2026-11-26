@@ -9,6 +9,11 @@
  * the check fails the second. So a missed path is caught here rather than
  * silently writing into a filed year.
  *
+ * Automation a callable or an MCP tool starts is enumerated from the other
+ * end: every module that calls one of the bulk match writers (they rewrite
+ * Partner assignments, File suggestions or stored File Connection scores on
+ * many records at once) is listed the same way, gated or exempt.
+ *
  * What each gate does is driven end to end in
  * selfhost/fiscal-years-automation.test.ts.
  */
@@ -69,9 +74,8 @@ const ENTRY_POINTS: Record<string, Gated | Exempt> = {
   onUserDataUpdate: { gate: ["matching/onUserDataUpdate.ts"] },
   // Learning: it reads closed years; the matches it applies ask the check
   processLearningQueue: { gate: ["matching/learnPartnerPatterns.ts"] },
-  scheduledLearnBillingCycles: {
-    exempt: "learning: re-scores the stored scores of existing File Connections, connects and assigns nothing",
-  },
+  // Learning reads closed years; the re-score of File Connections it applies asks the check
+  scheduledLearnBillingCycles: { gate: ["matching/matcher.ts"] },
 
   onUserDataCreated: { exempt: "creates the identity Partners; a new Partner's own matching asks the check" },
   onGlobalPartnerWritten: { exempt: "raises the directory version; the catch-up it causes runs Partner matching" },
@@ -98,6 +102,39 @@ const ENTRY_POINTS: Record<string, Gated | Exempt> = {
   communityMembershipSweep: { exempt: "community membership" },
 };
 
+/**
+ * The bulk match writers: each rewrites stored matches on many records in one
+ * run, so whatever calls one is automation, whether a trigger, a callable or
+ * an MCP tool started it.
+ */
+const MATCH_WRITERS = [
+  "applyPartnerMatchUpdates",
+  "rescoreUnconnectedFilesForPartners",
+  "rescoreConnections",
+  "writeConnectionScores",
+  "rematchAssignedPartners",
+];
+
+const PARTNER_MATCHING = ["matching/partnerMatchingShared.ts", "matching/rescorePartnerFiles.ts"];
+
+/** Every module that calls a bulk match writer, by path under functions/src. */
+const MATCH_WRITER_CALLERS: Record<string, Gated | Exempt> = {
+  // Partner matching: the writes come from the gated matching run; the File re-score after it asks too
+  "matching/matchPartners.ts": { gate: PARTNER_MATCHING },
+  "matching/onTransactionsImportedCompanyCheck.ts": { gate: PARTNER_MATCHING },
+  "matching/partnerProvenance.ts": { gate: PARTNER_MATCHING },
+  "matching/partnerMatchingShared.ts": { gate: ["matching/rescorePartnerFiles.ts"] },
+  // The whole-account re-match (the rematch_assigned_partners tool) builds its own writes
+  "matching/rematchAssignedPartners.ts": { gate: ["matching/rematchAssignedPartners.ts", "matching/rescorePartnerFiles.ts"] },
+  "tools/handlers.ts": { gate: ["matching/rematchAssignedPartners.ts"] },
+  // The billing-cycle re-score of File Connections (the learn callable, its tool, the schedule)
+  "matching/learnBillingCycle.ts": { gate: ["matching/matcher.ts"] },
+  "matching/matcher.ts": { gate: ["matching/matcher.ts"] },
+  "matching/repairRescoredConnections.ts": {
+    exempt: "the one-time #644 repair an admin runs by hand: it corrects scores a bug stored, not automation",
+  },
+};
+
 function sourceFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).flatMap((name) => {
@@ -117,6 +154,14 @@ function triggersAndSchedules(): string[] {
   return names;
 }
 
+/** Every module that calls a bulk match writer (its definition is no call). */
+function matchWriterCallers(): string[] {
+  const call = new RegExp(`(?<!function )\\b(?:${MATCH_WRITERS.join("|")})\\s*\\(`);
+  return sourceFiles(SRC)
+    .filter((path) => call.test(readFileSync(path, "utf8")))
+    .map((path) => relative(SRC, path));
+}
+
 /** Every id in the automation registry. */
 function registryIds(): string[] {
   const source = readFileSync(join(SRC, "automation", "automation-registry.ts"), "utf8");
@@ -134,8 +179,17 @@ describe("automation entry points and the stretch check", () => {
     expect(gone, "listed here but no longer exported").toEqual([]);
   });
 
+  it("lists every module that calls a bulk match writer as gated or exempt", () => {
+    const found = matchWriterCallers().sort();
+    expect(found).toContain("tools/handlers.ts");
+    const unlisted = found.filter((module) => !(module in MATCH_WRITER_CALLERS));
+    expect(unlisted, "a new caller of a bulk match writer: gate it with automationScope or list it as exempt").toEqual([]);
+    const gone = Object.keys(MATCH_WRITER_CALLERS).filter((module) => !found.includes(module));
+    expect(gone, "listed here but no longer calls a bulk match writer").toEqual([]);
+  });
+
   it("finds the check in every module a gated entry point names", () => {
-    const missing = Object.entries(ENTRY_POINTS).flatMap(([name, entry]) =>
+    const missing = Object.entries({ ...ENTRY_POINTS, ...MATCH_WRITER_CALLERS }).flatMap(([name, entry]) =>
       "gate" in entry
         ? entry.gate
             .filter((module) => !CHECK.test(readFileSync(join(SRC, module), "utf8")))

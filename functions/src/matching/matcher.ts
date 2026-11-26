@@ -1510,14 +1510,17 @@ export async function autoConnect(
  * billing cycle is learned or changes (yazzbert/FiBuKI-selfhost#168), so the
  * right charge for a same-amount recurring document ranks highest. Scored
  * with the Partner's own context and against the full amount, at the ECB
- * rate (#555). Which Files are connected is never touched.
+ * rate (#555). Which Files are connected is never touched. A File
+ * Connection on a Transaction outside the open stretch keeps its stored
+ * score (#803, ADR-0018): it is locked once its Transaction is Closed.
  */
 export async function rescoreConnections(
   db: Db,
   userId: string,
   partnerId: string,
-  txDocs: TxDoc[]
+  allTxDocs: TxDoc[]
 ): Promise<{ rescored: number }> {
+  const txDocs = await automationScope(db, userId).openTransactions(allTxDocs);
   if (txDocs.length === 0) return { rescored: 0 };
 
   const txById = new Map(txDocs.map((doc) => [doc.id, doc]));

@@ -34,6 +34,8 @@ import { queueReceiptSearchForTransaction } from "../workers/runReceiptSearchFor
 import { runPartnerMatching } from "../matching/matchPartners";
 import { matchCategoriesForUser } from "../matching/matchCategories";
 import { extractQueuedFile } from "../extraction/extractQueuedFile";
+import { rescoreUnconnectedFilesForPartners } from "../matching/rescorePartnerFiles";
+import { rescoreConnections } from "../matching/matcher";
 
 const db = getFirestore();
 const USER = "fy-auto";
@@ -433,5 +435,100 @@ describe("learning", () => {
 
     expect((await tx("t-open")).partnerSuggestions.map((s: { partnerId: string }) => s.partnerId)).toContain("p-beta");
     expect(await tx("t-closed")).toMatchObject({ partnerId: null, partnerSuggestions: [] });
+  });
+});
+
+describe("automation a callable or a tool starts", () => {
+  async function seedOther() {
+    await db.collection("partners").doc("p-other").set({
+      userId: USER,
+      name: "Other Werkstatt GmbH",
+      aliases: [],
+      ibans: [],
+      isActive: true,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  it("the whole-account re-match rewrites an open Transaction's Partner, never a closed one's", async () => {
+    await seedOther();
+    const wrong = { partnerId: "p-other", partnerType: "user", partnerMatchedBy: "auto", partnerMatchConfidence: 90 };
+    await seedTransaction("t-closed", CLOSED_DAY, wrong);
+    await seedTransaction("t-open", OPEN_DAY, wrong);
+
+    const result = await handleTool(USER, "rematch_assigned_partners", { dryRun: false });
+
+    expect(await tx("t-open")).toMatchObject({ partnerId: "p-acme", partnerMatchedBy: "auto" });
+    const closed = await tx("t-closed");
+    expect(closed).toMatchObject({ partnerId: "p-other", partnerMatchConfidence: 90, partnerSuggestions: [] });
+    expect(closed.automationHistory ?? []).toEqual([]);
+    expect(result).toMatchObject({ transactionsWritten: 1, actions: { reassign: 1, skip_outside_open: 1 } });
+  });
+
+  it("the File re-score after a Partner change refreshes an open File's suggestions, never a closed one's", async () => {
+    await seedTransaction("t-closed", CLOSED_DAY, { partnerId: "p-acme", partnerType: "user" });
+    await seedTransaction("t-open", OPEN_DAY, { partnerId: "p-acme", partnerType: "user" });
+    const stale = [{ transactionId: "t-gone", confidence: 12, matchSources: [] }];
+    for (const [id, day] of [["f-closed", CLOSED_DAY], ["f-untracked", "2023-06-01"], ["f-open", OPEN_DAY]]) {
+      await db.collection("files").doc(id).set({
+        userId: USER,
+        fileName: `${id}.pdf`,
+        partnerId: "p-acme",
+        extractionComplete: true,
+        transactionMatchComplete: true,
+        extractedAmount: 4900,
+        extractedCurrency: "EUR",
+        extractedPartner: "Acme Hosting GmbH",
+        extractedDate: Timestamp.fromDate(new Date(`${day}T00:00:00.000Z`)),
+        transactionIds: [],
+        transactionSuggestions: stale,
+      });
+    }
+
+    const result = await rescoreUnconnectedFilesForPartners(db, USER, ["p-acme"]);
+
+    expect(result.filesRescored).toBe(1);
+    expect((await file("f-open")).transactionSuggestions.map((s: { transactionId: string }) => s.transactionId)).toContain("t-open");
+    for (const id of ["f-closed", "f-untracked"]) {
+      const stored = await file(id);
+      expect(stored.transactionSuggestions).toEqual(stale);
+      expect(stored.automationHistory ?? []).toEqual([]);
+    }
+  });
+
+  it("the billing-cycle re-score leaves the score of a File Connection on a closed Transaction alone", async () => {
+    await seedTransaction("t-closed", CLOSED_DAY, { partnerId: "p-acme", partnerType: "user" });
+    await seedTransaction("t-open", OPEN_DAY, { partnerId: "p-acme", partnerType: "user" });
+    for (const [txId, day] of [["t-closed", CLOSED_DAY], ["t-open", OPEN_DAY]]) {
+      const fileId = `f-${txId}`;
+      await db.collection("files").doc(fileId).set({
+        userId: USER,
+        fileName: `${fileId}.pdf`,
+        partnerId: "p-acme",
+        extractionComplete: true,
+        transactionMatchComplete: true,
+        extractedAmount: 4900,
+        extractedCurrency: "EUR",
+        extractedDate: Timestamp.fromDate(new Date(`${day}T00:00:00.000Z`)),
+        transactionIds: [txId],
+      });
+      await db.collection("fileConnections").doc(`c-${txId}`).set({
+        userId: USER,
+        fileId,
+        transactionId: txId,
+        matchConfidence: 7,
+        matchSources: [],
+      });
+    }
+    const txDocs = (await db.collection("transactions").where("userId", "==", USER).get()).docs;
+
+    const result = await rescoreConnections(db, USER, "p-acme", txDocs);
+
+    expect(result.rescored).toBe(1);
+    const closed = (await db.collection("fileConnections").doc("c-t-closed").get()).data()!;
+    expect(closed.matchConfidence).toBe(7);
+    expect(closed.rescoredAt).toBeUndefined();
+    expect((await db.collection("fileConnections").doc("c-t-open").get()).data()!.rescoredAt).toBeDefined();
   });
 });

@@ -23,12 +23,16 @@
  * and nothing else. No connection is created, no Partner assignment is
  * cleared, and the pipeline flags (`transactionMatchComplete`) are untouched,
  * so the file-side trigger does not re-fire off these writes.
+ *
+ * A File dated outside the open stretch keeps its suggestions (#803,
+ * ADR-0018): automation leaves Closed and Untracked records alone.
  */
 
 import { Timestamp } from "firebase-admin/firestore";
 import { storedSuggestionsOf, transactionsForFiles } from "./matcher";
 import { transactionSuggestionsActivity } from "./suggestionActivity";
 import { logActivity } from "../utils/activity";
+import { automationScope } from "../fiscalYears/settings";
 
 /** Firestore batch write cap is 500; chunk with headroom. */
 const BATCH_CHUNK_SIZE = 400;
@@ -54,6 +58,7 @@ export async function rescoreUnconnectedFilesForPartners(
 
   let partnersProcessed = 0;
   let filesRescored = 0;
+  const scope = automationScope(db, userId);
 
   for (const partnerId of uniquePartnerIds) {
     partnersProcessed++;
@@ -68,12 +73,13 @@ export async function rescoreUnconnectedFilesForPartners(
     // Unconnected and already through the pipeline: a File mid-pipeline
     // (`transactionMatchComplete` not yet true) is left to its own trigger
     // rather than raced. Which of them can be matched at all is the matcher's.
-    const files = filesSnapshot.docs.filter((doc) => {
+    const files: typeof filesSnapshot.docs = [];
+    for (const doc of filesSnapshot.docs) {
       const data = doc.data();
-      if (data.transactionMatchComplete !== true) return false;
-      const connected = Array.isArray(data.transactionIds) && data.transactionIds.length > 0;
-      return !connected;
-    });
+      if (data.transactionMatchComplete !== true) continue;
+      if (Array.isArray(data.transactionIds) && data.transactionIds.length > 0) continue;
+      if (await scope.actsOnFile(data)) files.push(doc);
+    }
 
     if (files.length === 0) continue;
 
