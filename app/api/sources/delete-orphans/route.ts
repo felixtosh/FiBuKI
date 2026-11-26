@@ -13,6 +13,7 @@ import {
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { readFiscalYears, stretchOf } from "@/functions/src/fiscalYears/settings";
+import { toDateSafe } from "@/lib/utils";
 
 // Initialize Firebase for server-side
 const firebaseConfig = {
@@ -142,7 +143,7 @@ export async function POST(request: NextRequest) {
       // A transaction is orphaned if its sourceId doesn't match any valid source
       if (sourceId && !validSourceIds.has(sourceId)) {
         orphanSourceIds.add(sourceId);
-        const date = txData.date?.toDate?.() as Date | undefined;
+        const date = toDateSafe(txData.date);
         if (date && stretchOf(fiscalYears, date) === "closed") {
           keptClosedTransactions++;
           continue;
