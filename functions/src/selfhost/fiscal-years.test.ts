@@ -126,6 +126,22 @@ describe("the three settings and their defaults", () => {
     expect((await settingsOf()).trackedFrom).toBe("2024-01");
   });
 
+  it("an undated File does not hide a dated one behind it (review round 2)", async () => {
+    await db.collection("files").doc("f-undated").set({ userId: USER, fileName: "scan.pdf", extractedDate: null });
+    await db.collection("files").doc("f-2019").set({ userId: USER, fileName: "a.pdf", extractedDate: day("2019-03-01") });
+
+    expect((await settingsOf()).trackedFrom).toBe("2019-01");
+  });
+
+  it("a full page of undated Files does not either", async () => {
+    for (let i = 0; i < 55; i++) {
+      await db.collection("files").doc(`f-undated-${i}`).set({ userId: USER, fileName: `s${i}.pdf`, extractedDate: null });
+    }
+    await db.collection("files").doc("f-2019").set({ userId: USER, fileName: "a.pdf", extractedDate: day("2019-03-01") });
+
+    expect((await settingsOf()).trackedFrom).toBe("2019-01");
+  });
+
   it("the first read stores the default with one initial record", async () => {
     const first = await settingsOf();
     await settingsOf();

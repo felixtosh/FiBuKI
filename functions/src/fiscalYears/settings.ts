@@ -104,7 +104,7 @@ const PAGE = 50;
 /**
  * The first stored Transaction or live File dated in [from, to), as its month,
  * or null. Either bound may be open. A File in the bin (deletedAt) does not
- * count; an undated File never does.
+ * count; an undated document never does, whichever page it sits on.
  */
 export async function firstDataMonth(db: Db, userId: string, from: Month | null, to: Month | null): Promise<Month | null> {
   const months: Month[] = [];
@@ -119,8 +119,12 @@ export async function firstDataMonth(db: Db, userId: string, from: Month | null,
     let last: FirebaseFirestore.QueryDocumentSnapshot | null = null;
     for (;;) {
       const snap: FirebaseFirestore.QuerySnapshot = await (last ? query.startAfter(last) : query).limit(PAGE).get();
-      const live = snap.docs.find((d) => !(collection === "files" && d.data().deletedAt));
-      const date = live ? toDateSafe(live.data()[field]) : null;
+      // A document in the bin or without a date is skipped on its own: an
+      // undated one sorts first and must not hide the dated ones behind it.
+      const date = snap.docs
+        .filter((d) => !(collection === "files" && d.data().deletedAt))
+        .map((d) => toDateSafe(d.data()[field]))
+        .find((d): d is Date => d instanceof Date && !isNaN(d.getTime()));
       if (date) {
         months.push(monthOf(date));
         break;
