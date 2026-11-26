@@ -5,13 +5,14 @@
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { defineSecret } from "firebase-functions/params";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { buildDigestSubject, buildDigestHtml, buildDigestText } from "./digestEmail";
 import type { DigestStats } from "./digestEmail";
 import { generateUnsubscribeToken } from "./unsubscribeDigest";
 import { isMailerConfigured, sendEmail } from "../utils/mailer";
 import { publicOrigin, PUBLIC_ORIGIN_UNSET_ERROR } from "../utils/publicOrigin";
+import { openFromDate, readFiscalYears, stretchOfStored } from "../fiscalYears/settings";
 
 const resendApiKey = defineSecret("RESEND_API_KEY");
 const BATCH_SIZE = 10;
@@ -125,23 +126,35 @@ export const sendWeeklyDigest = onSchedule(
   }
 );
 
-async function gatherUserStats(
+/**
+ * The digest's numbers for one User. Only records in the open stretch are
+ * work (#802): a record dated in the Closed stretch or before Tracked From is
+ * left out of what is new and of the completion rate, even when it was
+ * created this week, so importing old years never reads as new work. A File
+ * not yet read has no date and counts as new.
+ */
+export async function gatherUserStats(
   db: FirebaseFirestore.Firestore,
   userId: string,
   since: Date
 ): Promise<DigestStats> {
+  const settings = await readFiscalYears(db, userId);
+  // An undated record (a File not yet read) is new work.
+  const isOpen = (value: unknown) => (stretchOfStored(settings, value) ?? "open") === "open";
+
   // New transactions in the last 7 days
   const txQuery = await db
     .collection("transactions")
     .where("userId", "==", userId)
     .where("createdAt", ">=", since)
     .get();
+  const newTxDocs = txQuery.docs.filter((doc) => isOpen(doc.data().date));
 
-  const newTransactions = txQuery.size;
+  const newTransactions = newTxDocs.length;
 
   // Count unmatched (no files, no noReceiptCategoryId)
   let unmatchedTransactions = 0;
-  for (const doc of txQuery.docs) {
+  for (const doc of newTxDocs) {
     const data = doc.data();
     const hasFiles = data.fileIds && data.fileIds.length > 0;
     const hasNoReceipt = !!data.noReceiptCategoryId;
@@ -150,17 +163,22 @@ async function gatherUserStats(
     }
   }
 
-  // Completion rate (of ALL user transactions, not just new)
+  // Completion rate (of ALL the user's open transactions, not just new). The
+  // stretches run untracked, closed, open, so the open ones are exactly those
+  // on or after the open stretch's first month.
+  const openFrom = Timestamp.fromDate(openFromDate(settings));
   const allTxQuery = await db
     .collection("transactions")
     .where("userId", "==", userId)
     .where("isComplete", "==", true)
+    .where("date", ">=", openFrom)
     .count()
     .get();
 
   const allTxTotal = await db
     .collection("transactions")
     .where("userId", "==", userId)
+    .where("date", ">=", openFrom)
     .count()
     .get();
 
@@ -179,6 +197,6 @@ async function gatherUserStats(
     newTransactions,
     unmatchedTransactions,
     completionRate,
-    newFiles: filesQuery.size,
+    newFiles: filesQuery.docs.filter((doc) => isOpen(doc.data().extractedDate)).length,
   };
 }

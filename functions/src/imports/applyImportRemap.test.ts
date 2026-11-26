@@ -14,7 +14,7 @@ vi.mock("firebase-admin/firestore", () => {
       return this.d;
     }
   }
-  return { getFirestore: () => createMockFirestore(), FieldValue: { serverTimestamp: () => new Date() }, Timestamp: FakeInstant };
+  return { getFirestore: () => createMockFirestore(), FieldValue: { serverTimestamp: () => new Date(), delete: () => undefined }, Timestamp: FakeInstant };
 });
 vi.mock("../utils/createCallable", () => ({
   createCallable: <TReq, TRes>(_c: unknown, handler: (ctx: unknown, data: TReq) => Promise<TRes>) => handler,

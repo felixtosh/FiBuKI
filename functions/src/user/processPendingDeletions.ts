@@ -238,6 +238,7 @@ async function deleteUserAccount(
   await deleteSubcollection(db, `users/${userId}/notifications`);
   await deleteSubcollection(db, `users/${userId}/fiscalYearChanges`);
   await db.doc(`users/${userId}/settings/fiscalYears`).delete();
+  await db.doc(`users/${userId}/settings/untrackedFilesHint`).delete();
   await db.collection("users").doc(userId).delete();
   deletedCollections.push("users");
 

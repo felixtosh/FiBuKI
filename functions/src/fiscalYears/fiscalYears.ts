@@ -33,6 +33,8 @@ import {
   stretchOf,
   closedRefusal,
   untrackedRefusal,
+  fileDateOf,
+  CLOSED_FILE,
   type FiscalYearChangeRecord,
   type FiscalYearSettings,
   type FiscalYearsVia,
@@ -86,6 +88,19 @@ export async function assertNotClosed(
 ): Promise<void> {
   if (!dates.some((d) => d instanceof Date && !isNaN(d.getTime()))) return;
   (await fiscalYearsGuard(db, userId)).refuseClosed(dates, what);
+}
+
+/**
+ * Refuse a change to a File dated in the Closed stretch (#801): its facts, its
+ * Partner, its delete. An undated File passes.
+ */
+export async function assertFileNotClosed(
+  db: Db,
+  userId: string,
+  file: Record<string, unknown> | undefined,
+  what = CLOSED_FILE
+): Promise<void> {
+  await assertNotClosed(db, userId, [fileDateOf(file)], what);
 }
 
 /** Refuse when any of these dates lies before Tracked From, naming it. */

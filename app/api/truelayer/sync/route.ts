@@ -9,15 +9,12 @@ import {
   updateDoc,
   collection,
   addDoc,
-  query,
-  where,
-  getDocs,
   Timestamp,
 } from "firebase/firestore";
 import { getTrueLayerClient } from "@/lib/truelayer";
 import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { TransactionSource } from "@/types/source";
-import { computeDedupeHash } from "@/functions/src/imports/dedupe";
+import { computeDedupeHash, splitDuplicates } from "@/functions/src/imports/dedupe";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { splitUntracked } from "@/functions/src/fiscalYears/settings";
@@ -161,52 +158,33 @@ export async function POST(request: NextRequest) {
       toDate.toISOString().split("T")[0]
     );
 
-    // Get existing transaction hashes for deduplication
-    const existingQuery = query(
-      collection(db, "transactions"),
-      where("sourceId", "==", sourceId)
-    );
-    const existingSnap = await getDocs(existingQuery);
-    const existingHashes = new Set(
-      existingSnap.docs.map((d) => d.data().dedupeHash)
-    );
-
     // Transform and import transactions
     const nowTs = Timestamp.now();
-    let imported = 0;
-    let skipped = 0;
 
     // Rows before Tracked From are skipped without asking and counted per fiscal year (#794).
     const { tracked, ...untracked } = await splitUntracked(getAdminDb(), userId, transactions, (tx) => new Date(tx.timestamp));
 
-    for (const tx of tracked) {
-      // Determine if income or expense
+    const candidates = tracked.map((tx) => {
       // TrueLayer returns amounts in whole currency units (e.g., 42.50)
       // We store amounts in cents (e.g., 4250)
       const isCredit = tx.transaction_type === "CREDIT";
       const amountCents = Math.round(Math.abs(tx.amount) * 100);
       const amount = isCredit ? amountCents : -amountCents;
-
-      // Parse date
       const txDate = new Date(tx.timestamp);
-
-      // Reference for dedupe
       const reference = tx.meta?.provider_reference || tx.transaction_id;
+      // Use sourceId as fallback for sources without IBAN
+      const dedupeHash = computeDedupeHash({ date: txDate, amount, sourceIdentifier: source.iban ?? source.id, reference });
+      return { tx, amount, txDate, reference, dedupeHash, externalRowId: tx.transaction_id };
+    });
 
-      // Generate dedupe hash (use sourceId as fallback for sources without IBAN)
-      const dedupeHash = computeDedupeHash({
-        date: txDate,
-        amount,
-        sourceIdentifier: source.iban ?? source.id,
-        reference,
-      });
+    // TrueLayer's transaction id is the External Row Id (#804): the Import writer's split
+    // skips a line the Bank Account already stores by id, and holds back rows stored
+    // before ids existed by their hash.
+    const { fresh, duplicates } = await splitDuplicates(getAdminDb(), userId, sourceId, candidates);
+    let imported = 0;
+    const skipped = duplicates.length;
 
-      // Skip if duplicate
-      if (existingHashes.has(dedupeHash)) {
-        skipped++;
-        continue;
-      }
-
+    for (const { tx, amount, txDate, reference, dedupeHash, externalRowId } of fresh) {
       // Build transaction document
       const transactionDoc = {
         sourceId,
@@ -223,6 +201,7 @@ export async function POST(request: NextRequest) {
         reference,
         isComplete: false,
         dedupeHash,
+        externalRowId,
         _original: {
           date: tx.timestamp,
           amount: tx.amount.toString(),
@@ -233,7 +212,6 @@ export async function POST(request: NextRequest) {
       };
 
       await addDoc(collection(db, "transactions"), transactionDoc);
-      existingHashes.add(dedupeHash);
       imported++;
     }
 

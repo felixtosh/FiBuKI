@@ -12,6 +12,7 @@
  */
 
 import { createCallable, HttpsError } from "../utils/createCallable";
+import { assertTransactionIdEditable } from "../transactions/writableFields";
 import { buildUnrejectFileUpdates, type RejectableTransactionState } from "./rejectFileOps";
 
 interface UnrejectFileFromTransactionRequest {
@@ -40,6 +41,8 @@ export const unrejectFileFromTransactionCallable = createCallable<
       throw new HttpsError("invalid-argument", "transactionId is required");
     }
 
+    // Lifting a Rejection on a Closed Transaction changes it (#801).
+    await assertTransactionIdEditable(ctx.db, ctx.userId, transactionId);
     const transactionRef = ctx.db.collection("transactions").doc(transactionId);
 
     // Read and write in one transaction: the builder rewrites both arrays

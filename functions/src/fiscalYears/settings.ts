@@ -99,6 +99,92 @@ export function stretchOf(settings: FiscalYearSettings, date: Date | string): St
   return "open";
 }
 
+/** A stored date (a Timestamp, a Date, a string) as a Date, or null when it is none or invalid. */
+export function storedDate(value: unknown): Date | null {
+  const date = toDateSafe(value);
+  return date instanceof Date && !isNaN(date.getTime()) ? date : null;
+}
+
+/**
+ * Which stretch a stored date is in, through `stretchOf`; null when the value
+ * is not a valid date. What a record with no date means is the caller's.
+ */
+export function stretchOfStored(settings: FiscalYearSettings, value: unknown): Stretch | null {
+  const date = storedDate(value);
+  return date ? stretchOf(settings, date) : null;
+}
+
+/**
+ * The date that puts a File in a stretch: its extracted (or given) date
+ * (#801). An undated File is in none, so it is never Closed.
+ */
+export function fileDateOf(file: Record<string, unknown> | undefined): Date | null {
+  return storedDate(file?.extractedDate);
+}
+
+/** Which stretch a File is in, through the one check; null for an undated File. */
+export function fileStretchOf(settings: FiscalYearSettings, file: Record<string, unknown> | undefined): Stretch | null {
+  return stretchOfStored(settings, file?.extractedDate);
+}
+
+/**
+ * The first month `stretchOf` calls open. The stretches always run untracked,
+ * closed, open, so a date is open exactly when it is on or after this month;
+ * a query bounds on it to read only open records (#802).
+ */
+export function openFrom(settings: FiscalYearSettings): Month {
+  const afterClosed = settings.closedThrough === null ? settings.trackedFrom : addMonths(settings.closedThrough, 1);
+  return afterClosed > settings.trackedFrom ? afterClosed : settings.trackedFrom;
+}
+
+/** `openFrom` as a stored date: UTC midnight of its first day. */
+export function openFromDate(settings: FiscalYearSettings): Date {
+  return new Date(`${openFrom(settings)}-01T00:00:00Z`);
+}
+
+/** Automation's view of the stretches, for one User and one run (#803). */
+export interface AutomationScope {
+  /** Whether automation may work on a record of this date: only in the open stretch. */
+  acts(date: unknown): Promise<boolean>;
+  /** A Transaction, by its date. */
+  actsOnTransaction(data: FirebaseFirestore.DocumentData | undefined): Promise<boolean>;
+  /** A File, by its extracted (or given) date. */
+  actsOnFile(data: FirebaseFirestore.DocumentData | undefined): Promise<boolean>;
+  /** The Transaction documents of a list automation may work on, in order. */
+  openTransactions<T extends { data(): FirebaseFirestore.DocumentData | undefined }>(docs: T[]): Promise<T[]>;
+}
+
+/**
+ * What automation may work on (#803, ADR-0018): records dated in the open
+ * stretch. Receipt search, Partner and Category matching, the company lookups,
+ * auto-connect and extraction's fact writes leave Closed and Untracked records
+ * alone, and a record added into a Closed stretch triggers none of them.
+ * Learning does not ask: it may read closed years.
+ *
+ * An undated record (a File before extraction) is open. The User's settings
+ * are read once per scope, on the first dated record, so a run that meets
+ * none reads nothing.
+ */
+export function automationScope(db: Db, userId: string): AutomationScope {
+  let settings: Promise<FiscalYearSettings> | null = null;
+  const acts = async (date: unknown): Promise<boolean> => {
+    const day = storedDate(date);
+    if (!day) return true;
+    settings ??= readFiscalYears(db, userId);
+    return stretchOf(await settings, day) === "open";
+  };
+  return {
+    acts,
+    actsOnTransaction: (data) => acts(data?.date),
+    actsOnFile: (data) => acts(fileDateOf(data)),
+    async openTransactions(docs) {
+      const open: typeof docs = [];
+      for (const doc of docs) if (await acts(doc.data()?.date)) open.push(doc);
+      return open;
+    },
+  };
+}
+
 const PAGE = 50;
 
 /**
@@ -123,8 +209,8 @@ export async function firstDataMonth(db: Db, userId: string, from: Month | null,
       // undated one sorts first and must not hide the dated ones behind it.
       const date = snap.docs
         .filter((d) => !(collection === "files" && d.data().deletedAt))
-        .map((d) => toDateSafe(d.data()[field]))
-        .find((d): d is Date => d instanceof Date && !isNaN(d.getTime()));
+        .map((d) => storedDate(d.data()[field]))
+        .find((d): d is Date => d !== null);
       if (date) {
         months.push(monthOf(date));
         break;
@@ -187,6 +273,30 @@ export async function readFiscalYears(db: Db, userId: string): Promise<FiscalYea
   });
 }
 
+/**
+ * The User's settings read inside a Firestore transaction, or null when
+ * nothing is closed (#801). Reads only, so a writer can ask among its other
+ * reads: a User with nothing stored has the default, which closes nothing.
+ */
+export async function closedSettingsIn(
+  tx: FirebaseFirestore.Transaction,
+  db: Db,
+  userId: string
+): Promise<FiscalYearSettings | null> {
+  const settings = parseStored((await tx.get(settingsRef(db, userId))).data());
+  return settings && settings.closedThrough !== null ? settings : null;
+}
+
+/** Whether a stored date lies in the Closed stretch; an unknown date never does. */
+export function isClosedDate(settings: FiscalYearSettings | null, date: unknown): boolean {
+  return settings !== null && stretchOfStored(settings, date) === "closed";
+}
+
+/** What a File refusal names (#801). */
+export const CLOSED_FILE = "This File";
+/** What a File Connection refusal names: its Transaction decides (#801). */
+export const CLOSED_CONNECTION = "The Transaction of this File Connection";
+
 /** What a refusal says: Closed Through, and how to lift it. */
 export function closedRefusal(settings: FiscalYearSettings, what: string): string {
   return (
@@ -229,16 +339,74 @@ export async function splitUntracked<T>(
   const untrackedByFiscalYear: Record<string, number> = {};
   let untrackedCount = 0;
   for (const row of rows) {
-    const date = dateOf(row);
-    const parsed = typeof date === "string" ? new Date(date) : date;
-    if (isNaN(parsed.getTime()) || stretchOf(settings, parsed) !== "untracked") {
+    const date = storedDate(dateOf(row));
+    if (!date || stretchOf(settings, date) !== "untracked") {
       tracked.push(row);
       continue;
     }
-    const label = fiscalYearLabel(monthOf(parsed), settings.startMonth);
+    const label = fiscalYearLabel(monthOf(date), settings.startMonth);
     untrackedByFiscalYear[label] = (untrackedByFiscalYear[label] ?? 0) + 1;
     untrackedCount++;
   }
   return { tracked, untrackedCount, untrackedByFiscalYear };
+}
+
+/** A change of Tracked From (and Closed Through) that brings untracked rows in. */
+export interface UntrackedChoiceChange {
+  trackedFrom: Month;
+  closedThrough?: Month;
+}
+
+/** What the untracked-Files hint says: Files before Tracked From not yet seen, per fiscal year. */
+export interface UntrackedFilesSummary {
+  count: number;
+  byFiscalYear: Record<string, number>;
+}
+
+export interface UntrackedPreview {
+  /** Rows before Tracked From: an Import would skip them. */
+  untrackedCount: number;
+  /** The same rows per fiscal year (`2023`, or `2023/24`). */
+  untrackedByFiscalYear: Record<string, number>;
+  /**
+   * The settings change for each way of bringing them in, for the settings
+   * writer, or null when the choice is not offered. Skipping needs none.
+   *
+   * - closed: Tracked From back to the start of the earliest such fiscal year,
+   *   and, while nothing is closed, Closed Through to the month before the old
+   *   Tracked From, so every month that was untracked is closed.
+   * - open: Tracked From back the same way; only while nothing is closed, as
+   *   an open stretch may never lie before a closed one.
+   */
+  choices: { closed: UntrackedChoiceChange | null; open: UntrackedChoiceChange | null };
+}
+
+/**
+ * What an Import of rows in these months would skip, and how to bring them
+ * in (#805). `months` counts an Import's rows per month (`YYYY-MM`).
+ */
+export function previewUntracked(settings: FiscalYearSettings, months: Record<Month, number>): UntrackedPreview {
+  const untrackedByFiscalYear: Record<string, number> = {};
+  let untrackedCount = 0;
+  let earliest: Month | null = null;
+  for (const [month, count] of Object.entries(months)) {
+    if (count <= 0 || stretchOf(settings, `${month}-01`) !== "untracked") continue;
+    const label = fiscalYearLabel(month, settings.startMonth);
+    untrackedByFiscalYear[label] = (untrackedByFiscalYear[label] ?? 0) + count;
+    untrackedCount += count;
+    if (earliest === null || month < earliest) earliest = month;
+  }
+  if (earliest === null) return { untrackedCount, untrackedByFiscalYear, choices: { closed: null, open: null } };
+
+  const trackedFrom = fiscalYearStart(earliest, settings.startMonth);
+  const nothingClosed = settings.closedThrough === null;
+  return {
+    untrackedCount,
+    untrackedByFiscalYear,
+    choices: {
+      closed: nothingClosed ? { trackedFrom, closedThrough: addMonths(settings.trackedFrom, -1) } : { trackedFrom },
+      open: nothingClosed ? { trackedFrom } : null,
+    },
+  };
 }
 

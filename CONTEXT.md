@@ -137,9 +137,16 @@ whose id the Bank Account already stores, whatever the import job, so a retried 
 Import never writes a line twice. Against stored rows without an id, the duplicate check on
 date, amount and reference stays a backstop that counts: within one call, N such stored
 lines hold back at most N rows with an id. A row without one goes through that duplicate
-check unchanged. Within one Bank Account, send ids on all lines or on none.
+check unchanged. Within one Bank Account, send ids on all lines or on none. An id the CSV
+Import reads from the Reference / Transaction ID column is weaker: it skips a row only when
+the stored line also has the same date and amount, since a reference unique within one file
+can repeat in next month's; otherwise the row is written without the id.
 Trimmed and case-sensitive; an empty one is none. FiBuKI never derives one and never
-backfills stored rows.
+backfills stored rows. The finAPI and TrueLayer syncs fill it from the provider's
+transaction id. The CSV Import fills it from the column mapped as Reference / Transaction
+ID, but only when that column has a value on every line and no value twice: a mandate
+reference or SEPA's NOTPROVIDED repeats, and as ids they would skip real lines, so such a
+file carries no ids.
 _Deutsch_: Externe Zeilen-ID
 _Avoid_: idempotency key, dedupe hash (the date, amount and reference check), transaction id
 bare
@@ -184,7 +191,9 @@ _Avoid_: Closing Date, lock date, filed through
 **Closed stretch**:
 The months from Tracked From through Closed Through, usually years whose tax return is
 filed. Its records are kept and readable, and new ones can still be imported into it, but
-a change or a delete of a Transaction dated in it is refused, naming Closed Through. Separate
+a change or a delete of a Transaction or a File dated in it is refused, naming Closed Through.
+A File Connection is locked when its Transaction is dated in it; the File's date does not
+lock a connection. Separate
 from a filed UVA period: marking a UVA filed closes nothing.
 _Deutsch_: Abgeschlossener Zeitraum
 _Avoid_: closed period (a **period** is a UVA month or quarter), archive, locked year

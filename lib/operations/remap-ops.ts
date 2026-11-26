@@ -21,6 +21,7 @@ import {
 } from "@/lib/import/date-parsers";
 import { parseAmount, getAmountParserConfig } from "@/lib/import/amount-parsers";
 import { callFunction } from "@/lib/firebase/callable";
+import { externalRowIdsFromReferences } from "@/functions/src/imports/externalRowId";
 
 const TRANSACTIONS_COLLECTION = "transactions";
 /** Rows per request: each carries its raw CSV line. */
@@ -437,6 +438,7 @@ export async function applyRemapping(
     partner: string | null;
     reference: string | null;
     partnerIban: string | null;
+    externalRowId?: string;
     original: { date: string; amount: string; rawRow: Record<string, string> };
   }> = [];
   const errors: { row: number; message: string }[] = [];
@@ -480,6 +482,14 @@ export async function applyRemapping(
       onProgress(Math.round((i / parsedRows.length) * 50));
     }
   }
+
+  // The External Row Ids under the new Reference / Transaction ID column (#804), by the same
+  // rule as the CSV Import. The server keeps a stored id the new mapping still gives and removes
+  // one it does not; it never writes a new one onto a stored row.
+  const externalRowIds = externalRowIdsFromReferences(rows.map((r) => r.reference));
+  rows.forEach((r, index) => {
+    if (externalRowIds[index]) r.externalRowId = externalRowIds[index]!;
+  });
 
   // Every chunk carries the mappings, which the server saves on the import (#628); at least one
   // call goes out, so the mappings are saved even when no row parsed under them.

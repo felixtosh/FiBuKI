@@ -8,6 +8,7 @@ import { checkTransactionQuota, incrementTransactionCount } from "../billing/che
 import { toDateSafe } from "../utils/toDateSafe";
 import { normalizeTransactionType } from "./transactionType";
 import { computeDedupeHash, splitDuplicates } from "./dedupe";
+import { externalRowIdsFromReferences, readExternalRowId } from "./externalRowId";
 import { readFiscalYears, splitUntracked, stretchOf } from "../fiscalYears/fiscalYears";
 
 interface TransactionData {
@@ -24,6 +25,12 @@ interface TransactionData {
   bankTransactionType?: string | null;
   /** Ignored. The server derives the hash itself (imports/dedupe.ts), so no client can drift from it. */
   dedupeHash?: string;
+  /**
+   * The External Row Id (#804): the row's value of the Reference / Transaction ID
+   * column, sent only when the whole file's column is one (externalRowIdsFromReferences).
+   * The server holds a call to the same rule: ids on every row, none repeated, or none.
+   */
+  externalRowId?: unknown;
   importJobId: string;
   csvRowIndex?: number;
   _original: {
@@ -52,6 +59,12 @@ interface BulkCreateTransactionsResponse {
   count: number;
   /** Rows an earlier import already stored for this Bank Account; not written. */
   duplicateCount: number;
+  /**
+   * Rows whose External Row Id the Bank Account stores on a line of another
+   * date or amount (#804): a repeating reference, not a line id. Written
+   * without the id.
+   */
+  reusedIdCount: number;
   /** Rows before Tracked From (#794); not written. */
   untrackedCount?: number;
   /** The same rows per fiscal year (`2023`, or `2023/24`). */
@@ -84,7 +97,7 @@ export const bulkCreateTransactionsCallable = createCallable<
     }
 
     if (transactions.length === 0) {
-      return { success: true, transactionIds: [], count: 0, duplicateCount: 0, quotaExceeded: false, overLimitCount: 0, overLimitTransactionIds: [] };
+      return { success: true, transactionIds: [], count: 0, duplicateCount: 0, reusedIdCount: 0, quotaExceeded: false, overLimitCount: 0, overLimitTransactionIds: [] };
     }
 
     if (transactions.length > 5000) {
@@ -110,15 +123,23 @@ export const bulkCreateTransactionsCallable = createCallable<
     // is the Bank Account's IBAN (or its id when it has none) with date, amount and reference.
     const sourceIdentifier = (sourceSnap.data()!.iban as string | undefined) || sourceId;
     const importJobId = transactions[0].importJobId;
-    const hashed = transactions.map((tx) => {
+    // The External Row Ids from the Reference / Transaction ID column, when the browser
+    // found that column to be one (imports/externalRowId.ts, #804). The same rule again
+    // here, so no client sends ids on some rows or repeated ones.
+    let sentIds: Array<string | null>;
+    try {
+      sentIds = transactions.map((tx, index) => readExternalRowId(tx.externalRowId, index));
+    } catch (error) {
+      throw new HttpsError("invalid-argument", (error as Error).message);
+    }
+    const externalRowIds = externalRowIdsFromReferences(sentIds);
+    const hashed = transactions.map((tx, index) => {
       if (isNaN(new Date(tx.date).getTime())) {
         throw new HttpsError("invalid-argument", `Invalid date for transaction: ${tx.date}`);
       }
-      // The web CSV path takes no External Row Id yet (#804): a browser-sent one is
-      // dropped here, so it neither decides a skip nor reaches the stored row.
-      const { externalRowId: _ignored, ...row } = tx as TransactionData & { externalRowId?: unknown };
       return {
-        ...row,
+        ...tx,
+        externalRowId: externalRowIds[index],
         dedupeHash: computeDedupeHash({
           date: tx.date,
           amount: tx.amount,
@@ -179,12 +200,20 @@ export const bulkCreateTransactionsCallable = createCallable<
         latestBalance,
       });
     };
-    const { fresh, duplicates } = await splitDuplicates(ctx.db, ctx.userId, sourceId, tracked, importJobId);
+    // A CSV column's id finds a stored line only on the same day and amount (#804).
+    const { fresh, duplicates, reusedIds: reusedIdCount } = await splitDuplicates(
+      ctx.db,
+      ctx.userId,
+      sourceId,
+      tracked,
+      importJobId,
+      { idIsLineOnlyOnSameDayAndAmount: true }
+    );
     const duplicateCount = duplicates.length;
 
     if (fresh.length === 0) {
       await persistBalance();
-      return { success: true, transactionIds: [], count: 0, duplicateCount, ...untracked, quotaExceeded: false, overLimitCount: 0, overLimitTransactionIds: [] };
+      return { success: true, transactionIds: [], count: 0, duplicateCount, reusedIdCount, ...untracked, quotaExceeded: false, overLimitCount: 0, overLimitTransactionIds: [] };
     }
 
     // Check transaction quota (soft limit — import all, mark over-limit ones)
@@ -236,6 +265,7 @@ export const bulkCreateTransactionsCallable = createCallable<
           partnerIban: txData.partnerIban ?? null,
           transactionType: normalizeTransactionType(txData.bankTransactionType),
           dedupeHash: txData.dedupeHash,
+          ...(txData.externalRowId ? { externalRowId: txData.externalRowId } : {}),
           importJobId: txData.importJobId,
           csvRowIndex: txData.csvRowIndex,
           _original: txData._original,
@@ -285,6 +315,7 @@ export const bulkCreateTransactionsCallable = createCallable<
       transactionIds,
       count: transactionIds.length,
       duplicateCount,
+      reusedIdCount,
       ...untracked,
       quotaExceeded,
       overLimitCount: overLimitTransactionIds.length,

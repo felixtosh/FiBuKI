@@ -158,6 +158,18 @@ vi.mock("../../billing/checkAIBudget", () => ({
   checkAIBudget: async () => ({ allowed: false }),
 }));
 
+// Every record here is open (#803); the stretch check reads settings this
+// stub store does not hold. Its own behaviour is the self-host suite's.
+vi.mock("../../fiscalYears/settings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../fiscalYears/settings")>()),
+  automationScope: () => ({
+    acts: async () => true,
+    actsOnFile: async () => true,
+    actsOnTransaction: async () => true,
+    openTransactions: async <T,>(docs: T[]) => docs,
+  }),
+}));
+
 import { Timestamp } from "@google-cloud/firestore";
 import { runTransactionMatching } from "../matchFileTransactions";
 import {

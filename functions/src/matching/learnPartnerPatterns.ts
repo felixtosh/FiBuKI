@@ -6,6 +6,7 @@ import { MODELS } from "../utils/models";
 import { matchPatternFlexible } from "../utils/pattern-utils";
 import { learnPatterns, TxSample, CollisionTxSample } from "./patternEngine";
 import { CLEAR_TX_PROVENANCE } from "./partnerProvenance";
+import { automationScope } from "../fiscalYears/settings";
 
 const GEMINI_MODEL = MODELS.geminiLite;
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
@@ -94,10 +95,11 @@ async function rematchUnassignedTransactions(
 
   if (allTxSnapshot.empty) return { matchedCount: 0, matchedTransactions: [] };
 
-  const unassignedDocs = allTxSnapshot.docs.filter((doc) => {
+  // #803: the learned patterns are applied to open Transactions only.
+  const unassignedDocs = await automationScope(db, userId).openTransactions(allTxSnapshot.docs.filter((doc) => {
     const data = doc.data();
     return !data.partnerId;
-  });
+  }));
 
   console.log(`Found ${unassignedDocs.length} unassigned transactions to check`);
   console.log(`Excluding ${manualRemovalIds.size} transactions that user manually removed`);
@@ -202,11 +204,12 @@ async function cascadeUnassignTransactions(
     .limit(500)
     .get();
 
-  const autoAssignedDocs = allAssignedSnapshot.docs.filter((doc) => {
+  // #803: learning reads closed years, but takes no Partner off a Transaction outside the open stretch.
+  const autoAssignedDocs = await automationScope(db, userId).openTransactions(allAssignedSnapshot.docs.filter((doc) => {
     const data = doc.data();
     const matchedBy = data.partnerMatchedBy;
     return matchedBy === "auto" || !matchedBy;
-  });
+  }));
 
   if (autoAssignedDocs.length === 0) return 0;
 

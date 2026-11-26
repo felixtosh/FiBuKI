@@ -139,6 +139,9 @@ export const SUBTREE_DOC_POLICIES: Readonly<Record<string, CollectionPolicy>> = 
   // Fiscal Years (#794, ADR-0018): the settings page reads them; only their writer
   // (fiscalYears/fiscalYears.ts) changes them, because every change appends a record.
   "settings/fiscalYears": { read: "authed", create: "none", update: "none", delete: "none" },
+  // What the hint about Files before Tracked From already showed (#805); read and written
+  // only by its callables (fiscalYears/untrackedImportCallables.ts).
+  "settings/untrackedFilesHint": { read: "none", create: "none", update: "none", delete: "none" },
 };
 
 /** users/{uid}/<name>/... — uid must equal auth.uid, then this table. */

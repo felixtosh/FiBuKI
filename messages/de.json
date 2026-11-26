@@ -397,6 +397,35 @@
         "closed-before-tracked": "„Abgeschlossen bis“ darf nicht vor „Geführt ab“ liegen; frühestens {month}.",
         "tracked-after-gap": "„Geführt ab“ würde eine Lücke nach den abgeschlossenen Monaten lassen; spätestens {month}. Zuerst „Abgeschlossen bis“ verschieben.",
         "tracked-from-holds-data": "„Geführt ab“ kann nicht über {month} hinaus verschoben werden: Dort liegen Transaktionen oder Belege. Diese Monate stattdessen abschließen."
+      },
+      "importChoice": {
+        "title": "{count, plural, one {# Zeile} other {# Zeilen}} aus {yearCount, plural, one {dem Geschäftsjahr} other {den Geschäftsjahren}} {years}, die du nicht führst",
+        "question": "Was soll FiBuKI damit tun?",
+        "closed": "Als abgeschlossen führen",
+        "closedHelp": "„Geführt ab“ wird auf {month} zurückgesetzt. Die Zeilen werden importiert, können aber nicht geändert werden, wie bei Jahren mit eingereichter Steuererklärung.",
+        "open": "Als offen führen",
+        "openHelp": "„Geführt ab“ wird auf {month} zurückgesetzt. Die Zeilen werden als normale Arbeit importiert.",
+        "skip": "Überspringen",
+        "skipHelp": "Nur die übrigen Zeilen werden importiert. In den Einstellungen ändert sich nichts.",
+        "chooseFirst": "Wähle zuerst, was mit den Zeilen aus nicht geführten Jahren passieren soll.",
+        "loading": "Die Zeilen werden mit deinen Geschäftsjahren abgeglichen…",
+        "failed": "„Geführt ab“ konnte nicht verschoben werden."
+      },
+      "firstSetup": {
+        "title": "Welche Geschäftsjahre soll FiBuKI führen?",
+        "help": "Zeilen aus Jahren, die du nicht führst, werden beim Import übersprungen. Abgeschlossene Jahre bleiben zum Nachschlagen, können aber nicht geändert werden. Du kannst das später unter Einstellungen, Geschäftsjahre ändern.",
+        "startMonth": "Geschäftsjahr beginnt im",
+        "untracked": "Nicht geführt",
+        "closed": "Abgeschlossen",
+        "open": "Offen",
+        "current": "aktuelles Jahr",
+        "failed": "Die Geschäftsjahre konnten nicht gespeichert werden."
+      },
+      "untrackedFiles": {
+        "title": "{count, plural, one {# Dokument} other {# Dokumente}} aus {years}, {yearCount, plural, one {einem Jahr} other {Jahren}}, die du nicht führst",
+        "body": "Sie bleiben gespeichert, aber außerhalb deiner Arbeitslisten.",
+        "link": "Diese Jahre unter Einstellungen, Geschäftsjahre führen",
+        "dismiss": "Verstanden"
       }
     },
     "identity": {

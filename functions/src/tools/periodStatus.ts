@@ -8,6 +8,7 @@
 
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { dayStartUtc, dayEndExclusiveUtc } from "../uva/dateWindow";
+import { fileStretchOf, readFiscalYears } from "../fiscalYears/settings";
 
 const db = getFirestore();
 
@@ -134,10 +135,15 @@ async function loadPendingMatches(userId: string, minConfidence: number) {
     .where("transactionMatchComplete", "==", true)
     .get();
 
+  // A File dated outside the open stretch is kept but is no work (#802, #805,
+  // ADR-0018): a Closed File like one before Tracked From, even with a
+  // suggestion stored before the stretch moved past it.
+  const settings = await readFiscalYears(db, userId);
   const pending: Array<{ file: PendingFile; best: Suggestion }> = [];
   for (const doc of snapshot.docs) {
     const data = doc.data() as Record<string, unknown> & PendingFile;
     if (data.deletedAt || data.isNotInvoice) continue;
+    if ((fileStretchOf(settings, data) ?? "open") !== "open") continue;
     if (Array.isArray(data.transactionIds) && data.transactionIds.length > 0) continue;
     const best = (data.transactionSuggestions ?? [])
       .filter((s) => s.confidence >= minConfidence)

@@ -62,7 +62,7 @@ export function useCategories() {
 
 **Transactions:**
 
-A Transaction dated in the Closed stretch (#794, ADR-0018) is refused by every edit and delete a User or a client can start, naming Closed Through: both update callables (the bulk one per row), `rollbackTransactionCallable` through `update_transaction`, the Partner, No-document Category, Accepted Receipt and Partial Payment callables and tools, `set_booking_accounts`, a suggestion's rejection and its undo, deleting or remapping its Import, `deleteTransactionsBySourceCallable` and `deleteSourceCallable` (whole, before anything is taken apart), a bank disconnect, a sync that replaces a Bank Account's rows, and a Cash Payment's correction and delete. The orphan cleanups keep a closed orphan. The browser cannot write Transactions at all. Inserts are never refused; a Cash Payment and a remap may not land before Tracked From. Automation is not yet held to it (#803).
+A Transaction dated in the Closed stretch (#794, ADR-0018) is refused by every edit and delete a User or a client can start, naming Closed Through: both update callables (the bulk one per row), `rollbackTransactionCallable` through `update_transaction`, the Partner, No-document Category, Accepted Receipt and Partial Payment callables and tools, `set_booking_accounts`, a suggestion's rejection and its undo, deleting or remapping its Import, `deleteTransactionsBySourceCallable` and `deleteSourceCallable` (whole, before anything is taken apart), a bank disconnect, a sync that replaces a Bank Account's rows, and a Cash Payment's correction and delete. The orphan cleanups keep a closed orphan. The browser cannot write Transactions at all. Inserts are never refused; a Cash Payment and a remap may not land before Tracked From. Automation leaves records outside the open stretch alone (#803).
 
 - `updateTransactionCallable` - Write what a foreign or 0% line is for the UVA (`foreignSupplyKind`, `saleSupplyKind`); refuses any other field (#621)
 - `bulkUpdateTransactionsCallable` - Write description, completion, Partner or no-receipt category onto many transactions; refuses any other field, and a Partner or category the caller may not use (#621)
@@ -90,6 +90,20 @@ account or import, the Copy swap) all go through it, and no other code writes a
 `fileConnections` record, a File's `transactionIds` or a Transaction's `fileIds`. Its
 rules key on the Connection Origin (`rules.ts`). A guard test fails on a new writer; a
 Next API route connects through the callable as the user (`lib/api/connect-file.ts`).
+It refuses a connect (reason `closed`), an Unlink, a Rejection with it and the Copy swap
+when the Transaction is in the Closed stretch (#801, ADR-0018), reading the settings inside
+its Firestore transaction; a row the same plan creates is an insert and passes.
+
+A File dated in the Closed stretch (#801) keeps its facts: the one File-facts applier
+refuses the panel's and MCP's corrections and the not-invoice ruling, and a correction that
+would date a File there. The recipient ruling and marking the File as a Copy are refused too:
+both decide whether its VAT is in the UVA. Automation does not go through that refusal: the
+Extraction, matching and the re-scores skip a File or a Transaction outside the open stretch
+before they write (#803). The one-time backfills (decoded entity names, derived Due and Debit
+Dates) neither ask nor skip; they store only what the record already derives. A metadata
+update refuses everything but a rename or thumbnail, which covers both File Partner callables
+and tools. Deleting or splitting a Closed File, or a File on a Closed Transaction, is refused;
+the folder sync leaves such a File. Lifting a Rejection refuses a Closed Transaction.
 - `updateFileCallable` - Update file metadata
 - `assignPartnerToFileCallable` / `removePartnerFromFileCallable` - A File's Partner, through `functions/src/files/filePartner.ts`, the path MCP's `assign_partner_to_file` / `remove_partner_from_file` use too: the User's own or a Global Partner, the Partner worker cancelled on a manual assign, a removed automatic assignment recorded on the Partner (#627)
 - `deleteFileCallable` - Delete a file: hides it, undone by `restoreFile`, never touches the stored bytes. Refuses a FiBuKI-generated invoice document (ADR-0006)
@@ -113,6 +127,8 @@ Next API route connects through the callable as the user (`lib/api/connect-file.
 **Fiscal Years (#794, ADR-0018):**
 - `getFiscalYearsCallable` (`getFiscalYears`) - The User's fiscal year start month, Tracked From and Closed Through, with the latest change records. The first read stores the default with an `initial` record
 - `updateFiscalYearsCallable` (`updateFiscalYears`) - Change any of the three; the only writer of `users/{uid}/settings/fiscalYears` beside MCP's `set_fiscal_years`, both through `fiscalYears/fiscalYears.ts`. Refuses a gap or a closed stretch inside untracked time, and Tracked From moved later over months holding Transactions or Files. Refuses a month after the current one. Reads, checks and writes in one transaction. Every change appends one record to `users/{uid}/fiscalYearChanges` (who, when, via, previous, next) and returns it; a refusal carries `details.reason`
+- `previewUntrackedImportCallable` (`previewUntrackedImport`) - Read-only (#805). Takes an Import's rows counted per month and answers how many lie before Tracked From, per fiscal year, with the settings change for "track as closed" (Tracked From back to the earliest such fiscal year; while nothing is closed, Closed Through to the month before the old Tracked From) and "track as open" (only while nothing is closed). The Import page sends the chosen change to `updateFiscalYears`; first setup sends its picks there too, so neither is a second settings writer
+- `getUntrackedFilesHintCallable` / `dismissUntrackedFilesHintCallable` (`getUntrackedFilesHint`, `dismissUntrackedFilesHint`) - Files dated before Tracked From are kept, never skipped; the hint counts the ones not yet seen per fiscal year, and dismissing stores the counts shown in `users/{uid}/settings/untrackedFilesHint` (server-only), so the hint comes back only for later documents
 - `assignReceiptLostCategoryCallable` (`assignReceiptLostCategory`) / `removeNoReceiptCategoryCallable` (`removeNoReceiptCategory`) / `migrateNoReceiptCategoryRefsCallable` (`migrateNoReceiptCategoryRefs`) - The web's Receipt Lost, category removal and orphaned-category migration, moved server-side because Transactions are read-only for the browser. The first two refuse a closed Transaction; the migration keeps a closed Transaction's reference and counts it in `keptClosed`. Removal is one writer with MCP's `remove_no_receipt_category`
 
 **UVA filing:**

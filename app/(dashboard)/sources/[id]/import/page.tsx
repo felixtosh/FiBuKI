@@ -21,6 +21,13 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { useTranslations } from "next-intl";
+import { UntrackedImportChoice } from "@/components/import/untracked-import-choice";
+import type { UntrackedChoiceKind, UntrackedImportPreview } from "@/types/fiscal-years";
+
+type UntrackedPreviewState =
+  | { status: "idle" | "loading" }
+  | { status: "ready"; preview: UntrackedImportPreview | null };
 
 interface ImportPageProps {
   params: Promise<{ id: string }>;
@@ -52,12 +59,14 @@ export default function ImportPage({ params }: ImportPageProps) {
     deleteMapping,
     validateForPreview,
     clearError,
+    previewUntracked,
     executeImport,
     reset,
   } = useImport(source, {
     initialDraft: draftData?.draft ?? null,
     initialCsvContent: draftData?.csvContent ?? null,
   });
+  const tChoice = useTranslations("settings.fiscalYears.importChoice");
 
   // Determine effective step from URL or transient state
   const urlStep = searchParams.get("step") as ImportStep | null;
@@ -72,6 +81,40 @@ export default function ImportPage({ params }: ImportPageProps) {
   };
 
   const effectiveStep = getEffectiveStep();
+
+  // The preview asks about rows before Tracked From (#805) once the columns
+  // are matched and before anything is written.
+  const [untracked, setUntracked] = useState<UntrackedPreviewState>({ status: "idle" });
+  const [untrackedChoice, setUntrackedChoice] = useState<UntrackedChoiceKind | null>(null);
+  const onPreviewStep = effectiveStep === "preview";
+  useEffect(() => {
+    if (!onPreviewStep) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setUntracked({ status: "loading" });
+      setUntrackedChoice(null);
+    });
+    previewUntracked()
+      .then((preview) => !cancelled && setUntracked({ status: "ready", preview }))
+      .catch((err) => {
+        console.error("Failed to check the rows against the fiscal years:", err);
+        if (!cancelled) setUntracked({ status: "ready", preview: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onPreviewStep, previewUntracked]);
+
+  const untrackedPreview = untracked.status === "ready" ? untracked.preview : null;
+  const mustChoose = (untrackedPreview?.untrackedCount ?? 0) > 0 && untrackedChoice === null;
+  const onImport = useCallback(() => {
+    const change =
+      untrackedChoice === "closed" || untrackedChoice === "open"
+        ? untrackedPreview?.choices[untrackedChoice] ?? null
+        : null;
+    void executeImport({ untrackedChange: change });
+  }, [executeImport, untrackedChoice, untrackedPreview]);
 
   // First import celebration
   const [showCelebration, setShowCelebration] = useState(false);
@@ -294,12 +337,22 @@ export default function ImportPage({ params }: ImportPageProps) {
             totalRows={state.analysis.totalRows}
           />
 
+          <div className="px-4 pb-4">
+            {untracked.status === "loading" ? (
+              <p className="text-sm text-muted-foreground">{tChoice("loading")}</p>
+            ) : null}
+            {untrackedPreview ? (
+              <UntrackedImportChoice preview={untrackedPreview} value={untrackedChoice} onChange={setUntrackedChoice} />
+            ) : null}
+            {mustChoose ? <p className="mt-2 text-sm text-muted-foreground">{tChoice("chooseFirst")}</p> : null}
+          </div>
+
           <div className="flex justify-between sticky bottom-0 bg-background border-t px-4 py-4">
             <Button variant="outline" onClick={onGoBackToMapping}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back to Mapping
             </Button>
-            <Button onClick={executeImport}>
+            <Button onClick={onImport} disabled={untracked.status === "loading" || mustChoose}>
               Import {state.analysis.totalRows} Transactions
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>

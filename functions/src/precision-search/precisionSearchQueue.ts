@@ -44,6 +44,7 @@ import {
   GmailAttachment,
 } from "./shared-utils";
 import { activityEntry, logActivity } from "../utils/activity";
+import { automationScope } from "../fiscalYears/settings";
 import type { MailMessage, MailSearchLimitation } from "../mail/provider";
 import { namedSearchTerms } from "../mail/search-terms";
 import { searchedMailIntegrations, SEARCHABLE_MAIL_PROVIDERS, mailProviderOf } from "../mail/searchable";
@@ -1918,6 +1919,7 @@ async function runQueueItem(
   const errors: string[] = [...queueItem.errors];
   let lastProcessedTransactionId = queueItem.lastProcessedTransactionId;
   let timedOut = false;
+  const scope = automationScope(db, queueItem.userId);
 
   try {
     // Get transactions to process
@@ -2017,6 +2019,13 @@ async function runQueueItem(
       const freshTx = freshTxDoc.data();
       if (freshTx?.isComplete) {
         console.log(`[PrecisionSearch] Transaction ${tx.id} already complete (resolved during processing), skipping`);
+        transactionsProcessed++;
+        lastProcessedTransactionId = tx.id;
+        continue;
+      }
+      // #803: a Transaction outside the open stretch is not searched again.
+      if (!(await scope.actsOnTransaction(freshTx))) {
+        console.log(`[PrecisionSearch] Transaction ${tx.id} is dated outside the open stretch, skipping`);
         transactionsProcessed++;
         lastProcessedTransactionId = tx.id;
         continue;

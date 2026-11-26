@@ -464,6 +464,12 @@ export {
   getFiscalYearsCallable as getFiscalYears,
   updateFiscalYearsCallable as updateFiscalYears,
 } from "./fiscalYears/fiscalYearsCallables";
+// Asking before importing untracked fiscal years, and the hint for untracked Files (#805)
+export {
+  previewUntrackedImportCallable as previewUntrackedImport,
+  getUntrackedFilesHintCallable as getUntrackedFilesHint,
+  dismissUntrackedFilesHintCallable as dismissUntrackedFilesHint,
+} from "./fiscalYears/untrackedImportCallables";
 
 // UI language (#168)
 export { updateUserLocaleCallable as updateUserLocale } from "./users/updateUserLocale";

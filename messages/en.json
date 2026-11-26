@@ -397,6 +397,35 @@
         "closed-before-tracked": "Closed through cannot lie before tracked from; the earliest is {month}.",
         "tracked-after-gap": "Tracked from would leave a gap after the closed months; the latest is {month}. Move closed through first.",
         "tracked-from-holds-data": "Tracked from cannot move past {month}: it holds transactions or documents. Close those months instead."
+      },
+      "importChoice": {
+        "title": "{count, plural, one {# row} other {# rows}} from {yearCount, plural, one {fiscal year} other {fiscal years}} {years}, which you don't track",
+        "question": "What should FiBuKI do with them?",
+        "closed": "Track them as closed",
+        "closedHelp": "Tracked from moves back to {month}. The rows are imported, but cannot be changed, as for years whose tax return is filed.",
+        "open": "Track them as open",
+        "openHelp": "Tracked from moves back to {month}. The rows are imported as normal work.",
+        "skip": "Skip them",
+        "skipHelp": "Only the other rows are imported. Nothing in Settings changes.",
+        "chooseFirst": "Choose what to do with the rows from untracked years first.",
+        "loading": "Checking the rows against your fiscal years…",
+        "failed": "Could not move Tracked From."
+      },
+      "firstSetup": {
+        "title": "Which fiscal years should FiBuKI track?",
+        "help": "Rows from years you don't track are skipped on import. Closed years are kept for reference, but cannot be changed. You can change this later in Settings, Fiscal Years.",
+        "startMonth": "Fiscal year starts in",
+        "untracked": "Not tracked",
+        "closed": "Closed",
+        "open": "Open",
+        "current": "current year",
+        "failed": "Could not save the fiscal years."
+      },
+      "untrackedFiles": {
+        "title": "{count, plural, one {# document} other {# documents}} from {years}, {yearCount, plural, one {a year} other {years}} you don't track",
+        "body": "They are kept, but left out of your work lists.",
+        "link": "Track these years in Settings, Fiscal Years",
+        "dismiss": "Got it"
       }
     },
     "identity": {

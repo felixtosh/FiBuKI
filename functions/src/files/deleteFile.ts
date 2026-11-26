@@ -12,6 +12,7 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { generatedInvoiceRefusal } from "./generatedInvoiceGuard";
 import { detachFile, type DetachedTransaction } from "../fileConnections/writer";
 import { activityEntry, logActivity } from "../utils/activity";
+import { CLOSED_CONNECTION, CLOSED_FILE, closedRefusal, fileStretchOf, isClosedDate, readFiscalYears } from "../fiscalYears/fiscalYears";
 
 interface DeleteFileRequest {
   fileId: string;
@@ -29,6 +30,36 @@ export interface PerformDeleteFileResult extends DeleteFileResponse {
 }
 
 /**
+ * Why this File may not be deleted under the Fiscal Years lock (#801,
+ * ADR-0018), or null: a File dated in the Closed stretch keeps its place, and
+ * so does a File Connection whose Transaction is Closed, which a delete would
+ * take apart. Every delete path asks first (the callable, the tool, a split,
+ * and the folder sync, which skips the File instead).
+ */
+export async function closedFileDeleteRefusal(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+  fileId: string,
+  fileData: FirebaseFirestore.DocumentData
+): Promise<string | null> {
+  const settings = await readFiscalYears(db, userId);
+  if (settings.closedThrough === null) return null;
+  if (fileStretchOf(settings, fileData) === "closed") return closedRefusal(settings, CLOSED_FILE);
+
+  const records = await db.collection("fileConnections").where("fileId", "==", fileId).where("userId", "==", userId).get();
+  const txIds = [
+    ...new Set([
+      ...records.docs.map((d) => d.data().transactionId as unknown),
+      ...((fileData.transactionIds || []) as unknown[]),
+    ]),
+  ].filter((id): id is string => typeof id === "string" && !!id && !id.includes("/"));
+  if (txIds.length === 0) return null;
+  const snaps = await db.getAll(...txIds.map((id) => db.collection("transactions").doc(id)));
+  const locked = snaps.some((s) => s.exists && s.data()?.userId === userId && isClosedDate(settings, s.data()!.date));
+  return locked ? closedRefusal(settings, CLOSED_CONNECTION) : null;
+}
+
+/**
  * The delete itself, shared by the callable and the tool surface (#267).
  *
  * Callers check existence and ownership first; this only ever hides the File
@@ -42,6 +73,9 @@ export async function performDeleteFile(
   /** Who deleted it and why, for the activity log (#752). Defaults to the User. */
   how: { actor: "manual" | "auto" | "ai"; summary: string } = { actor: "manual", summary: "File deleted" }
 ): Promise<PerformDeleteFileResult> {
+  const closed = await closedFileDeleteRefusal(db, userId, fileId, fileData);
+  if (closed) throw new HttpsError("failed-precondition", closed);
+
   // 1. Hide the file. The row stays — a Sync-sourced File needs it to
   // deduplicate against, and every File needs it to be restorable — and the
   // stored document is not touched at all.
