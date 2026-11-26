@@ -185,27 +185,28 @@ describe("rows without an External Row Id keep today's duplicate check", () => {
   });
 });
 
-describe("the web CSV Import ignores an External Row Id until #804", () => {
-  it("neither stores one a browser sends nor skips on it", async () => {
+describe("the web CSV Import shares the Bank Account's External Row Ids (#804)", () => {
+  it("skips a CSV row whose id import_transactions already stored, and stores its new one", async () => {
     await importRows([line("bank-1")]);
-    const csv = (i: number) => ({
+    const csv = (i: number, externalRowId: string) => ({
       sourceId: "src-1",
       date: "2026-07-09T00:00:00.000Z",
       amount: -200 - i,
       currency: "EUR",
       name: `CSV ${i}`,
-      externalRowId: "bank-1",
+      reference: externalRowId,
+      externalRowId,
       importJobId: "job-web",
       csvRowIndex: i,
       _original: { date: "09.07.2026", amount: "-2", rawRow: {} },
     });
 
     const res = (await bulkCreateTransactionsCallable.run({
-      data: { sourceId: "src-1", transactions: [csv(1), csv(2)] },
+      data: { sourceId: "src-1", transactions: [csv(1, "bank-1"), csv(2, "bank-2")] },
       auth: { uid: USER, token: {} },
     } as never)) as { count: number; duplicateCount: number };
 
-    expect(res).toMatchObject({ count: 2, duplicateCount: 0 });
-    expect(await storedIds()).toEqual(["bank-1", null, null].sort());
+    expect(res).toMatchObject({ count: 1, duplicateCount: 1 });
+    expect(await storedIds()).toEqual(["bank-1", "bank-2"]);
   });
 });

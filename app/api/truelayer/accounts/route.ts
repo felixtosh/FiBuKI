@@ -14,7 +14,7 @@ import {
 import { getTrueLayerClient, getAccountIban } from "@/lib/truelayer";
 import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { normalizeIban } from "@/lib/import/deduplication";
-import { computeDedupeHash } from "@/functions/src/imports/dedupe";
+import { computeDedupeHash, splitDuplicates } from "@/functions/src/imports/dedupe";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { splitUntracked } from "@/functions/src/fiscalYears/settings";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
@@ -291,14 +291,22 @@ async function triggerInitialSync(
     const nowTs = Timestamp.now();
     const { tracked } = await splitUntracked(getAdminDb(), userId, transactions, (tx) => new Date(tx.timestamp));
 
-    for (const tx of tracked) {
+    const candidates = tracked.map((tx) => {
+      // TrueLayer returns whole currency units; amounts are stored in cents, as the sync
+      // route stores them, so its later syncs read the same line the same way.
       const isCredit = tx.transaction_type === "CREDIT";
-      const amount = isCredit ? Math.abs(tx.amount) : -Math.abs(tx.amount);
+      const amountCents = Math.round(Math.abs(tx.amount) * 100);
+      const amount = isCredit ? amountCents : -amountCents;
       const txDate = new Date(tx.timestamp);
       const reference = tx.meta?.provider_reference || tx.transaction_id;
-
       const dedupeHash = computeDedupeHash({ date: txDate, amount, sourceIdentifier: sourceIban, reference });
+      return { tx, amount, txDate, reference, dedupeHash, externalRowId: tx.transaction_id };
+    });
 
+    // TrueLayer's transaction id is the External Row Id (#804), through the Import writer's split.
+    const { fresh } = await splitDuplicates(getAdminDb(), userId, sourceId, candidates);
+
+    for (const { tx, amount, txDate, reference, dedupeHash, externalRowId } of fresh) {
       const transactionDoc = {
         sourceId,
         importJobId: null,
@@ -314,6 +322,7 @@ async function triggerInitialSync(
         reference,
         isComplete: false,
         dedupeHash,
+        externalRowId,
         _original: {
           date: tx.timestamp,
           amount: tx.amount.toString(),

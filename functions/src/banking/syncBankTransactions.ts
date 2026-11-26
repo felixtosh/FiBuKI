@@ -18,6 +18,7 @@ import type {
 } from "../types/banking-sync";
 import { viennaYear } from "../utils/storedDay";
 import { assertNotClosed, splitUntracked } from "../fiscalYears/fiscalYears";
+import { splitDuplicates } from "../imports/dedupe";
 
 // Define secrets for finAPI credentials
 const finapiClientId = defineSecret("FINAPI_CLIENT_ID");
@@ -484,6 +485,8 @@ export const syncBankTransactionsCallable = createCallable<
       userId,
       importJobId: syncJobId,
       dedupeHash: `${ibanForHash}|${tx.bankBookingDate}|${tx.amount}|${tx.currency}|${tx.id}`,
+      // finAPI's transaction id is the External Row Id (#804).
+      externalRowId: String(tx.id),
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
     }));
@@ -536,13 +539,19 @@ export const syncBankTransactionsCallable = createCallable<
       reassignedCount += orphanedTxIds.length;
     }
 
-    // Filter out duplicates
-    const newTransactions = txDocs.filter(
-      (t) => !existingHashes.has(t.dedupeHash)
+    // Filter out duplicates: by this connector's hash (rows stored before ids existed, and
+    // orphans across the user's Bank Accounts), then by External Row Id through the Import
+    // writer's split, so a line whose booking date moved is not written twice (#804).
+    const { fresh: newTransactions, duplicates: idDuplicates } = await splitDuplicates(
+      db,
+      userId,
+      sourceId,
+      txDocs.filter((t) => !existingHashes.has(t.dedupeHash))
     );
+    const skippedCount = existingHashes.size + idDuplicates.length;
 
     console.log(
-      `[syncBankTransactions] ${newTransactions.length} new, ${existingHashes.size} duplicates`
+      `[syncBankTransactions] ${newTransactions.length} new, ${skippedCount} duplicates`
     );
 
     // ========================================================================
@@ -578,7 +587,7 @@ export const syncBankTransactionsCallable = createCallable<
       status: "completed",
       totalRows: transactions.length,
       importedCount: imported,
-      skippedCount: existingHashes.size,
+      skippedCount,
       ...untracked,
       reassignedCount,
       errorCount: 0,
@@ -625,7 +634,7 @@ export const syncBankTransactionsCallable = createCallable<
     return {
       success: true,
       imported,
-      skipped: existingHashes.size,
+      skipped: skippedCount,
       reassigned: reassignedCount,
       total: transactions.length,
       importRecordId: syncJobId,

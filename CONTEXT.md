@@ -139,7 +139,11 @@ date, amount and reference stays a backstop that counts: within one call, N such
 lines hold back at most N rows with an id. A row without one goes through that duplicate
 check unchanged. Within one Bank Account, send ids on all lines or on none.
 Trimmed and case-sensitive; an empty one is none. FiBuKI never derives one and never
-backfills stored rows.
+backfills stored rows. The finAPI and TrueLayer syncs fill it from the provider's
+transaction id. The CSV Import fills it from the column mapped as Reference / Transaction
+ID, but only when that column has a value on every line and no value twice: a mandate
+reference or SEPA's NOTPROVIDED repeats, and as ids they would skip real lines, so such a
+file carries no ids.
 _Deutsch_: Externe Zeilen-ID
 _Avoid_: idempotency key, dedupe hash (the date, amount and reference check), transaction id
 bare
