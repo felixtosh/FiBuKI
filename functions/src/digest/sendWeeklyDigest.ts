@@ -12,8 +12,7 @@ import type { DigestStats } from "./digestEmail";
 import { generateUnsubscribeToken } from "./unsubscribeDigest";
 import { isMailerConfigured, sendEmail } from "../utils/mailer";
 import { publicOrigin, PUBLIC_ORIGIN_UNSET_ERROR } from "../utils/publicOrigin";
-import { openFromDate, readFiscalYears, stretchOf } from "../fiscalYears/settings";
-import { toDateSafe } from "../utils/toDateSafe";
+import { openFromDate, readFiscalYears, stretchOfStored } from "../fiscalYears/settings";
 
 const resendApiKey = defineSecret("RESEND_API_KEY");
 const BATCH_SIZE = 10;
@@ -140,10 +139,8 @@ export async function gatherUserStats(
   since: Date
 ): Promise<DigestStats> {
   const settings = await readFiscalYears(db, userId);
-  const isOpen = (value: unknown) => {
-    const date = toDateSafe(value);
-    return !(date instanceof Date) || isNaN(date.getTime()) || stretchOf(settings, date) === "open";
-  };
+  // An undated record (a File not yet read) is new work.
+  const isOpen = (value: unknown) => (stretchOfStored(settings, value) ?? "open") === "open";
 
   // New transactions in the last 7 days
   const txQuery = await db

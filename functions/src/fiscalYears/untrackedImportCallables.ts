@@ -7,8 +7,8 @@
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { toDateSafe } from "../utils/toDateSafe";
 import {
+  fileDateOf,
   fiscalYearLabel,
   isMonth,
   monthOf,
@@ -73,8 +73,8 @@ async function untrackedFilesByFiscalYear(db: Db, userId: string): Promise<Recor
   for (const doc of snap.docs) {
     const data = doc.data();
     if (data.deletedAt) continue;
-    const date = toDateSafe(data.extractedDate);
-    if (!date || isNaN(date.getTime()) || stretchOf(settings, date) !== "untracked") continue;
+    const date = fileDateOf(data);
+    if (!date || stretchOf(settings, date) !== "untracked") continue;
     const label = fiscalYearLabel(monthOf(date), settings.startMonth);
     byFiscalYear[label] = (byFiscalYear[label] ?? 0) + 1;
   }
