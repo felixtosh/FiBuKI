@@ -76,24 +76,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "A Bearer token is required: the deletes run as you." }, { status: 401 });
     }
 
-    // Delete finAPI bank connection if applicable
-    if (apiConfig.provider === "finapi" && apiConfig.bankConnectionId && apiConfig.userAccessToken) {
-      try {
-        const clientId = process.env.FINAPI_CLIENT_ID;
-        const clientSecret = process.env.FINAPI_CLIENT_SECRET;
-        const environment = (process.env.FINAPI_ENVIRONMENT || "sandbox") as FinapiEnvironment;
-
-        if (clientId && clientSecret) {
-          const client = new FinapiClient({ clientId, clientSecret, environment });
-          await client.deleteBankConnection(apiConfig.bankConnectionId, apiConfig.userAccessToken);
-          console.log(`[Source Disconnect] Deleted finAPI bank connection: ${apiConfig.bankConnectionId}`);
-        }
-      } catch (err) {
-        // Log but don't fail - connection might already be deleted or expired
-        console.error("[Source Disconnect] Failed to delete finAPI connection:", err);
-      }
-    }
-
     // Delete the rows just checked. The User's go through the
     // deleteTransactionsBySource callable, as the User: every File comes off
     // them first (#612) and the month's quota count goes down with them.
@@ -119,6 +101,25 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     console.log(`[Source Disconnect] Deleted ${deletedTransactions} transactions`);
+
+    // Only now the provider's bank connection: a step above that fails leaves
+    // the Bank Account connected, with its connection still there to sync.
+    if (apiConfig.provider === "finapi" && apiConfig.bankConnectionId && apiConfig.userAccessToken) {
+      try {
+        const clientId = process.env.FINAPI_CLIENT_ID;
+        const clientSecret = process.env.FINAPI_CLIENT_SECRET;
+        const environment = (process.env.FINAPI_ENVIRONMENT || "sandbox") as FinapiEnvironment;
+
+        if (clientId && clientSecret) {
+          const client = new FinapiClient({ clientId, clientSecret, environment });
+          await client.deleteBankConnection(apiConfig.bankConnectionId, apiConfig.userAccessToken);
+          console.log(`[Source Disconnect] Deleted finAPI bank connection: ${apiConfig.bankConnectionId}`);
+        }
+      } catch (err) {
+        // Log but don't fail - connection might already be deleted or expired
+        console.error("[Source Disconnect] Failed to delete finAPI connection:", err);
+      }
+    }
 
     // Update source to remove API connection
     await db.collection("sources").doc(sourceId).update({

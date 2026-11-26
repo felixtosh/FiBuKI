@@ -40,8 +40,22 @@ vi.mock("@/lib/import/deduplication", () => ({
 // A route forwards the User's Bearer token to the callable; here the token is
 // the uid, and the real callable runs as it. An error comes back in the shape
 // the real helper throws on an HTTP error.
+/** A callable a test makes fail, as the backend answering 500. */
+const failing = vi.hoisted(() => ({ callable: null as string | null }));
+/** The finAPI bank connections a disconnect deleted. */
+const finapi = vi.hoisted(() => ({ deleted: [] as unknown[] }));
+
+vi.mock("@/lib/finapi/client", () => ({
+  FinapiClient: class {
+    async deleteBankConnection(id: unknown) {
+      finapi.deleted.push(id);
+    }
+  },
+}));
+
 vi.mock("@/lib/api/firebase-callable", () => ({
   callFirebaseFunction: async (name: string, data: unknown, token?: string) => {
+    if (failing.callable === name) throw new Error(`Firebase function ${name} failed: 500 - {"error":{"message":"backend down"}}`);
     const callables: Record<string, () => Promise<unknown>> = {
       deleteSource: async () => (await import("../sources/deleteSource")).deleteSourceCallable,
       deleteTransactionsBySource: async () =>
@@ -153,6 +167,8 @@ beforeEach(async () => {
   await __resetFirestoreShim();
   __resetTriggerShim();
   truelayer.lines = null;
+  failing.callable = null;
+  finapi.deleted.length = 0;
 });
 
 describe("a bank disconnect keeps the Closed stretch", () => {
@@ -214,6 +230,29 @@ describe("a bank disconnect checks every row it deletes (#813)", () => {
     const source = (await db.collection("sources").doc("api-1").get()).data()!;
     expect(source.type).toBe("csv");
     expect(source.apiConfig).toBeUndefined();
+  });
+
+  it("removes the finAPI bank connection only once the Transactions are deleted", async () => {
+    process.env.FINAPI_CLIENT_ID = "id";
+    process.env.FINAPI_CLIENT_SECRET = "secret";
+    const finapiConfig = { provider: "finapi", bankConnectionId: 42, userAccessToken: "finapi-token" };
+    await db.collection("sources").doc("api-1").set({ userId: USER, name: "Bank", type: "api", apiConfig: finapiConfig });
+    await seedTransaction("tx-open", "2025-05-01", "api-1");
+
+    failing.callable = "deleteTransactionsBySource";
+    const failed = await disconnect();
+
+    expect(failed.ok).toBe(false);
+    expect(finapi.deleted).toEqual([]);
+    expect(await exists("tx-open")).toBe(true);
+    expect((await db.collection("sources").doc("api-1").get()).data()!).toMatchObject({ type: "api", apiConfig: finapiConfig });
+
+    failing.callable = null;
+    const res = await disconnect();
+
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(finapi.deleted).toEqual([42]);
+    expect(await exists("tx-open")).toBe(false);
   });
 
   it("takes a deleted Transaction off its File", async () => {
@@ -284,6 +323,30 @@ describe("the orphan cleanup route keeps closed orphans", () => {
     expect(await exists("on-whole")).toBe(true);
     expect(await exists("on-broken")).toBe(false);
     expect(await fileTransactionIds("f-broken")).toEqual([]);
+  });
+
+  it("says what it already did when the orphan Transactions step fails", async () => {
+    await db.collection("sources").doc("broken").set({ userId: USER, name: "Broken" });
+    await db.doc("truelayerConnections/tl-unused").set({ userId: USER, providerId: "tl-bank" });
+    await seedTransaction("orphan-open", "2025-05-01", "gone");
+    failing.callable = "cleanupOrphanedTransactions";
+
+    const { POST } = await import("@/app/api/sources/delete-orphans/route");
+    const res = await POST(asOwner("/api/sources/delete-orphans", { method: "POST" }));
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({
+      success: false,
+      failedStep: "orphanTransactions",
+      error: "backend down",
+      deletedSources: 1,
+      sources: [{ id: "broken" }],
+      keptSources: [],
+      deletedConnections: 1,
+      connections: [{ id: "tl-unused" }],
+    });
+    expect((await db.collection("sources").doc("broken").get()).exists).toBe(false);
+    expect(await exists("orphan-open")).toBe(true);
   });
 
   it("keeps a Bank Account missing its required fields while it holds a closed Transaction, and all its rows", async () => {

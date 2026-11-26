@@ -134,11 +134,31 @@ export async function POST(request: NextRequest) {
     }
 
     // === 3. Orphan transactions (referencing non-existent sources), through the cleanup callable ===
-    const cleanup = await callFirebaseFunction<{ dryRun: boolean }, CleanupResult>(
-      "cleanupOrphanedTransactions",
-      { dryRun: false },
-      authToken
-    );
+    let cleanup: CleanupResult;
+    try {
+      cleanup = await callFirebaseFunction<{ dryRun: boolean }, CleanupResult>(
+        "cleanupOrphanedTransactions",
+        { dryRun: false },
+        authToken
+      );
+    } catch (error) {
+      // Bank Accounts and connections are gone by now: say so, and which step failed.
+      console.error("Error deleting orphan transactions:", error);
+      return NextResponse.json(
+        {
+          success: false,
+          failedStep: "orphanTransactions",
+          error: callableErrorMessage(error),
+          deletedSources: orphanSources.length,
+          deletedConnections: orphanConnections.length,
+          deletedTransactions: deletedWithSources,
+          sources: orphanSources,
+          keptSources,
+          connections: orphanConnections,
+        },
+        { status: 500 }
+      );
+    }
     const orphanSourceIds = Object.keys(cleanup.orphanedBySource ?? {});
     const deletedTransactions = deletedWithSources + (cleanup.deleted ?? 0);
     const keptClosedTransactions = cleanup.keptClosed ?? 0;
