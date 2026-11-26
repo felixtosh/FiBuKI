@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
+  CURRENT_YEAR_STATUSES,
   defaultStatuses,
   setYearStatus,
   settingsFromStatuses,
@@ -21,7 +22,7 @@ const YEARS_OFFERED = 5;
 
 /**
  * First setup's question (#805, ADR-0018): which fiscal years FiBuKI tracks,
- * open or closed, the current one open by default. It reports the settings the
+ * open or closed, the current one open by default (the User may close it). It reports the settings the
  * picks mean on every change; the caller saves them through updateFiscalYears.
  */
 export function FirstSetupFiscalYears({
@@ -42,8 +43,8 @@ export function FirstSetupFiscalYears({
   const years = useMemo(() => setupYears(day, startMonth, YEARS_OFFERED), [day, startMonth]);
 
   useEffect(() => {
-    onChange(settingsFromStatuses(years, statuses, startMonth));
-  }, [years, statuses, startMonth, onChange]);
+    onChange(settingsFromStatuses(years, statuses, startMonth, day));
+  }, [years, statuses, startMonth, day, onChange]);
 
   const monthName = (month: number) =>
     new Intl.DateTimeFormat(locale, { month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2000, month - 1, 1)));
@@ -77,29 +78,26 @@ export function FirstSetupFiscalYears({
       <ul className="space-y-2">
         {years.map((year, index) => (
           <li key={year.start} className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm font-medium tabular-nums">{year.label}</span>
-            {index === 0 ? (
-              <span role="group" aria-label={year.label} className="text-sm text-muted-foreground">
-                {t("current")}
-              </span>
-            ) : (
-              <div role="radiogroup" aria-label={year.label} className="flex gap-1">
-                {STATUSES.map((status) => (
-                  <Button
-                    key={status}
-                    type="button"
-                    size="sm"
-                    variant={statuses[index] === status ? "default" : "outline"}
-                    role="radio"
-                    aria-checked={statuses[index] === status}
-                    aria-label={`${year.label}: ${t(status)}`}
-                    onClick={() => setStatuses((s) => setYearStatus(s, index, status))}
-                  >
-                    {t(status)}
-                  </Button>
-                ))}
-              </div>
-            )}
+            <span className="text-sm font-medium tabular-nums">
+              {year.label}
+              {index === 0 ? <span className="ml-2 font-normal text-muted-foreground">{t("current")}</span> : null}
+            </span>
+            <div role="radiogroup" aria-label={year.label} className="flex gap-1">
+              {(index === 0 ? CURRENT_YEAR_STATUSES : STATUSES).map((status) => (
+                <Button
+                  key={status}
+                  type="button"
+                  size="sm"
+                  variant={statuses[index] === status ? "default" : "outline"}
+                  role="radio"
+                  aria-checked={statuses[index] === status}
+                  aria-label={`${year.label}: ${t(status)}`}
+                  onClick={() => setStatuses((s) => setYearStatus(s, index, status))}
+                >
+                  {t(status)}
+                </Button>
+              ))}
+            </div>
           </li>
         ))}
       </ul>

@@ -418,7 +418,7 @@
         "untracked": "Nicht geführt",
         "closed": "Abgeschlossen",
         "open": "Offen",
-        "current": "Offen (aktuelles Jahr)",
+        "current": "aktuelles Jahr",
         "failed": "Die Geschäftsjahre konnten nicht gespeichert werden."
       },
       "untrackedFiles": {
