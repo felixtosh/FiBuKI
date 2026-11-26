@@ -37,7 +37,10 @@ way are closed instead.
 Neither month may lie after the current one: nothing is tracked or closed ahead of time.
 
 The default is stored on the User's first read, with an `initial` change record, so it does
-not move when a new year begins. It is the first month of the current Fiscal Year, or the
+not move when a new year begins. Any read stores it: the settings screen, `get_fiscal_years`,
+and every guard or Import that checks a date against the settings. So a User who never opens
+the settings still has a stored default, and its `initial` record, from the first write that
+consulted them. It is the first month of the current Fiscal Year, or the
 first month of the Fiscal Year holding the User's earliest Transaction or dated File when
 that is earlier. A new User tracks only the current year; a User who had data before Fiscal
 Years existed finds none of it untracked. A File in the bin does not count, and neither
@@ -75,6 +78,11 @@ The Import writer skips Transactions dated before Tracked From and returns how m
 skipped per Fiscal Year: the CSV Import, `import_transactions` and the bank syncs. A sync
 never stops to ask; no Import moves a setting. Files are never skipped, because their date
 is known only after the Extraction.
+
+A CSV file that starts before Tracked From still states its opening balance at its first
+row. The stored opening carries that balance past the skipped rows: it is the file's opening
+plus their amounts, dated at Tracked From, so the balance at any later date adds only rows
+FiBuKI holds.
 
 ## Considered options
 
