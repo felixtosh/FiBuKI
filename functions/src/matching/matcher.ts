@@ -1091,7 +1091,7 @@ export interface AutoConnectRefusal {
    * Set when the File or the Transaction is dated outside the open stretch
    * (#803, ADR-0018), which other auto-connecting surfaces read too.
    */
-  closed?: true;
+  outsideOpen?: true;
 }
 
 /**
@@ -1261,7 +1261,7 @@ export async function selectAutoConnects(
       transactionId: pick.match.transactionId,
       confidence: pick.match.confidence,
       reason: `${fileOpen ? "the Transaction" : "the File"} is dated outside the open stretch (Fiscal Years)`,
-      closed: true,
+      outsideOpen: true,
     });
   }
   return { picks: open, refusals };
@@ -1426,7 +1426,7 @@ export async function autoConnectJudgements(
     if (!id) continue;
     const { picks, refusals } = await selectAutoConnects(db, userId, files[i], results[i]);
     judgements.set(id, {
-      held: new Set(refusals.filter((r) => r.tie || r.instalment || r.closed).map((r) => r.transactionId)),
+      held: new Set(refusals.filter((r) => r.tie || r.instalment || r.outsideOpen).map((r) => r.transactionId)),
       instalments: new Set(
         picks.filter((p) => p.autoConnectReason === "instalment").map((p) => p.match.transactionId)
       ),
