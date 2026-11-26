@@ -26,6 +26,7 @@ import { deleteTransactionsBySourceCallable } from "../transactions/deleteTransa
 import { deleteSourceCallable } from "../sources/deleteSource";
 import { addCashPaymentCallable, deleteCashPaymentCallable } from "../transactions/cashPayment";
 import { bulkCreateTransactionsCallable } from "../imports/bulkCreateTransactions";
+import { getBalanceAtDateCallable } from "../sources/getBalanceAtDate";
 import { syncBankTransactionsCallable } from "../banking/syncBankTransactions";
 import { syncFinapiTransactions } from "../finapi/syncCallable";
 import { deleteImportRecordCallable } from "../imports/deleteImportRecord";
@@ -507,37 +508,69 @@ describe("the Import writer skips Untracked rows and counts them per fiscal year
     expect(await storedDays()).toEqual(["2024-01-01"]);
   });
 
-  it("the CSV Import keeps no opening balance derived from a skipped row", async () => {
+  const csvRow = (iso: string, i: number, amount: number) => ({
+    sourceId: "src-1",
+    date: `${iso}T00:00:00.000Z`,
+    amount,
+    currency: "EUR",
+    name: `Vendor ${i}`,
+    importJobId: "job-1",
+    csvRowIndex: i,
+    _original: { date: iso, amount: String(amount / 100), rawRow: {} },
+  });
+  const importChunk = (transactions: unknown[], balanceInfo?: Record<string, unknown>) =>
+    bulkCreateTransactionsCallable.run({ data: { sourceId: "src-1", transactions, ...(balanceInfo ? { balanceInfo } : {}) }, auth: AUTH } as never);
+  const balanceAt = async (date: string) =>
+    ((await getBalanceAtDateCallable.run({ data: { sourceId: "src-1", date }, auth: AUTH } as never)) as { balance: number }).balance;
+
+  it("a CSV Import with skipped rows carries the opening balance past them, to Tracked From (review round 2)", async () => {
     await account();
     await change({ trackedFrom: "2024-01" });
-    const csvRow = (iso: string, i: number) => ({
-      sourceId: "src-1",
-      date: `${iso}T00:00:00.000Z`,
-      amount: -100 - i,
-      currency: "EUR",
-      name: `Vendor ${i}`,
-      importJobId: "job-1",
-      csvRowIndex: i,
-      _original: { date: iso, amount: "-1", rawRow: {} },
+
+    // The file opens at 1000.00; -5.00 on 2023-12-10 is skipped, -4.00 on 2024-01-15 is written.
+    await importChunk([csvRow("2023-12-10", 0, -500), csvRow("2024-01-15", 1, -400)], {
+      openingBalance: 100000,
+      openingBalanceDate: "2023-12-10T00:00:00.000Z",
+      latestBalance: 99100,
+      latestBalanceDate: "2024-01-15T00:00:00.000Z",
     });
 
-    await bulkCreateTransactionsCallable.run({
-      data: {
-        sourceId: "src-1",
-        transactions: [csvRow("2023-12-31", 0), csvRow("2024-01-02", 1)],
-        balanceInfo: {
-          openingBalance: 100000,
-          openingBalanceDate: "2023-12-31T00:00:00.000Z",
-          latestBalance: 99799,
-          latestBalanceDate: "2024-01-02T00:00:00.000Z",
-        },
-      },
-      auth: AUTH,
-    } as never);
-
     const source = (await db.collection("sources").doc("src-1").get()).data()!;
-    expect(source.openingBalance).toBeUndefined();
-    expect(source.latestBalance).toBe(99799);
+    expect(source.openingBalance).toBe(99500);
+    expect((source.openingBalanceDate as Timestamp).toDate().toISOString()).toBe("2024-01-01T00:00:00.000Z");
+    expect(source.latestBalance).toBe(99100);
+    expect(await balanceAt("2024-01-31")).toBe(99100);
+  });
+
+  it("and when the first chunk is all skipped, the later chunks' skipped rows count too", async () => {
+    await account();
+    await change({ trackedFrom: "2024-01" });
+
+    await importChunk([csvRow("2023-11-02", 0, -500)], {
+      openingBalance: 100000,
+      openingBalanceDate: "2023-11-02T00:00:00.000Z",
+      latestBalance: 98900,
+      latestBalanceDate: "2024-01-15T00:00:00.000Z",
+    });
+    await importChunk([csvRow("2023-12-20", 1, -200), csvRow("2024-01-15", 2, -400)]);
+
+    expect(await balanceAt("2024-01-31")).toBe(98900);
+    expect(await balanceAt("2024-01-01")).toBe(99300);
+  });
+
+  it("a file newest first carries its skipped rows from the last chunk", async () => {
+    await account();
+    await change({ trackedFrom: "2024-01" });
+
+    await importChunk([csvRow("2024-01-15", 0, -400)], {
+      openingBalance: 100000,
+      openingBalanceDate: "2023-12-10T00:00:00.000Z",
+      latestBalance: 99100,
+      latestBalanceDate: "2024-01-15T00:00:00.000Z",
+    });
+    await importChunk([csvRow("2023-12-10", 1, -500)]);
+
+    expect(await balanceAt("2024-01-31")).toBe(99100);
   });
 
   it("an Import with nothing before Tracked From reports none skipped", async () => {
