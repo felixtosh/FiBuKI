@@ -18,6 +18,8 @@ import { autoMatchColumns, validateMappings } from "@/lib/import/field-matcher";
 import { parseCSV } from "@/lib/import/csv-parser";
 import { uploadImportCSV } from "@/lib/operations";
 import { computeCsvHash } from "@/lib/import/csv-hash";
+import { countRowMonths } from "@/lib/import/row-months";
+import type { UntrackedChoiceChange, UntrackedImportPreview } from "@/types/fiscal-years";
 import { useAuth } from "@/components/auth";
 
 const BATCH_SIZE = 500; // Firestore batch limit
@@ -364,7 +366,33 @@ export function useImport(
     setState((s) => ({ ...s, error: null }));
   }, []);
 
-  const executeImport = useCallback(async () => {
+  /** Every row of the CSV: the sample when it holds them all, else the whole file parsed. */
+  const readAllRows = useCallback(async (): Promise<Record<string, string>[] | null> => {
+    if (!state.analysis) return null;
+    if (state.analysis.sampleRows.length === state.analysis.totalRows) return state.analysis.sampleRows;
+    // Use csvContent if available (draft resumption), otherwise read from file
+    const text = state.csvContent || (await state.file?.text());
+    if (!text) return null;
+    return parseCSV(text, state.analysis.options).rows;
+  }, [state.analysis, state.csvContent, state.file]);
+
+  /**
+   * After column matching, before anything is written (#805): how many rows lie
+   * before Tracked From, per fiscal year, and the settings change for tracking
+   * them as closed or as open. Counted on the server from the rows' months, the
+   * same months the Import's writer will see. Null when there is no date column
+   * or format yet.
+   */
+  const previewUntracked = useCallback(async (): Promise<UntrackedImportPreview | null> => {
+    const dateMapping = state.mappings.find((m) => m.targetField === "date");
+    if (!dateMapping?.format) return null;
+    const rows = await readAllRows();
+    if (!rows) return null;
+    const months = countRowMonths(rows, dateMapping.csvColumn, dateMapping.format);
+    return callFunction<{ months: Record<string, number> }, UntrackedImportPreview>("previewUntrackedImport", { months });
+  }, [state.mappings, readAllRows]);
+
+  const executeImport = useCallback(async (run: { untrackedChange?: UntrackedChoiceChange | null } = {}) => {
     // For draft imports, we have analysis and csvContent but may not have file object
     if (!source || !state.analysis || !userId) return;
     if (!state.file && !state.csvContent) return;
@@ -408,24 +436,31 @@ export function useImport(
       `import_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
     // Parse the full CSV file for import
-    let rows: Record<string, string>[];
-    if (state.analysis.sampleRows.length === state.analysis.totalRows) {
-      // Small file - sample has all rows
-      rows = state.analysis.sampleRows;
-    } else {
-      // Large file - need to parse the full file
-      // Use csvContent if available (draft resumption), otherwise read from file
-      const text = state.csvContent || (await state.file?.text());
-      if (!text) {
+    const rows = await readAllRows();
+    if (!rows) {
+      setState((s) => ({
+        ...s,
+        error: "CSV content not available",
+        transientStep: null,
+      }));
+      return;
+    }
+
+    // The User's answer to the preview's question about rows before Tracked
+    // From (#805): track them as closed or as open moves Tracked From back
+    // through the one settings writer before anything is imported; skip
+    // changes nothing and the server skips and counts those rows.
+    if (run.untrackedChange) {
+      try {
+        await callFunction("updateFiscalYears", run.untrackedChange);
+      } catch (err) {
         setState((s) => ({
           ...s,
-          error: "CSV content not available",
+          error: err instanceof Error ? err.message : String(err),
           transientStep: null,
         }));
         return;
       }
-      const { rows: allRows } = parseCSV(text, state.analysis.options);
-      rows = allRows;
     }
 
     // The whole date column is only in hand here — analysis parses 50 rows, and
@@ -757,7 +792,7 @@ export function useImport(
         balanceDetected: balanceInfo,
       },
     }));
-  }, [source, state.file, state.analysis, state.mappings, state.csvContent, userId]);
+  }, [source, state.file, state.analysis, state.mappings, state.csvContent, userId, readAllRows]);
 
   const reset = useCallback(() => {
     setState({
@@ -784,6 +819,7 @@ export function useImport(
     deleteMapping,
     validateForPreview,
     clearError,
+    previewUntracked,
     executeImport,
     reset,
   };

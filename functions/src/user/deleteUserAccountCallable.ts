@@ -287,6 +287,7 @@ export async function deleteUserData(
   await deleteSubcollection(db, `users/${userId}/notifications`);
   await deleteSubcollection(db, `users/${userId}/fiscalYearChanges`);
   await deleteDocById(db, `users/${userId}/settings`, "fiscalYears");
+  await deleteDocById(db, `users/${userId}/settings`, "untrackedFilesHint");
   await deleteDocById(db, `users/${userId}/settings`, "userData");
   await db.collection("users").doc(userId).delete();
   deletedCollections.push("users");

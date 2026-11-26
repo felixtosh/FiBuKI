@@ -1,13 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { FirstSetupFiscalYears } from "@/components/onboarding/first-setup-fiscal-years";
 import { useOnboarding } from "@/hooks/use-onboarding";
+import { callFunction } from "@/lib/firebase/callable";
+import type { FirstSetupSettings } from "@/lib/fiscal-years/first-setup";
 import type { OnboardingOrigin } from "@/types/onboarding";
+
+/** The picks as first shown and as they are now. */
+type FiscalYearsPick = { initial: FirstSetupSettings | null; current: FirstSetupSettings | null };
+
+function samePick(a: FirstSetupSettings, b: FirstSetupSettings): boolean {
+  return a.startMonth === b.startMonth && a.trackedFrom === b.trackedFrom && a.closedThrough === b.closedThrough;
+}
 
 /** Assistants a user can arrive from, and where "back" goes. Codex has no web page to return to. */
 const ASSISTANTS: Partial<Record<OnboardingOrigin, { name: string; url?: string }>> = {
@@ -27,10 +37,37 @@ export function Welcome() {
   const { origin, markWelcomeSeen } = useOnboarding();
   const [busy, setBusy] = useState(false);
 
+  const tSetup = useTranslations("settings.fiscalYears.firstSetup");
+  const [fiscalYears, setFiscalYears] = useState<FiscalYearsPick>({ initial: null, current: null });
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const onFiscalYearsChange = useCallback((picked: FirstSetupSettings) => {
+    setFiscalYears((s) => ({ initial: s.initial ?? picked, current: picked }));
+  }, []);
+
   const assistant = ASSISTANTS[origin];
+
+  /**
+   * First setup's fiscal years (#805), saved through the one settings writer,
+   * which writes the change record. Untouched picks save nothing, so a User
+   * whose stored default already reaches further back keeps it.
+   */
+  const saveFiscalYears = async () => {
+    const { initial, current } = fiscalYears;
+    if (!current || !initial || samePick(initial, current)) return;
+    await callFunction("updateFiscalYears", current);
+  };
 
   const start = async () => {
     setBusy(true);
+    setSetupError(null);
+    try {
+      await saveFiscalYears();
+    } catch (err) {
+      console.error("Failed to save the fiscal years:", err);
+      setSetupError(`${tSetup("failed")} ${err instanceof Error ? err.message : ""}`.trim());
+      setBusy(false);
+      return;
+    }
     try {
       await markWelcomeSeen();
       router.push("/settings/identity");
@@ -58,6 +95,13 @@ export function Welcome() {
             {assistant ? t("connectedBody", { app: assistant.name }) : t("intro")}
           </p>
         </div>
+
+        <FirstSetupFiscalYears onChange={onFiscalYearsChange} />
+        {setupError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {setupError}
+          </p>
+        ) : null}
 
         <p className="text-sm text-muted-foreground">{t("identityWhy")}</p>
 

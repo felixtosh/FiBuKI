@@ -67,6 +67,7 @@ import { callFunction } from "@/lib/firebase/callable";
 import { InvoiceDetailPanel } from "@/components/invoicing/InvoiceDetailPanel";
 import { AddPartnerDialog } from "@/components/partners/add-partner-dialog";
 import { pushQuery, replaceQuery } from "@/lib/navigation/query-url";
+import { UntrackedFilesHint } from "@/components/files/untracked-files-hint";
 const MAX_FILE_SIZE = UPLOAD_MAX_FILE_SIZE;
 const ACCEPTED_TYPES = UPLOAD_ACCEPTED_TYPES;
 
@@ -1155,6 +1156,7 @@ function FilesContent() {
         mainClassName="relative h-full flex flex-col"
         panel={detailPanel}
       >
+        <UntrackedFilesHint />
         <div className="flex-1 overflow-hidden relative">
           {/* Drag overlay — inside the margin-constrained area so it doesn't extend behind the detail panel */}
           {isDragActive && (
