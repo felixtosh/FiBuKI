@@ -336,3 +336,56 @@ export async function splitUntracked<T>(
   return { tracked, untrackedCount, untrackedByFiscalYear };
 }
 
+/** A change of Tracked From (and Closed Through) that brings untracked rows in. */
+export interface UntrackedChoice {
+  trackedFrom: Month;
+  closedThrough?: Month;
+}
+
+export interface UntrackedPreview {
+  /** Rows before Tracked From: an Import would skip them. */
+  untrackedCount: number;
+  /** The same rows per fiscal year (`2023`, or `2023/24`). */
+  untrackedByFiscalYear: Record<string, number>;
+  /**
+   * The settings change for each way of bringing them in, for the settings
+   * writer, or null when the choice is not offered. Skipping needs none.
+   *
+   * - closed: Tracked From back to the start of the earliest such fiscal year,
+   *   and, while nothing is closed, Closed Through to the month before the old
+   *   Tracked From, so every month that was untracked is closed.
+   * - open: Tracked From back the same way; only while nothing is closed, as
+   *   an open stretch may never lie before a closed one.
+   */
+  choices: { closed: UntrackedChoice | null; open: UntrackedChoice | null };
+}
+
+/**
+ * What an Import of rows in these months would skip, and how to bring them
+ * in (#805). `months` counts an Import's rows per month (`YYYY-MM`).
+ */
+export function previewUntracked(settings: FiscalYearSettings, months: Record<Month, number>): UntrackedPreview {
+  const untrackedByFiscalYear: Record<string, number> = {};
+  let untrackedCount = 0;
+  let earliest: Month | null = null;
+  for (const [month, count] of Object.entries(months)) {
+    if (count <= 0 || stretchOf(settings, `${month}-01`) !== "untracked") continue;
+    const label = fiscalYearLabel(month, settings.startMonth);
+    untrackedByFiscalYear[label] = (untrackedByFiscalYear[label] ?? 0) + count;
+    untrackedCount += count;
+    if (earliest === null || month < earliest) earliest = month;
+  }
+  if (earliest === null) return { untrackedCount, untrackedByFiscalYear, choices: { closed: null, open: null } };
+
+  const trackedFrom = fiscalYearStart(earliest, settings.startMonth);
+  const nothingClosed = settings.closedThrough === null;
+  return {
+    untrackedCount,
+    untrackedByFiscalYear,
+    choices: {
+      closed: nothingClosed ? { trackedFrom, closedThrough: addMonths(settings.trackedFrom, -1) } : { trackedFrom },
+      open: nothingClosed ? { trackedFrom } : null,
+    },
+  };
+}
+

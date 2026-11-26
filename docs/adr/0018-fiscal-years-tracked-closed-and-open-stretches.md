@@ -98,6 +98,26 @@ row. The stored opening carries that balance past the skipped rows: it is the fi
 plus their amounts, dated at Tracked From, so the balance at any later date adds only rows
 FiBuKI holds.
 
+## Asking first
+
+Only the User brings history in. After the columns of a CSV Import are matched, and before
+anything is written, the preview counts the rows before Tracked From per Fiscal Year and asks:
+track them as closed, track them as open, or skip them. Tracking moves Tracked From back to
+the start of the earliest such Fiscal Year. As closed, while nothing is closed yet, Closed
+Through moves to the month before the old Tracked From too, so every month that was untracked
+is closed rather than left open in between. As open is offered only while nothing is closed,
+because an open stretch never lies before a closed one. Skip changes nothing, and the result
+counts what was left out. The chosen change goes through the one settings writer and leaves
+its change record; the Import itself is unchanged.
+
+First setup asks the same question as a choice of Fiscal Years, each untracked, closed or open,
+the current one open. Its picks always keep the order, and it saves only when the User changed
+them, so a User whose stored default already reaches back keeps it.
+
+A File dated before Tracked From is kept and left out of the work lists, and named once in one
+hint ("3 documents from 2021, a year you don't track"). Dismissing the hint stores what it
+showed; it comes back only for documents that arrive later.
+
 ## Automation
 
 Automation works on the open stretch only. Receipt search, Partner and Category matching,
