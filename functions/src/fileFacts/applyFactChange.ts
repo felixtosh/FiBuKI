@@ -18,10 +18,13 @@ import { closedRefusal, fileStretchOf, readFiscalYears } from "../fiscalYears/se
 
 /**
  * The changes a person or a client starts, refused on a File dated in the
- * Closed stretch (#801, ADR-0018), the currency included. Automation (the
- * Extraction, the sweeps, the backfills) is not refused here: it skips a
- * Closed File before it asks (#803), with `fileStretchOf`. A File created with
- * given facts (`upload`) is an insert, which is never refused.
+ * Closed stretch (#801, ADR-0018), the currency included. Automation is not
+ * refused here: the Extraction and the identity sweep skip a File outside the
+ * open stretch before they ask (#803), through `automationScope().actsOnFile`.
+ * The one-time backfills (decoded entity names, derived Due and Debit Dates)
+ * neither ask nor skip: they store only what the record already derives. A
+ * File created with given facts (`upload`) is an insert, which is never
+ * refused.
  */
 export const LOCKED_FACT_ORIGINS: ReadonlySet<FactChange["origin"]> = new Set([
   "ui-correction",

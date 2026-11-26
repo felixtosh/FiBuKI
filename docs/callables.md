@@ -62,7 +62,7 @@ export function useCategories() {
 
 **Transactions:**
 
-A Transaction dated in the Closed stretch (#794, ADR-0018) is refused by every edit and delete a User or a client can start, naming Closed Through: both update callables (the bulk one per row), `rollbackTransactionCallable` through `update_transaction`, the Partner, No-document Category, Accepted Receipt and Partial Payment callables and tools, `set_booking_accounts`, a suggestion's rejection and its undo, deleting or remapping its Import, `deleteTransactionsBySourceCallable` and `deleteSourceCallable` (whole, before anything is taken apart), a bank disconnect, a sync that replaces a Bank Account's rows, and a Cash Payment's correction and delete. The orphan cleanups keep a closed orphan. The browser cannot write Transactions at all. Inserts are never refused; a Cash Payment and a remap may not land before Tracked From. Automation is not yet held to it (#803).
+A Transaction dated in the Closed stretch (#794, ADR-0018) is refused by every edit and delete a User or a client can start, naming Closed Through: both update callables (the bulk one per row), `rollbackTransactionCallable` through `update_transaction`, the Partner, No-document Category, Accepted Receipt and Partial Payment callables and tools, `set_booking_accounts`, a suggestion's rejection and its undo, deleting or remapping its Import, `deleteTransactionsBySourceCallable` and `deleteSourceCallable` (whole, before anything is taken apart), a bank disconnect, a sync that replaces a Bank Account's rows, and a Cash Payment's correction and delete. The orphan cleanups keep a closed orphan. The browser cannot write Transactions at all. Inserts are never refused; a Cash Payment and a remap may not land before Tracked From. Automation leaves records outside the open stretch alone (#803).
 
 - `updateTransactionCallable` - Write what a foreign or 0% line is for the UVA (`foreignSupplyKind`, `saleSupplyKind`); refuses any other field (#621)
 - `bulkUpdateTransactionsCallable` - Write description, completion, Partner or no-receipt category onto many transactions; refuses any other field, and a Partner or category the caller may not use (#621)
@@ -94,14 +94,16 @@ It refuses a connect (reason `closed`), an Unlink, a Rejection with it and the C
 when the Transaction is in the Closed stretch (#801, ADR-0018), reading the settings inside
 its Firestore transaction; a row the same plan creates is an insert and passes.
 
-A File dated in the Closed stretch (#801) keeps its facts: the File-facts applier
-(`fileFacts/applyFactChange.ts`) refuses the panel's and MCP's corrections and the
-not-invoice ruling (`CLOSED`, `LOCKED_FACT_ORIGINS`), and a correction that would date a File
-there. Automation does not go through that refusal; it skips a Closed File with
-`fileStretchOf` (#803). `updateFile` refuses everything but a rename or thumbnail, which covers
-both File Partner callables and tools. Deleting or splitting a Closed File, or a File on a
-Closed Transaction, is refused (`closedFileDeleteRefusal`); the folder sync leaves such a File.
-`unrejectFileFromTransactionCallable` refuses a Closed Transaction.
+A File dated in the Closed stretch (#801) keeps its facts: the one File-facts applier
+refuses the panel's and MCP's corrections and the not-invoice ruling, and a correction that
+would date a File there. The recipient ruling and marking the File as a Copy are refused too:
+both decide whether its VAT is in the UVA. Automation does not go through that refusal: the
+Extraction, matching and the re-scores skip a File or a Transaction outside the open stretch
+before they write (#803). The one-time backfills (decoded entity names, derived Due and Debit
+Dates) neither ask nor skip; they store only what the record already derives. A metadata
+update refuses everything but a rename or thumbnail, which covers both File Partner callables
+and tools. Deleting or splitting a Closed File, or a File on a Closed Transaction, is refused;
+the folder sync leaves such a File. Lifting a Rejection refuses a Closed Transaction.
 - `updateFileCallable` - Update file metadata
 - `assignPartnerToFileCallable` / `removePartnerFromFileCallable` - A File's Partner, through `functions/src/files/filePartner.ts`, the path MCP's `assign_partner_to_file` / `remove_partner_from_file` use too: the User's own or a Global Partner, the Partner worker cancelled on a manual assign, a removed automatic assignment recorded on the Partner (#627)
 - `deleteFileCallable` - Delete a file: hides it, undone by `restoreFile`, never touches the stored bytes. Refuses a FiBuKI-generated invoice document (ADR-0006)
