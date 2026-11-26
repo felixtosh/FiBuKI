@@ -35,6 +35,7 @@ import { liveCopyIds } from "../files/copyOps";
 import { ecbCrossRate, type EcbRateTable } from "../fx/ecbRates";
 import { isSameCurrency } from "../fx/fxPlausibility";
 import { toDateSafe } from "../utils/toDateSafe";
+import { automationScope } from "../fiscalYears/settings";
 import { connectFiles, writeConnectionScores, type ConnectionScore } from "../fileConnections/writer";
 import { deriveDocumentationState } from "../documents/documentationState";
 import { REMAINDER_CLOSE_TOLERANCE, deriveCoverage, filePaymentTotal, isRemainderClosed } from "./coverage";
@@ -1086,6 +1087,11 @@ export interface AutoConnectRefusal {
    * which other auto-connecting surfaces read too.
    */
   instalment?: true;
+  /**
+   * Set when the File or the Transaction is dated outside the open stretch
+   * (#803, ADR-0018), which other auto-connecting surfaces read too.
+   */
+  closed?: true;
 }
 
 /**
@@ -1239,7 +1245,26 @@ export async function selectAutoConnects(
       instalment: true,
     });
   }
-  return { picks: kept.filter((p) => !overTotal.includes(p)), refusals };
+  // #803: no auto-connect for a File or a Transaction dated outside the open
+  // stretch. Judged last, so a closed Transaction still counts in the rules
+  // above (a tie with one stays a tie): it is the same evidence, it only
+  // cannot take the File.
+  const scope = automationScope(db, userId);
+  const fileOpen = await scope.actsOnFile(file.data);
+  const open: AutoConnectPick[] = [];
+  for (const pick of kept.filter((p) => !overTotal.includes(p))) {
+    if (fileOpen && (await scope.acts(pick.match.preview.date))) {
+      open.push(pick);
+      continue;
+    }
+    refusals.push({
+      transactionId: pick.match.transactionId,
+      confidence: pick.match.confidence,
+      reason: `${fileOpen ? "the Transaction" : "the File"} is dated outside the open stretch (Fiscal Years)`,
+      closed: true,
+    });
+  }
+  return { picks: open, refusals };
 }
 
 function currencyOf(match: Match): string {
@@ -1371,7 +1396,10 @@ function instalmentsOverTotal(
 
 /** How the upload trigger's rules judge one File's matches, for a surface that connects it from elsewhere. */
 export interface AutoConnectJudgement {
-  /** Transactions it may not connect itself to: a tie (#667) or an instalment refusal (#615, #716). */
+  /**
+   * Transactions it may not connect itself to: a tie (#667), an instalment
+   * refusal (#615, #716), or a File or Transaction outside the open stretch (#803).
+   */
   held: Set<string>;
   /**
    * Transactions it connects as instalments (#615). A File may take several
@@ -1398,7 +1426,7 @@ export async function autoConnectJudgements(
     if (!id) continue;
     const { picks, refusals } = await selectAutoConnects(db, userId, files[i], results[i]);
     judgements.set(id, {
-      held: new Set(refusals.filter((r) => r.tie || r.instalment).map((r) => r.transactionId)),
+      held: new Set(refusals.filter((r) => r.tie || r.instalment || r.closed).map((r) => r.transactionId)),
       instalments: new Set(
         picks.filter((p) => p.autoConnectReason === "instalment").map((p) => p.match.transactionId)
       ),

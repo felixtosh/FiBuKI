@@ -7,6 +7,7 @@ import { matchPatternFlexible } from "../utils/pattern-utils";
 import { matchCategoriesForTransactions } from "./matchCategories";
 import { learnPatterns, TxSample, CollisionTxSample } from "./patternEngine";
 import { activityEntry, logActivity } from "../utils/activity";
+import { automationScope } from "../fiscalYears/settings";
 
 const GEMINI_MODEL = MODELS.geminiLite;
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "europe-west1";
@@ -72,11 +73,12 @@ async function cascadeUnassignTransactions(
     .limit(500)
     .get();
 
-  const autoAssignedDocs = allAssignedSnapshot.docs.filter((doc) => {
+  // #803: learning reads closed years, but takes no Category off a Transaction outside the open stretch.
+  const autoAssignedDocs = await automationScope(db, userId).openTransactions(allAssignedSnapshot.docs.filter((doc) => {
     const data = doc.data();
     const matchedBy = data.noReceiptCategoryMatchedBy;
     return matchedBy === "auto" || !matchedBy;
-  });
+  }));
 
   if (autoAssignedDocs.length === 0) return 0;
 

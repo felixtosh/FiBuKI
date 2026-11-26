@@ -25,6 +25,7 @@ import {
 import { AutomationMeta } from "../automation/types";
 import { MERGE_WRITE_ID_FIELD, isMergeWrite } from "../partners/mergeWriteMarker";
 import { activityEntry, logActivity } from "../utils/activity";
+import { automationScope } from "../fiscalYears/settings";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -129,6 +130,11 @@ async function reMatchFilePartner(
 ): Promise<{ action: "rematched" | "cleared" | "unchanged"; newPartnerId: string | null }> {
   const fileData = fileDoc.data();
   const previousPartnerId = fileData.partnerId || null;
+
+  // #803: a File dated outside the open stretch keeps its Partner and suggestions.
+  if (!(await automationScope(db, fileData.userId).actsOnFile(fileData))) {
+    return { action: "unchanged", newPartnerId: previousPartnerId };
+  }
 
   const matches = matchFileToAllPartners(
     {

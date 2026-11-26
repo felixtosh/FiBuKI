@@ -11,6 +11,7 @@ import {
   CategoryMatchOptions,
 } from "../utils/category-matcher";
 import { categoryMatchActivity } from "./categoryActivity";
+import { automationScope } from "../fiscalYears/settings";
 
 const db = getFirestore();
 
@@ -207,10 +208,14 @@ export async function matchCategoriesForUser(
   let batch = db.batch();
   let batchCount = 0;
 
+  // #803: Category matching leaves Transactions outside the open stretch alone.
+  const scope = automationScope(db, userId);
+
   for (const txDoc of transactions) {
     if (!txDoc.exists) continue;
 
     const txData = txDoc.data()!;
+    if (!(await scope.actsOnTransaction(txData))) continue;
     const transaction: TransactionData = {
       id: txDoc.id,
       partner: txData.partner || null,

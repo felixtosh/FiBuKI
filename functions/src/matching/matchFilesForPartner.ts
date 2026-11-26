@@ -20,6 +20,7 @@ import { autoConnectJudgements, fileDateRangesFor, matchableFiles, pairsAmong, t
 import { isOutstandingMatch } from "./transactionScoring";
 import { SCORING_CONFIG } from "./transactionScoring";
 import { toDateSafe } from "../utils/toDateSafe";
+import { automationScope } from "../fiscalYears/settings";
 
 const db = getFirestore();
 
@@ -239,13 +240,15 @@ export async function matchFilesForPartnerInternal(
     transactions = snapshot.docs;
   }
 
-  // Filter to transactions without files (or without noReceiptCategoryId)
-  const unfiledTransactions = transactions.filter((doc) => {
+  // Filter to transactions without files (or without noReceiptCategoryId),
+  // dated in the open stretch (#803): auto-connect leaves closed years alone.
+  const scope = automationScope(db, userId);
+  const unfiledTransactions = await scope.openTransactions(transactions.filter((doc) => {
     const data = doc.data();
     const hasFiles = data.fileIds && data.fileIds.length > 0;
     const hasNoReceiptCategory = !!data.noReceiptCategoryId;
     return !hasFiles && !hasNoReceiptCategory;
-  });
+  }));
 
   if (unfiledTransactions.length === 0) {
     console.log(`No unfiled transactions for partner ${partnerName}`);
@@ -296,12 +299,15 @@ export async function matchFilesForPartnerInternal(
     }
   }
 
-  // Unconnected, and possible at all.
+  // Unconnected, possible at all, and dated in the open stretch (#803).
+  const candidateFiles: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+  for (const doc of fileMap.values()) {
+    if (Array.isArray(doc.data().transactionIds) && doc.data().transactionIds.length > 0) continue;
+    if (await scope.actsOnFile(doc.data())) candidateFiles.push(doc);
+  }
   const unconnectedFiles = await matchableFiles(
     db,
-    Array.from(fileMap.values())
-      .filter((doc) => !(Array.isArray(doc.data().transactionIds) && doc.data().transactionIds.length > 0))
-      .map((doc) => ({ id: doc.id, data: doc.data(), doc }))
+    candidateFiles.map((doc) => ({ id: doc.id, data: doc.data(), doc }))
   );
 
   if (unconnectedFiles.length === 0) {
