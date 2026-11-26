@@ -32,8 +32,9 @@ export interface RemapRow {
   partnerIban: string | null;
   /**
    * The External Row Id under the new mapping (#804), as the CSV Import sends it:
-   * none unless the whole file's Reference / Transaction ID column is one. None
-   * removes a stored one, so the id always follows the mapped column.
+   * none unless the whole file's Reference / Transaction ID column is one. A
+   * remap never writes a new id onto a stored row (no backfill, spec #800): a
+   * stored id stays when this is the same id and is removed otherwise.
    */
   externalRowId?: unknown;
   original: { date: string; amount: string; rawRow: Record<string, string> };
@@ -150,7 +151,10 @@ export const applyImportRemapCallable = createCallable<ApplyImportRemapRequest, 
             sourceIdentifier,
             reference: row.reference,
           }),
-          externalRowId: readExternalRowId(row.externalRowId, i + index) ?? FieldValue.delete(),
+          ...(typeof data.externalRowId === "string" &&
+          data.externalRowId !== readExternalRowId(row.externalRowId, i + index)
+            ? { externalRowId: FieldValue.delete() }
+            : {}),
           _original: row.original,
           updatedAt: Timestamp.now(),
         });

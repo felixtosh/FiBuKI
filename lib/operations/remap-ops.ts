@@ -483,8 +483,9 @@ export async function applyRemapping(
     }
   }
 
-  // The External Row Ids follow the new Reference / Transaction ID column (#804), by the
-  // same rule as the CSV Import; a row without one has its stored id removed.
+  // The External Row Ids under the new Reference / Transaction ID column (#804), by the same
+  // rule as the CSV Import. The server keeps a stored id the new mapping still gives and removes
+  // one it does not; it never writes a new one onto a stored row.
   const externalRowIds = externalRowIdsFromReferences(rows.map((r) => r.reference));
   rows.forEach((r, index) => {
     if (externalRowIds[index]) r.externalRowId = externalRowIds[index]!;

@@ -428,22 +428,9 @@ describe("the CSV Import fills the External Row Id from the Reference / Transact
     expect(await stored("csv-1")).toEqual([]);
   });
 
-  it("a remap that changes the Reference / Transaction ID column moves the ids with it", async () => {
-    const lines: CsvLine[] = [
-      { date: "2024-06-03", amount: -450, name: "Cafe", reference: "MANDATE-1" },
-      { date: "2024-06-04", amount: -450, name: "Cafe", reference: "MANDATE-1" },
-    ];
-    const { transactionIds } = await uploadCsv(lines, "job-1");
-    await db.collection("imports").doc("job-1").set({ userId: USER, sourceId: "csv-1", fieldMappings: [] });
-    expect((await stored("csv-1")).map((r) => r.externalRowId)).toEqual([null, null]);
-
-    const remapped = csvRows(
-      [
-        { ...lines[0], reference: "TXN-1" },
-        { ...lines[1], reference: "TXN-2" },
-      ],
-      "job-1"
-    ).map((r, i) => ({
+  /** The rows a remap of job-1 sends for these lines, under a new mapping. */
+  function remapRows(lines: CsvLine[], transactionIds: string[]) {
+    return csvRows(lines, "job-1").map((r, i) => ({
       transactionId: transactionIds[i],
       date: r.date,
       amount: r.amount,
@@ -454,16 +441,41 @@ describe("the CSV Import fills the External Row Id from the Reference / Transact
       externalRowId: r.externalRowId,
       original: r._original,
     }));
+  }
+
+  async function remap(rows: ReturnType<typeof remapRows>) {
+    await db.collection("imports").doc("job-1").set({ userId: USER, sourceId: "csv-1", fieldMappings: [] });
     await applyImportRemapCallable.run({
-      data: { importJobId: "job-1", sourceId: "csv-1", fieldMappings: [], rows: remapped },
+      data: { importJobId: "job-1", sourceId: "csv-1", fieldMappings: [], rows },
       auth: AUTH,
     } as never);
+  }
 
-    expect((await stored("csv-1")).map((r) => r.externalRowId).sort()).toEqual(["TXN-1", "TXN-2"]);
-    // A re-upload of the corrected file finds its lines by id.
-    expect(await uploadCsv(remapped.map((r, i) => ({ ...lines[i], reference: r.reference })), "job-2")).toMatchObject({
-      count: 0,
-      duplicateCount: 2,
-    });
+  it("a remap never writes a new id onto a stored row; a re-upload of the corrected file still adds nothing", async () => {
+    const lines: CsvLine[] = [
+      { date: "2024-06-03", amount: -450, name: "Cafe", reference: "MANDATE-1" },
+      { date: "2024-06-04", amount: -450, name: "Cafe", reference: "MANDATE-1" },
+    ];
+    const { transactionIds } = await uploadCsv(lines, "job-1");
+    const corrected = lines.map((l, i) => ({ ...l, reference: `TXN-${i + 1}` }));
+
+    await remap(remapRows(corrected, transactionIds));
+
+    expect((await stored("csv-1")).map((r) => r.externalRowId)).toEqual([null, null]);
+    // Today's duplicate check holds the corrected file's lines back.
+    expect(await uploadCsv(corrected, "job-2")).toMatchObject({ count: 0, duplicateCount: 2 });
+    expect(await stored("csv-1")).toHaveLength(2);
+  });
+
+  it("a remap clears an id the new mapping no longer gives, and keeps one it still gives", async () => {
+    const { transactionIds } = await uploadCsv(withIds, "job-1");
+
+    // TXN-1 and TXN-2 stay; the third line's column now reads another value.
+    await remap(remapRows([withIds[0], withIds[1], { ...withIds[2], reference: "OTHER-3" }], transactionIds));
+    expect((await stored("csv-1")).map((r) => r.externalRowId).sort()).toEqual(["TXN-1", "TXN-2", null].sort());
+
+    // A column that is no id at all clears every id.
+    await remap(remapRows(withIds.map((l) => ({ ...l, reference: "NOTPROVIDED" })), transactionIds));
+    expect((await stored("csv-1")).map((r) => r.externalRowId)).toEqual([null, null, null]);
   });
 });
