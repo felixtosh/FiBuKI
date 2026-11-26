@@ -634,6 +634,8 @@ function readingDerivedFields(
 function decideNotInvoice(current: CurrentFile, change: NotInvoiceChange): FactOutcome {
   const { record } = current;
   const update = notInvoiceFields(record, change.reason);
+  // The given facts go with the record (#795), so nothing is left to wait for a reading.
+  if (record[GIVEN_FACTS_AWAIT_READING_FIELD] !== undefined) update[GIVEN_FACTS_AWAIT_READING_FIELD] = null;
   Object.assign(update, readingDerivedFields({ ...record, ...update }, current.linkedTransactions, []));
   return stamped(record, update, change.origin, change.at ?? Timestamp.now());
 }

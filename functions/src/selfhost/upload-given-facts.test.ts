@@ -334,6 +334,20 @@ describe("given facts are part of the File from its creation", () => {
   });
 });
 
+describe("marking a File with given facts not an invoice", () => {
+  it("clears the given facts and their wait for a reading with them", async () => {
+    const { fileId } = await upload({ amount: 12000, currency: "EUR" });
+    expect((await file(fileId)).givenFactsAwaitReading).toBe(true);
+
+    await handleTool(USER, "mark_file_as_not_invoice", { fileId, reason: "a letter" });
+
+    const stored = await file(fileId);
+    expect(stored.isNotInvoice).toBe(true);
+    expect(stored.extractedAmount ?? null).toBeNull();
+    expect(stored.givenFactsAwaitReading ?? null).toBeNull();
+  });
+});
+
 describe("given facts that cannot be right are refused, and no File is stored", () => {
   it.each([
     ["a fractional amount", { amount: 120.5, currency: "EUR" }, /whole number of cents/],
