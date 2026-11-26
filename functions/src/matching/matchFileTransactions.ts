@@ -51,6 +51,7 @@ import { checkAIBudget } from "../billing/checkAIBudget";
 import { isPassiveMode } from "../utils/checkAutomationMode";
 import { transactionSuggestionsActivity } from "./suggestionActivity";
 import { logActivity } from "../utils/activity";
+import { automationScope } from "../fiscalYears/settings";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -295,6 +296,19 @@ export async function runTransactionMatching(
   const before = ineligibleReasonOf(fileData, false);
   if (before === "deleted") {
     console.log(`[TxMatch] Skipping deleted file: ${fileId}`);
+    return;
+  }
+
+  // #803: a File dated outside the open stretch is not matched, auto-connected
+  // or checked for a Copy. Its suggestions stay as they are; only the stage is
+  // marked done, so it does not read "Matching" forever.
+  if (!(await automationScope(db, fileData.userId).actsOnFile(fileData))) {
+    console.log(`[TxMatch] File ${fileId} is dated outside the open stretch, matching nothing`);
+    await db.collection("files").doc(fileId).update({
+      transactionMatchComplete: true,
+      transactionMatchedAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
     return;
   }
 
@@ -903,6 +917,16 @@ export const matchFileTransactions = onDocumentUpdated(
       !before.partnerMatchComplete &&
       after.partnerMatchComplete &&
       !after.extractionError;
+
+    // #803: a File dated outside the open stretch is left alone: no
+    // correction or pair check, no re-score, no matching. The matching run
+    // only marks its stage done.
+    if (!(await automationScope(db, after.userId).actsOnFile(after))) {
+      if (partnerMatchJustCompleted && !after.transactionMatchComplete) {
+        await runTransactionMatching(fileId, after);
+      }
+      return;
+    }
 
     // #564: the correction check reads the Partner, the referenced invoice
     // number, the amount and the heading. It runs whenever one of them moves,

@@ -9,6 +9,7 @@ import {
 } from "../utils/category-matcher";
 import { AutomationMeta } from "../automation/types";
 import { categoryMatchActivity } from "./categoryActivity";
+import { automationScope } from "../fiscalYears/settings";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -142,7 +143,8 @@ export const onCategoryUpdate = onDocumentUpdated(
       let suggestionsUpdated = 0;
       const BATCH_LIMIT = 500;
 
-      for (const txDoc of unmatchedSnapshot.docs) {
+      // #803: a changed Category is matched onto open Transactions only.
+      for (const txDoc of await automationScope(db, userId).openTransactions(unmatchedSnapshot.docs)) {
         const txData = txDoc.data();
         const transaction: TransactionData = {
           id: txDoc.id,

@@ -10,6 +10,7 @@ import { matchCategoriesForTransactions } from "./matchCategories";
 import { createLocalPartnerFromGlobal } from "./createLocalPartnerFromGlobal";
 import { AutomationMeta } from "../automation/types";
 import { activityEntry } from "../utils/activity";
+import { automationScope } from "../fiscalYears/settings";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -178,7 +179,8 @@ export const onPartnerCreate = onDocumentCreated(
       const BATCH_LIMIT = 500;
       const processedTransactionIds: string[] = [];
 
-      for (const txDoc of unmatchedSnapshot.docs) {
+      // #803: a new Partner is matched onto open Transactions only.
+      for (const txDoc of await automationScope(db, userId).openTransactions(unmatchedSnapshot.docs)) {
         const txData = txDoc.data();
         const transaction: TransactionData = {
           id: txDoc.id,

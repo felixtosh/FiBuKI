@@ -74,10 +74,9 @@ connections apart, so a File on a Closed Transaction cannot be deleted either.
 Inserts are not refused. A User moving from another tool imports old years into the
 Closed stretch with the normal tools, and uploads Files dated there.
 
-Keeping the Closed stretch out of the work lists and the digest, and keeping automation off
-it, are their own tickets; they call the same check. Automation skips a Closed File rather
-than being refused by the File-facts writer, which refuses only what a person or a client
-starts.
+Keeping the Closed stretch out of the work lists and the digest calls the same check.
+Automation (below) skips a Closed File rather than being refused by the File-facts writer,
+which refuses only what a person or a client starts.
 
 ## The lift
 
@@ -98,6 +97,26 @@ A CSV file that starts before Tracked From still states its opening balance at i
 row. The stored opening carries that balance past the skipped rows: it is the file's opening
 plus their amounts, dated at Tracked From, so the balance at any later date adds only rows
 FiBuKI holds.
+
+## Automation
+
+Automation works on the open stretch only. Receipt search, Partner and Category matching,
+the company lookups an Import triggers, auto-connect and extraction's fact writes leave a
+Transaction or File dated Closed or Untracked as it is, and a record added into a Closed
+stretch triggers none of them; an Import's completion filters its rows by date. A File's
+date is its extracted or given one; an undated File is open until extraction dates it. A
+File that lands outside the open stretch still has its stages marked done, so it never
+reads as waiting.
+
+Auto-connect needs both sides open. A User may still connect a Closed File to an open
+Transaction by hand.
+
+Learning is not gated. Partner learning, aliases, resolution learning and billing cycles
+read closed years, so a User's history improves matching today; what learning then
+applies to Transactions is matching, and skips closed ones.
+
+One test lists every trigger, schedule and registered automation as gated or exempt, and
+fails on a new one until it is placed.
 
 ## Considered options
 

@@ -129,6 +129,49 @@ export function openFromDate(settings: FiscalYearSettings): Date {
   return new Date(`${openFrom(settings)}-01T00:00:00Z`);
 }
 
+/** Automation's view of the stretches, for one User and one run (#803). */
+export interface AutomationScope {
+  /** Whether automation may work on a record of this date: only in the open stretch. */
+  acts(date: unknown): Promise<boolean>;
+  /** A Transaction, by its date. */
+  actsOnTransaction(data: FirebaseFirestore.DocumentData | undefined): Promise<boolean>;
+  /** A File, by its extracted (or given) date. */
+  actsOnFile(data: FirebaseFirestore.DocumentData | undefined): Promise<boolean>;
+  /** The Transaction documents of a list automation may work on, in order. */
+  openTransactions<T extends { data(): FirebaseFirestore.DocumentData | undefined }>(docs: T[]): Promise<T[]>;
+}
+
+/**
+ * What automation may work on (#803, ADR-0018): records dated in the open
+ * stretch. Receipt search, Partner and Category matching, the company lookups,
+ * auto-connect and extraction's fact writes leave Closed and Untracked records
+ * alone, and a record added into a Closed stretch triggers none of them.
+ * Learning does not ask: it may read closed years.
+ *
+ * An undated record (a File before extraction) is open. The User's settings
+ * are read once per scope, on the first dated record, so a run that meets
+ * none reads nothing.
+ */
+export function automationScope(db: Db, userId: string): AutomationScope {
+  let settings: Promise<FiscalYearSettings> | null = null;
+  const acts = async (date: unknown): Promise<boolean> => {
+    const day = toDateSafe(date);
+    if (!day || isNaN(day.getTime())) return true;
+    settings ??= readFiscalYears(db, userId);
+    return stretchOf(await settings, day) === "open";
+  };
+  return {
+    acts,
+    actsOnTransaction: (data) => acts(data?.date),
+    actsOnFile: (data) => acts(fileDateOf(data)),
+    async openTransactions(docs) {
+      const open: typeof docs = [];
+      for (const doc of docs) if (await acts(doc.data()?.date)) open.push(doc);
+      return open;
+    },
+  };
+}
+
 const PAGE = 50;
 
 /**

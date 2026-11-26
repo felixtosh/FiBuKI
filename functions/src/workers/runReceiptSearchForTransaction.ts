@@ -11,6 +11,7 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
 import { AutomationMeta } from "../automation/types";
 import { isSearchableMailIntegration } from "../mail/searchable";
+import { automationScope } from "../fiscalYears/settings";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -226,6 +227,18 @@ export async function queueReceiptSearchForTransaction(
   options: QueueReceiptSearchOptions
 ): Promise<QueueReceiptSearchResult> {
   const { transactionId, userId, partnerId, force = false } = options;
+
+  // #803: a Transaction outside the open stretch is not searched, forced or
+  // not: a receipt found for it could not be connected.
+  const dated = (await db.collection("transactions").doc(transactionId).get()).data();
+  if (dated && dated.userId === userId && !(await automationScope(db, userId).actsOnTransaction(dated))) {
+    return {
+      success: true,
+      message: "Transaction is dated outside the open stretch (Fiscal Years) - receipt search skipped",
+      skipped: true,
+      skipReason: "closed",
+    };
+  }
 
   // Check if there's already a running worker for this user (rate limiting)
   const runningWorkers = await db

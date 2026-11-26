@@ -30,9 +30,13 @@ import { runExtraction } from "./extractionCore";
 import { buildRetryResetUpdates } from "./retryReset";
 import { reExtractionRefusal } from "../fileFacts/factChange";
 import { activityEntry, logActivity } from "../utils/activity";
+import { automationScope } from "../fiscalYears/settings";
 
-/** What became of one waiting Extraction. */
-export type QueuedExtractionOutcome = "extracted" | "failed" | "dropped" | "refused";
+/**
+ * What became of one waiting Extraction. `closed`: the File is dated outside
+ * the open stretch (#803), so nothing was read from it.
+ */
+export type QueuedExtractionOutcome = "extracted" | "failed" | "dropped" | "refused" | "closed";
 
 /**
  * Mark a File failed. A failed Extraction is not retried by itself (#161
@@ -78,6 +82,19 @@ export async function extractQueuedFile(
       updatedAt: Timestamp.now(),
     });
     return "refused";
+  }
+
+  // #803: a File dated outside the open stretch (Closed, or before Tracked
+  // From) gets no fact from extraction, and a Retry's reset is not applied
+  // either. It is marked complete so it does not read "Queued" forever.
+  if (!(await automationScope(getFirestore(), fileData.userId as string).actsOnFile(fileData))) {
+    console.log(`File ${fileId} is dated outside the open stretch, extracting nothing`);
+    await fileRef.update({
+      extractionComplete: true,
+      extractionError: null,
+      updatedAt: Timestamp.now(),
+    });
+    return "closed";
   }
 
   // "Queued" turns into "Analyzing" here, and nowhere else.
