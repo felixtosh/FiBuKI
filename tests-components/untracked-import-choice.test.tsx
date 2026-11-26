@@ -2,7 +2,7 @@
  * #805: FiBuKI asks before it brings in history. The CSV Import preview names
  * the rows before Tracked From per fiscal year and offers track as closed,
  * track as open (only while nothing is closed) and skip; first setup asks the
- * same question as a choice of fiscal years, the current one open.
+ * same question as a choice of fiscal years, the current one open by default.
  */
 
 import * as React from "react";
@@ -113,10 +113,32 @@ describe("first setup asks which fiscal years to track", () => {
     const onChange = vi.fn();
     render(inLocale(<FirstSetupFiscalYears today="2026-11-26" onChange={onChange} />));
 
-    const current = screen.getByRole("group", { name: "2026" });
-    expect(current.textContent).toMatch(/Open/);
+    expect(screen.getByRole("radio", { name: "2026: Open" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("radio", { name: "2025: Not tracked" }).getAttribute("aria-checked")).toBe("true");
     expect(onChange).toHaveBeenLastCalledWith({ startMonth: 1, trackedFrom: "2026-01", closedThrough: null });
+  });
+
+  it("the current fiscal year open is a default: closing it closes the tracked years before it, through this month", () => {
+    const onChange = vi.fn();
+    render(inLocale(<FirstSetupFiscalYears today="2026-11-26" onChange={onChange} />));
+    fireEvent.click(screen.getByRole("radio", { name: "2025: Open" }));
+
+    fireEvent.click(screen.getByRole("radio", { name: "2026: Closed" }));
+
+    expect(screen.getByRole("radio", { name: "2025: Closed" }).getAttribute("aria-checked")).toBe("true");
+    expect(onChange).toHaveBeenLastCalledWith({ startMonth: 1, trackedFrom: "2025-01", closedThrough: "2026-11" });
+  });
+
+  it("the current fiscal year is never untracked, and an earlier year open opens it again", () => {
+    const onChange = vi.fn();
+    render(inLocale(<FirstSetupFiscalYears today="2026-11-26" onChange={onChange} />));
+    expect(screen.queryByRole("radio", { name: "2026: Not tracked" })).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "2026: Closed" }));
+
+    fireEvent.click(screen.getByRole("radio", { name: "2025: Open" }));
+
+    expect(screen.getByRole("radio", { name: "2026: Open" }).getAttribute("aria-checked")).toBe("true");
+    expect(onChange).toHaveBeenLastCalledWith({ startMonth: 1, trackedFrom: "2025-01", closedThrough: null });
   });
 
   it("tracking an earlier year as closed closes it and tracks every year after it", () => {
@@ -157,7 +179,7 @@ describe("first setup asks which fiscal years to track", () => {
     const onChange = vi.fn();
     render(inLocale(<FirstSetupFiscalYears today="2026-03-10" onChange={onChange} startMonth={7} />));
 
-    expect(screen.getByRole("group", { name: "2025/26" })).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "2025/26" })).toBeTruthy();
     fireEvent.click(screen.getByRole("radio", { name: "2024/25: Closed" }));
     expect(onChange).toHaveBeenLastCalledWith({ startMonth: 7, trackedFrom: "2024-07", closedThrough: "2025-06" });
   });

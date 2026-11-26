@@ -1091,7 +1091,7 @@ export interface AutoConnectRefusal {
    * Set when the File or the Transaction is dated outside the open stretch
    * (#803, ADR-0018), which other auto-connecting surfaces read too.
    */
-  closed?: true;
+  outsideOpen?: true;
 }
 
 /**
@@ -1261,7 +1261,7 @@ export async function selectAutoConnects(
       transactionId: pick.match.transactionId,
       confidence: pick.match.confidence,
       reason: `${fileOpen ? "the Transaction" : "the File"} is dated outside the open stretch (Fiscal Years)`,
-      closed: true,
+      outsideOpen: true,
     });
   }
   return { picks: open, refusals };
@@ -1426,7 +1426,7 @@ export async function autoConnectJudgements(
     if (!id) continue;
     const { picks, refusals } = await selectAutoConnects(db, userId, files[i], results[i]);
     judgements.set(id, {
-      held: new Set(refusals.filter((r) => r.tie || r.instalment || r.closed).map((r) => r.transactionId)),
+      held: new Set(refusals.filter((r) => r.tie || r.instalment || r.outsideOpen).map((r) => r.transactionId)),
       instalments: new Set(
         picks.filter((p) => p.autoConnectReason === "instalment").map((p) => p.match.transactionId)
       ),
@@ -1510,14 +1510,17 @@ export async function autoConnect(
  * billing cycle is learned or changes (yazzbert/FiBuKI-selfhost#168), so the
  * right charge for a same-amount recurring document ranks highest. Scored
  * with the Partner's own context and against the full amount, at the ECB
- * rate (#555). Which Files are connected is never touched.
+ * rate (#555). Which Files are connected is never touched. A File
+ * Connection on a Transaction outside the open stretch keeps its stored
+ * score (#803, ADR-0018): it is locked once its Transaction is Closed.
  */
 export async function rescoreConnections(
   db: Db,
   userId: string,
   partnerId: string,
-  txDocs: TxDoc[]
+  allTxDocs: TxDoc[]
 ): Promise<{ rescored: number }> {
+  const txDocs = await automationScope(db, userId).openTransactions(allTxDocs);
   if (txDocs.length === 0) return { rescored: 0 };
 
   const txById = new Map(txDocs.map((doc) => [doc.id, doc]));

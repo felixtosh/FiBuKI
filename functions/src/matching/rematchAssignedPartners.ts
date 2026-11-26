@@ -26,7 +26,8 @@
  *    for; the transaction lands back on the normal suggestion path instead.
  */
 
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp, getFirestore } from "firebase-admin/firestore";
+import { automationScope } from "../fiscalYears/settings";
 import { createLocalPartnerFromGlobal } from "./createLocalPartnerFromGlobal";
 import {
   applyPartnerMatchUpdates,
@@ -66,7 +67,12 @@ export type RematchAction =
   /** The stored partner is not in the active list — reported, never touched. */
   | "skip_stored_partner_unknown"
   /** Would be cleared, but `clearUnconfirmed` is off. */
-  | "skip_clear_disabled";
+  | "skip_clear_disabled"
+  /**
+   * The Transaction is dated outside the open stretch (#803, ADR-0018):
+   * reported, never touched, whatever the matcher now says.
+   */
+  | "skip_outside_open";
 
 export interface RematchPlanRow extends RematchRow {
   action: RematchAction;
@@ -152,6 +158,7 @@ function emptyActions(): Record<RematchAction, number> {
     keep: 0,
     skip_stored_partner_unknown: 0,
     skip_clear_disabled: 0,
+    skip_outside_open: 0,
   };
 }
 
@@ -292,6 +299,7 @@ export async function rematchAssignedPartners(
   };
 
   const context = await loadRematchContext(userId);
+  const scope = automationScope(getFirestore(), userId);
 
   const verdicts = emptyVerdicts();
   const actions = emptyActions();
@@ -303,11 +311,13 @@ export async function rematchAssignedPartners(
     userId,
     filters,
     context,
-    (evaluation) => {
+    async (evaluation) => {
       const verdict = evaluation.classification.verdict;
       verdicts[verdict]++;
 
-      const action = decideAction(verdict, clearUnconfirmed);
+      const action = (await scope.actsOnTransaction(evaluation.txData))
+        ? decideAction(verdict, clearUnconfirmed)
+        : "skip_outside_open";
       actions[action]++;
 
       if (action === "reassign" || action === "clear") {

@@ -186,12 +186,13 @@ describe("rows without an External Row Id keep today's duplicate check", () => {
 });
 
 describe("the web CSV Import shares the Bank Account's External Row Ids (#804)", () => {
-  it("skips a CSV row whose id import_transactions already stored, and stores its new one", async () => {
+  it("skips a CSV row whose line import_transactions already stored by id, and stores its new one", async () => {
     await importRows([line("bank-1")]);
+    // A CSV id finds a stored line on the same day and amount: the first row is that line.
     const csv = (i: number, externalRowId: string) => ({
       sourceId: "src-1",
-      date: "2026-07-09T00:00:00.000Z",
-      amount: -200 - i,
+      date: i === 1 ? "2026-07-06T00:00:00.000Z" : "2026-07-09T00:00:00.000Z",
+      amount: i === 1 ? -450 : -200 - i,
       currency: "EUR",
       name: `CSV ${i}`,
       reference: externalRowId,

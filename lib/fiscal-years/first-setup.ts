@@ -2,7 +2,8 @@
  * First setup's question (#805, ADR-0018): which fiscal years to track, open or
  * closed. The User picks per fiscal year; this turns the picks into the three
  * settings the server's one writer takes (updateFiscalYears), which checks them
- * again. The current fiscal year is always open.
+ * again. The current fiscal year is open by default; the User may close it, but
+ * never leave it untracked (nothing would be tracked at all).
  *
  * The picks always keep the order the stretches have, oldest first: untracked
  * years, then closed ones, then open ones up to the current year. Changing one
@@ -45,19 +46,22 @@ export function setupYears(today: string, startMonth: number, count = 5): SetupY
   });
 }
 
+/** The statuses the current fiscal year (index 0) may take. */
+export const CURRENT_YEAR_STATUSES: YearStatus[] = ["closed", "open"];
+
 /** The default: the current fiscal year open, every earlier one untracked. */
 export function defaultStatuses(count: number): YearStatus[] {
   return Array.from({ length: count }, (_, i) => (i === 0 ? "open" : "untracked"));
 }
 
 /**
- * Set one year's status (index 0 is the current year, which stays open) and
+ * Set one year's status (index 0 is the current year, never untracked) and
  * move the others so the order holds: an untracked year leaves every earlier
  * one untracked; a closed year closes every earlier tracked one and tracks
  * every later untracked one as closed; an open year opens every later one.
  */
 export function setYearStatus(statuses: YearStatus[], index: number, status: YearStatus): YearStatus[] {
-  if (index === 0) return statuses;
+  if (index === 0 && !CURRENT_YEAR_STATUSES.includes(status)) return statuses;
   return statuses.map((current, i) => {
     if (i === index) return status;
     const earlier = i > index;
@@ -77,15 +81,25 @@ function monthBefore(month: string): string {
   return m === 1 ? `${y - 1}-12` : `${y}-${pad(m - 1)}`;
 }
 
-/** The settings these picks mean: Tracked From at the oldest tracked year, Closed Through before the oldest open one. */
-export function settingsFromStatuses(years: SetupYear[], statuses: YearStatus[], startMonth: number): FirstSetupSettings {
+/**
+ * The settings these picks mean: Tracked From at the oldest tracked year,
+ * Closed Through before the oldest open one. With the current year closed too,
+ * Closed Through is this month (`today`'s), the latest a month can be closed.
+ */
+export function settingsFromStatuses(
+  years: SetupYear[],
+  statuses: YearStatus[],
+  startMonth: number,
+  today: string
+): FirstSetupSettings {
   let trackedFrom = years[0].start;
-  let oldestOpen = years[0].start;
+  let oldestOpen: string | null = null;
   let anyClosed = false;
   statuses.forEach((status, i) => {
     if (status !== "untracked") trackedFrom = years[i].start;
     if (status === "open") oldestOpen = years[i].start;
     if (status === "closed") anyClosed = true;
   });
-  return { startMonth, trackedFrom, closedThrough: anyClosed ? monthBefore(oldestOpen) : null };
+  const closedThrough = !anyClosed ? null : oldestOpen ? monthBefore(oldestOpen) : today.slice(0, 7);
+  return { startMonth, trackedFrom, closedThrough };
 }

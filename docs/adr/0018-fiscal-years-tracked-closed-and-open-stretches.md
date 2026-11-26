@@ -111,7 +111,8 @@ counts what was left out. The chosen change goes through the one settings writer
 its change record; the Import itself is unchanged.
 
 First setup asks the same question as a choice of Fiscal Years, each untracked, closed or open,
-the current one open. Its picks always keep the order, and it saves only when the User changed
+the current one open by default. The User may close the current one too (Closed Through is
+then the current month), never leave it untracked. Its picks always keep the order, and it saves only when the User changed
 them, so a User whose stored default already reaches back keeps it.
 
 A File dated before Tracked From is kept and left out of the work lists, and named once in one

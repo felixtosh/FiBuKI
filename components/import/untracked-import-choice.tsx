@@ -4,9 +4,9 @@ import { useLocale, useTranslations } from "next-intl";
 import { CalendarX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { UntrackedChoice, UntrackedImportPreview } from "@/types/fiscal-years";
+import type { UntrackedChoiceKind, UntrackedImportPreview } from "@/types/fiscal-years";
 
-type Option = { id: UntrackedChoice; month: string | null };
+type Option = { id: UntrackedChoiceKind; month: string | null };
 
 /** Fiscal years, oldest first, as one list in the User's language ("2022 and 2023"). */
 export function joinYears(years: string[], locale: string): string {
@@ -30,8 +30,8 @@ export function UntrackedImportChoice({
   onChange,
 }: {
   preview: UntrackedImportPreview;
-  value: UntrackedChoice | null;
-  onChange: (choice: UntrackedChoice) => void;
+  value: UntrackedChoiceKind | null;
+  onChange: (choice: UntrackedChoiceKind) => void;
 }) {
   const t = useTranslations("settings.fiscalYears.importChoice");
   const locale = useLocale();

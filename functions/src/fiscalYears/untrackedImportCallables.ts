@@ -7,8 +7,8 @@
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
-import { toDateSafe } from "../utils/toDateSafe";
 import {
+  fileDateOf,
   fiscalYearLabel,
   isMonth,
   monthOf,
@@ -52,7 +52,8 @@ export const previewUntrackedImportCallable = createCallable<PreviewUntrackedImp
  * The hint counts per fiscal year what was not yet seen; dismissing it stores
  * the counts it showed, so it comes back only for documents that arrive later.
  */
-export interface UntrackedFilesHint {
+/** What the untracked-Files hint says: Files before Tracked From not yet seen, per fiscal year. */
+export interface UntrackedFilesSummary {
   count: number;
   byFiscalYear: Record<string, number>;
 }
@@ -73,8 +74,8 @@ async function untrackedFilesByFiscalYear(db: Db, userId: string): Promise<Recor
   for (const doc of snap.docs) {
     const data = doc.data();
     if (data.deletedAt) continue;
-    const date = toDateSafe(data.extractedDate);
-    if (!date || isNaN(date.getTime()) || stretchOf(settings, date) !== "untracked") continue;
+    const date = fileDateOf(data);
+    if (!date || stretchOf(settings, date) !== "untracked") continue;
     const label = fiscalYearLabel(monthOf(date), settings.startMonth);
     byFiscalYear[label] = (byFiscalYear[label] ?? 0) + 1;
   }
@@ -87,7 +88,7 @@ function seenOf(data: FirebaseFirestore.DocumentData | undefined): Record<string
 }
 
 /** What the hint says now: per fiscal year, the documents not yet seen. */
-export async function untrackedFilesHint(db: Db, userId: string): Promise<UntrackedFilesHint> {
+export async function untrackedFilesHint(db: Db, userId: string): Promise<UntrackedFilesSummary> {
   const [current, stored] = await Promise.all([
     untrackedFilesByFiscalYear(db, userId),
     untrackedFilesHintRef(db, userId).get(),
@@ -104,7 +105,7 @@ export async function untrackedFilesHint(db: Db, userId: string): Promise<Untrac
   return { count, byFiscalYear };
 }
 
-export const getUntrackedFilesHintCallable = createCallable<Record<string, never>, UntrackedFilesHint>(
+export const getUntrackedFilesHintCallable = createCallable<Record<string, never>, UntrackedFilesSummary>(
   { name: "getUntrackedFilesHint" },
   async (ctx) => untrackedFilesHint(ctx.db, ctx.userId)
 );

@@ -8,9 +8,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { joinYears } from "@/components/import/untracked-import-choice";
 import { callFunction } from "@/lib/firebase/callable";
-import type { UntrackedFilesHint as Hint } from "@/types/fiscal-years";
+import type { UntrackedFilesSummary } from "@/types/fiscal-years";
 
-type Shown = Hint | null;
+type Shown = UntrackedFilesSummary | null;
 
 /**
  * Documents dated before Tracked From (#805, ADR-0018). A File is never
@@ -26,7 +26,7 @@ export function UntrackedFilesHint() {
 
   useEffect(() => {
     let cancelled = false;
-    callFunction<Record<string, never>, Hint>("getUntrackedFilesHint", {})
+    callFunction<Record<string, never>, UntrackedFilesSummary>("getUntrackedFilesHint", {})
       .then((answer) => !cancelled && setHint(answer))
       .catch((err) => console.error("Failed to read the untracked documents hint:", err));
     return () => {

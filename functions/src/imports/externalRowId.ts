@@ -36,6 +36,10 @@ export function readExternalRowId(value: unknown, row: number): string | null {
  * lines. So the column counts as ids only when every row has a value, no value
  * repeats and none is over the limit; otherwise the file carries no ids and
  * keeps the date, amount and reference check. Ids go on all lines or on none.
+ * The server asks the same rule of each call it is sent. A column unique
+ * within one file can still repeat across files (a monthly contract
+ * reference), so a CSV id finds a stored line only on the same day and amount
+ * (dedupe.ts).
  */
 export function externalRowIdsFromReferences(references: Array<string | null | undefined>): Array<string | null> {
   const ids = references.map((r) => (typeof r === "string" ? r.trim() : ""));

@@ -137,7 +137,10 @@ whose id the Bank Account already stores, whatever the import job, so a retried 
 Import never writes a line twice. Against stored rows without an id, the duplicate check on
 date, amount and reference stays a backstop that counts: within one call, N such stored
 lines hold back at most N rows with an id. A row without one goes through that duplicate
-check unchanged. Within one Bank Account, send ids on all lines or on none.
+check unchanged. Within one Bank Account, send ids on all lines or on none. An id the CSV
+Import reads from the Reference / Transaction ID column is weaker: it skips a row only when
+the stored line also has the same date and amount, since a reference unique within one file
+can repeat in next month's; otherwise the row is written without the id.
 Trimmed and case-sensitive; an empty one is none. FiBuKI never derives one and never
 backfills stored rows. The finAPI and TrueLayer syncs fill it from the provider's
 transaction id. The CSV Import fills it from the column mapped as Reference / Transaction

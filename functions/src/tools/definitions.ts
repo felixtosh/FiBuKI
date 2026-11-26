@@ -1528,7 +1528,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "run: pass dryRun=false to write. Reassigns where the matcher now picks a different partner and " +
       "keeps where it agrees; an assignment it no longer reproduces is reported but left alone unless " +
       "clearUnconfirmed=true. Never touches manual, suggestion or ai assignments, nor one that a " +
-      "connected file backs with the same partner. Review with partner_rematch_report first.",
+      "connected file backs with the same partner, nor a transaction dated outside the open fiscal " +
+      "stretch (reported as skip_outside_open). Review with partner_rematch_report first.",
     inputSchema: {
       type: "object",
       properties: {

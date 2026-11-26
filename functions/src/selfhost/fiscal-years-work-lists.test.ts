@@ -182,6 +182,42 @@ describe("list_transactions_missing_invoice", () => {
   });
 });
 
+describe("list_pending_matches", () => {
+  async function seedPendingFile(id: string, iso: string) {
+    await db.collection("files").doc(id).set({
+      userId: USER,
+      fileName: `${id}.pdf`,
+      extractionComplete: true,
+      transactionMatchComplete: true,
+      extractedDate: day(iso),
+      transactionIds: [],
+      transactionSuggestions: [{ transactionId: "tx-open-1", confidence: 90, matchSources: ["amount"] }],
+    });
+  }
+
+  beforeEach(async () => {
+    await seedTransaction("tx-open-1", `${thisYear}-01-05`);
+    await seedPendingFile("f-closed", `${lastYear}-12-30`);
+    await seedPendingFile("f-open", `${thisYear}-01-04`);
+  });
+
+  it("lists only Files dated in the open stretch: a Closed File is no work, like one before Tracked From", async () => {
+    await setFiscalYears({ trackedFrom: `${lastYear - 1}-01`, closedThrough: `${lastYear}-12` });
+    await seedPendingFile("f-untracked", `${lastYear - 2}-06-01`);
+
+    const result = (await handleTool(USER, "list_pending_matches", {})) as { matches: Array<{ fileId: string }> };
+    expect(result.matches.map((m) => m.fileId)).toEqual(["f-open"]);
+  });
+
+  it("with Closed Through none, lists every tracked File as before", async () => {
+    await setFiscalYears({ trackedFrom: `${lastYear - 1}-01` });
+    await seedPendingFile("f-untracked", `${lastYear - 2}-06-01`);
+
+    const result = (await handleTool(USER, "list_pending_matches", {})) as { matches: Array<{ fileId: string }> };
+    expect(result.matches.map((m) => m.fileId).sort()).toEqual(["f-closed", "f-open"]);
+  });
+});
+
 describe("the weekly digest", () => {
   const weekAgo = () => new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const stats = () => gatherUserStats(db as unknown as FirebaseFirestore.Firestore, USER, weekAgo());

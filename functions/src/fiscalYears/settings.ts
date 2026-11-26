@@ -99,19 +99,32 @@ export function stretchOf(settings: FiscalYearSettings, date: Date | string): St
   return "open";
 }
 
+/** A stored date (a Timestamp, a Date, a string) as a Date, or null when it is none or invalid. */
+export function storedDate(value: unknown): Date | null {
+  const date = toDateSafe(value);
+  return date instanceof Date && !isNaN(date.getTime()) ? date : null;
+}
+
+/**
+ * Which stretch a stored date is in, through `stretchOf`; null when the value
+ * is not a valid date. What a record with no date means is the caller's.
+ */
+export function stretchOfStored(settings: FiscalYearSettings, value: unknown): Stretch | null {
+  const date = storedDate(value);
+  return date ? stretchOf(settings, date) : null;
+}
+
 /**
  * The date that puts a File in a stretch: its extracted (or given) date
  * (#801). An undated File is in none, so it is never Closed.
  */
 export function fileDateOf(file: Record<string, unknown> | undefined): Date | null {
-  const date = toDateSafe(file?.extractedDate);
-  return date instanceof Date && !isNaN(date.getTime()) ? date : null;
+  return storedDate(file?.extractedDate);
 }
 
 /** Which stretch a File is in, through the one check; null for an undated File. */
 export function fileStretchOf(settings: FiscalYearSettings, file: Record<string, unknown> | undefined): Stretch | null {
-  const date = fileDateOf(file);
-  return date ? stretchOf(settings, date) : null;
+  return stretchOfStored(settings, file?.extractedDate);
 }
 
 /**
@@ -155,8 +168,8 @@ export interface AutomationScope {
 export function automationScope(db: Db, userId: string): AutomationScope {
   let settings: Promise<FiscalYearSettings> | null = null;
   const acts = async (date: unknown): Promise<boolean> => {
-    const day = toDateSafe(date);
-    if (!day || isNaN(day.getTime())) return true;
+    const day = storedDate(date);
+    if (!day) return true;
     settings ??= readFiscalYears(db, userId);
     return stretchOf(await settings, day) === "open";
   };
@@ -196,8 +209,8 @@ export async function firstDataMonth(db: Db, userId: string, from: Month | null,
       // undated one sorts first and must not hide the dated ones behind it.
       const date = snap.docs
         .filter((d) => !(collection === "files" && d.data().deletedAt))
-        .map((d) => toDateSafe(d.data()[field]))
-        .find((d): d is Date => d instanceof Date && !isNaN(d.getTime()));
+        .map((d) => storedDate(d.data()[field]))
+        .find((d): d is Date => d !== null);
       if (date) {
         months.push(monthOf(date));
         break;
@@ -276,10 +289,13 @@ export async function closedSettingsIn(
 
 /** Whether a stored date lies in the Closed stretch; an unknown date never does. */
 export function isClosedDate(settings: FiscalYearSettings | null, date: unknown): boolean {
-  if (!settings) return false;
-  const parsed = toDateSafe(date);
-  return parsed instanceof Date && !isNaN(parsed.getTime()) && stretchOf(settings, parsed) === "closed";
+  return settings !== null && stretchOfStored(settings, date) === "closed";
 }
+
+/** What a File refusal names (#801). */
+export const CLOSED_FILE = "This File";
+/** What a File Connection refusal names: its Transaction decides (#801). */
+export const CLOSED_CONNECTION = "The Transaction of this File Connection";
 
 /** What a refusal says: Closed Through, and how to lift it. */
 export function closedRefusal(settings: FiscalYearSettings, what: string): string {
@@ -323,13 +339,12 @@ export async function splitUntracked<T>(
   const untrackedByFiscalYear: Record<string, number> = {};
   let untrackedCount = 0;
   for (const row of rows) {
-    const date = dateOf(row);
-    const parsed = typeof date === "string" ? new Date(date) : date;
-    if (isNaN(parsed.getTime()) || stretchOf(settings, parsed) !== "untracked") {
+    const date = storedDate(dateOf(row));
+    if (!date || stretchOf(settings, date) !== "untracked") {
       tracked.push(row);
       continue;
     }
-    const label = fiscalYearLabel(monthOf(parsed), settings.startMonth);
+    const label = fiscalYearLabel(monthOf(date), settings.startMonth);
     untrackedByFiscalYear[label] = (untrackedByFiscalYear[label] ?? 0) + 1;
     untrackedCount++;
   }
@@ -337,7 +352,7 @@ export async function splitUntracked<T>(
 }
 
 /** A change of Tracked From (and Closed Through) that brings untracked rows in. */
-export interface UntrackedChoice {
+export interface UntrackedChoiceChange {
   trackedFrom: Month;
   closedThrough?: Month;
 }
@@ -357,7 +372,7 @@ export interface UntrackedPreview {
    * - open: Tracked From back the same way; only while nothing is closed, as
    *   an open stretch may never lie before a closed one.
    */
-  choices: { closed: UntrackedChoice | null; open: UntrackedChoice | null };
+  choices: { closed: UntrackedChoiceChange | null; open: UntrackedChoiceChange | null };
 }
 
 /**

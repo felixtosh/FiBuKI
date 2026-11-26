@@ -418,7 +418,7 @@
         "untracked": "Not tracked",
         "closed": "Closed",
         "open": "Open",
-        "current": "Open (current year)",
+        "current": "current year",
         "failed": "Could not save the fiscal years."
       },
       "untrackedFiles": {

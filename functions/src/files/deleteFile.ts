@@ -12,8 +12,7 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { generatedInvoiceRefusal } from "./generatedInvoiceGuard";
 import { detachFile, type DetachedTransaction } from "../fileConnections/writer";
 import { activityEntry, logActivity } from "../utils/activity";
-import { CLOSED_CONNECTION, CLOSED_FILE, closedRefusal, fileStretchOf, readFiscalYears, stretchOf } from "../fiscalYears/fiscalYears";
-import { toDateSafe } from "../utils/toDateSafe";
+import { CLOSED_CONNECTION, CLOSED_FILE, closedRefusal, fileStretchOf, isClosedDate, readFiscalYears } from "../fiscalYears/fiscalYears";
 
 interface DeleteFileRequest {
   fileId: string;
@@ -56,10 +55,7 @@ export async function closedFileDeleteRefusal(
   ].filter((id): id is string => typeof id === "string" && !!id && !id.includes("/"));
   if (txIds.length === 0) return null;
   const snaps = await db.getAll(...txIds.map((id) => db.collection("transactions").doc(id)));
-  const locked = snaps.some((s) => {
-    const date = s.exists && s.data()?.userId === userId ? toDateSafe(s.data()!.date) : null;
-    return date instanceof Date && !isNaN(date.getTime()) && stretchOf(settings, date) === "closed";
-  });
+  const locked = snaps.some((s) => s.exists && s.data()?.userId === userId && isClosedDate(settings, s.data()!.date));
   return locked ? closedRefusal(settings, CLOSED_CONNECTION) : null;
 }
 
