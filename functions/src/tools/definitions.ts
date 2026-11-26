@@ -336,7 +336,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Give each line an externalRowId when you can: a line whose externalRowId the bank account already stores is skipped " +
       "whatever the importJobId, so a retried or resumed import never writes it twice, and lines with different ids are all kept. " +
       "A line with an id is also skipped when it matches a stored line without one (same date, amount and reference), but only " +
-      "as many such lines as are stored. Keep the id scheme stable for a bank account across every importer and run: a changed " +
+      "as many such lines as are stored, counted within one call. Within one bank account, send ids on all lines or on none. Keep the id scheme stable for a bank account across every importer and run: a changed " +
       "scheme writes the lines again. Ids are trimmed and case-sensitive; an empty one counts as none. Do not send two calls " +
       "for one bank account in parallel: the skip is checked before writing, so parallel calls can both write a line.",
     inputSchema: {

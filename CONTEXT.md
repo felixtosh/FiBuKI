@@ -135,8 +135,9 @@ line's position among identical lines of that day, leaving the booking text out 
 text recognition on scanned statements is not stable between runs. An Import skips a row
 whose id the Bank Account already stores, whatever the import job, so a retried or resumed
 Import never writes a line twice. Against stored rows without an id, the duplicate check on
-date, amount and reference stays a backstop that counts: N such stored lines hold back at
-most N rows with an id. A row without one goes through that duplicate check unchanged.
+date, amount and reference stays a backstop that counts: within one call, N such stored
+lines hold back at most N rows with an id. A row without one goes through that duplicate
+check unchanged. Within one Bank Account, send ids on all lines or on none.
 Trimmed and case-sensitive; an empty one is none. FiBuKI never derives one and never
 backfills stored rows.
 _Deutsch_: Externe Zeilen-ID
