@@ -357,6 +357,12 @@ export interface UntrackedChoiceChange {
   closedThrough?: Month;
 }
 
+/** What the untracked-Files hint says: Files before Tracked From not yet seen, per fiscal year. */
+export interface UntrackedFilesSummary {
+  count: number;
+  byFiscalYear: Record<string, number>;
+}
+
 export interface UntrackedPreview {
   /** Rows before Tracked From: an Import would skip them. */
   untrackedCount: number;

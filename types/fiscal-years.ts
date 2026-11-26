@@ -4,8 +4,11 @@
  * at build, so no server code reaches the browser).
  */
 
-import type { UntrackedChoiceChange, UntrackedPreview } from "@/functions/src/fiscalYears/settings";
-import type { UntrackedFilesSummary } from "@/functions/src/fiscalYears/untrackedImportCallables";
+import type {
+  UntrackedChoiceChange,
+  UntrackedFilesSummary,
+  UntrackedPreview,
+} from "@/functions/src/fiscalYears/settings";
 
 export type { UntrackedChoiceChange, UntrackedFilesSummary };
 

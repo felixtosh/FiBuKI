@@ -15,6 +15,7 @@ import {
   previewUntracked,
   readFiscalYears,
   stretchOf,
+  type UntrackedFilesSummary,
   type UntrackedPreview,
 } from "./settings";
 
@@ -52,11 +53,7 @@ export const previewUntrackedImportCallable = createCallable<PreviewUntrackedImp
  * The hint counts per fiscal year what was not yet seen; dismissing it stores
  * the counts it showed, so it comes back only for documents that arrive later.
  */
-/** What the untracked-Files hint says: Files before Tracked From not yet seen, per fiscal year. */
-export interface UntrackedFilesSummary {
-  count: number;
-  byFiscalYear: Record<string, number>;
-}
+export type { UntrackedFilesSummary };
 
 export function untrackedFilesHintRef(db: Db, userId: string) {
   return db.collection("users").doc(userId).collection("settings").doc("untrackedFilesHint");
