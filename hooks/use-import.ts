@@ -18,6 +18,7 @@ import { autoMatchColumns, validateMappings } from "@/lib/import/field-matcher";
 import { parseCSV } from "@/lib/import/csv-parser";
 import { uploadImportCSV } from "@/lib/operations";
 import { computeCsvHash } from "@/lib/import/csv-hash";
+import { externalRowIdsFromReferences } from "@/functions/src/imports/externalRowId";
 import { useAuth } from "@/components/auth";
 
 const BATCH_SIZE = 500; // Firestore batch limit
@@ -644,6 +645,13 @@ export function useImport(
         latestBalanceDate: latest.date.toISOString(),
       };
     }
+
+    // The Reference / Transaction ID column gives the External Row Ids (#804) when the
+    // whole file's column is one; the rule is shared with the server (imports/externalRowId).
+    const externalRowIds = externalRowIdsFromReferences(transactions.map((t) => t.reference));
+    transactions.forEach((t, index) => {
+      if (externalRowIds[index]) t.externalRowId = externalRowIds[index]!;
+    });
 
     // Batch write transactions using Cloud Function
     let importedCount = 0;
