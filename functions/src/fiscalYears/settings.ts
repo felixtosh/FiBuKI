@@ -114,6 +114,21 @@ export function fileStretchOf(settings: FiscalYearSettings, file: Record<string,
   return date ? stretchOf(settings, date) : null;
 }
 
+/**
+ * The first month `stretchOf` calls open. The stretches always run untracked,
+ * closed, open, so a date is open exactly when it is on or after this month;
+ * a query bounds on it to read only open records (#802).
+ */
+export function openFrom(settings: FiscalYearSettings): Month {
+  const afterClosed = settings.closedThrough === null ? settings.trackedFrom : addMonths(settings.closedThrough, 1);
+  return afterClosed > settings.trackedFrom ? afterClosed : settings.trackedFrom;
+}
+
+/** `openFrom` as a stored date: UTC midnight of its first day. */
+export function openFromDate(settings: FiscalYearSettings): Date {
+  return new Date(`${openFrom(settings)}-01T00:00:00Z`);
+}
+
 const PAGE = 50;
 
 /**

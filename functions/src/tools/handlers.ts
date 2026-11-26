@@ -112,7 +112,13 @@ import {
   type ResolvedEffectiveCycle,
 } from "../matching/billingCycle";
 import { getPeriodStatus, listPendingMatches } from "./periodStatus";
-import { changeFiscalYears, listFiscalYearChanges, readFiscalYears, splitUntracked } from "../fiscalYears/fiscalYears";
+import {
+  changeFiscalYears,
+  listFiscalYearChanges,
+  openFromDate,
+  readFiscalYears,
+  splitUntracked,
+} from "../fiscalYears/fiscalYears";
 import { assertTransactionEditable, assertTransactionIdEditable } from "../transactions/writableFields";
 import { PLANS, resolvePlanId } from "../billing/config";
 import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
@@ -941,9 +947,15 @@ async function scanTransactionsPage(
   args: Record<string, unknown>,
   keep: (transaction: Record<string, unknown>) => boolean
 ): Promise<{ page: Array<Record<string, unknown>>; nextCursor: string | null }> {
+  // Work lists only (#802): a Transaction outside the open stretch is not
+  // work. The stretches run untracked, closed, open, so the open ones are
+  // exactly those on or after its first month, and a closed year never fills
+  // the scan window.
+  const settings = await readFiscalYears(db, userId);
   let query: FirebaseFirestore.Query = db
     .collection("transactions")
     .where("userId", "==", userId)
+    .where("date", ">=", Timestamp.fromDate(openFromDate(settings)))
     .orderBy("date", "desc");
 
   // Cursor pagination: cursor is the last document id from the previous page.
