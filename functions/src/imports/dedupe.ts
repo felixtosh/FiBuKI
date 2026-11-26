@@ -22,6 +22,12 @@
  * import job, and counts: N stored lines without an id hold back at most N
  * rows with an id of the same hash, so two identical lines with different
  * ids beside one stored line keep one of them.
+ *
+ * An id read from a CSV column (`idIsLineOnlyOnSameDayAndAmount`) is weaker: a
+ * contract or mandate reference can be unique within each monthly file and
+ * still repeat every month. Such an id finds a stored line only when that line
+ * has the same day and amount too; otherwise the row is written without the
+ * id, decided like any row without one, and counted.
  */
 
 import { createHash } from "crypto";
@@ -105,14 +111,20 @@ async function earlierImportHashes(
   return { all: existing, withoutId };
 }
 
-/** The External Row Ids in `ids` this Bank Account already stores, from any import job. */
+/** A stored line's day (YYYY-MM-DD) and amount in cents. */
+type StoredLine = { day: string | null; amount: unknown };
+
+/**
+ * The External Row Ids in `ids` this Bank Account already stores, from any
+ * import job, with the day and amount of each line that stores it.
+ */
 async function findStoredExternalRowIds(
   db: Firestore,
   userId: string,
   sourceId: string,
   ids: string[]
-): Promise<Set<string>> {
-  const stored = new Set<string>();
+): Promise<Map<string, StoredLine[]>> {
+  const stored = new Map<string, StoredLine[]>();
   const unique = [...new Set(ids)];
   for (let i = 0; i < unique.length; i += IN_QUERY_LIMIT) {
     const snapshot = await db
@@ -121,19 +133,46 @@ async function findStoredExternalRowIds(
       .where("sourceId", "==", sourceId)
       .where("externalRowId", "in", unique.slice(i, i + IN_QUERY_LIMIT))
       .get();
-    for (const doc of snapshot.docs) stored.add(doc.data().externalRowId as string);
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const date = typeof data.date?.toDate === "function" ? data.date.toDate() : data.date;
+      let day: string | null = null;
+      try {
+        day = date ? utcDay(date) : null;
+      } catch {
+        day = null;
+      }
+      const id = data.externalRowId as string;
+      stored.set(id, [...(stored.get(id) ?? []), { day, amount: data.amount }]);
+    }
   }
   return stored;
 }
 
-/** Split rows into those to write and those an earlier import already holds. */
-export async function splitDuplicates<T extends { dedupeHash: string; externalRowId?: string | null }>(
+export interface SplitDuplicatesOptions {
+  /**
+   * The ids are a CSV column's values (#804): an id finds a stored line only
+   * when that line has the same day and amount. Every row then needs its
+   * `date` and `amount`.
+   */
+  idIsLineOnlyOnSameDayAndAmount?: boolean;
+}
+
+/**
+ * Split rows into those to write and those an earlier import already holds.
+ * `reusedIds` counts the rows written without their id because the id is
+ * stored on a line of another day or amount (CSV ids only).
+ */
+export async function splitDuplicates<
+  T extends { dedupeHash: string; externalRowId?: string | null; date?: unknown; amount?: unknown }
+>(
   db: Firestore,
   userId: string,
   sourceId: string,
   rows: T[],
-  currentImportJobId?: string
-): Promise<{ fresh: T[]; duplicates: T[] }> {
+  currentImportJobId?: string,
+  options: SplitDuplicatesOptions = {}
+): Promise<{ fresh: T[]; duplicates: T[]; reusedIds: number }> {
   const [earlier, storedIds] = await Promise.all([
     earlierImportHashes(db, userId, sourceId, rows.map((r) => r.dedupeHash), currentImportJobId),
     findStoredExternalRowIds(db, userId, sourceId, rows.flatMap((r) => (r.externalRowId ? [r.externalRowId] : []))),
@@ -142,7 +181,17 @@ export async function splitDuplicates<T extends { dedupeHash: string; externalRo
   const duplicates: T[] = [];
   const seenIds = new Set<string>();
   const backstop = new Map(earlier.withoutId);
-  for (const row of rows) {
+  let reusedIds = 0;
+  for (const original of rows) {
+    let row = original;
+    const lines = row.externalRowId ? storedIds.get(row.externalRowId) : undefined;
+    if (lines && options.idIsLineOnlyOnSameDayAndAmount) {
+      const day = typeof row.date === "string" || row.date instanceof Date ? utcDay(row.date) : null;
+      if (!lines.some((line) => line.day === day && line.amount === row.amount)) {
+        row = { ...row, externalRowId: null };
+        reusedIds++;
+      }
+    }
     const id = row.externalRowId;
     let duplicate: boolean;
     if (!id) {
@@ -157,5 +206,5 @@ export async function splitDuplicates<T extends { dedupeHash: string; externalRo
     if (id) seenIds.add(id);
     (duplicate ? duplicates : fresh).push(row);
   }
-  return { fresh, duplicates };
+  return { fresh, duplicates, reusedIds };
 }
