@@ -14,6 +14,20 @@ import { syncDocumentationStateForTransactions } from "../documents/syncDocument
 import { rescoreFileSuggestions } from "../matching/rescoreFileSuggestions";
 import { decideFactChange, type FactChange, type FactUpdate, type FollowUp } from "./factChange";
 import { activityEntry, logActivity, type ActivityActor } from "../utils/activity";
+import { closedRefusal, fileStretchOf, readFiscalYears } from "../fiscalYears/settings";
+
+/**
+ * The changes a person or a client starts, refused on a File dated in the
+ * Closed stretch (#801, ADR-0018), the currency included. Automation (the
+ * Extraction, the sweeps, the backfills) is not refused here: it skips a
+ * Closed File before it asks (#803), with `fileStretchOf`. A File created with
+ * given facts (`upload`) is an insert, which is never refused.
+ */
+export const LOCKED_FACT_ORIGINS: ReadonlySet<FactChange["origin"]> = new Set([
+  "ui-correction",
+  "mcp-correction",
+  "not-invoice",
+]);
 
 export interface ApplyFactChangeRequest {
   fileId: string;
@@ -36,7 +50,13 @@ export type AppliedFactChange =
       /** The File as the update left it. */
       after: Record<string, unknown>;
     })
-  | { refused: true; code: "NOT_FOUND" | "INVALID" | "HAND_CORRECTED"; message: string; fields?: string[] };
+  | {
+      refused: true;
+      /** `CLOSED`: the File is, or the change would date it, in the Closed stretch (#801). */
+      code: "NOT_FOUND" | "INVALID" | "HAND_CORRECTED" | "CLOSED";
+      message: string;
+      fields?: string[];
+    };
 
 export async function applyFactChange(
   db: Firestore,
@@ -55,8 +75,17 @@ export async function applyFactChange(
   const transactionIds = Array.isArray(record.transactionIds) ? (record.transactionIds as string[]) : [];
   const linkedTransactions = await readLinkedTransactions(db, transactionIds);
 
+  const settings = LOCKED_FACT_ORIGINS.has(change.origin) ? await readFiscalYears(db, userId) : null;
+  if (settings && fileStretchOf(settings, record) === "closed") {
+    return { refused: true, code: "CLOSED", message: closedRefusal(settings, "This File") };
+  }
+
   const outcome = decideFactChange({ record, linkedTransactions }, change);
   if (outcome.refused) return outcome;
+  // A correction that would date the File in the Closed stretch changes it too.
+  if (settings && "extractedDate" in outcome.update && fileStretchOf(settings, outcome.update) === "closed") {
+    return { refused: true, code: "CLOSED", message: closedRefusal(settings, "This File, as corrected,") };
+  }
 
   if (Object.keys(outcome.update).length > 0) {
     const entry = factChangeActivity(change, outcome.update, actor);

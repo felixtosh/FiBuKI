@@ -188,7 +188,9 @@ _Avoid_: Closing Date, lock date, filed through
 **Closed stretch**:
 The months from Tracked From through Closed Through, usually years whose tax return is
 filed. Its records are kept and readable, and new ones can still be imported into it, but
-a change or a delete of a Transaction dated in it is refused, naming Closed Through. Separate
+a change or a delete of a Transaction or a File dated in it is refused, naming Closed Through.
+A File Connection is locked when its Transaction is dated in it; the File's date does not
+lock a connection. Separate
 from a filed UVA period: marking a UVA filed closes nothing.
 _Deutsch_: Abgeschlossener Zeitraum
 _Avoid_: closed period (a **period** is a UVA month or quarter), archive, locked year

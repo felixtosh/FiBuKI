@@ -23,7 +23,7 @@ import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { sniffMimeTypeStrict } from "../extraction/geminiParser";
 import { createFileRecord, findFileByContentHash } from "./createFileRecord";
 import { generatedInvoiceRefusal } from "./generatedInvoiceGuard";
-import { performDeleteFile } from "./deleteFile";
+import { closedFileDeleteRefusal, performDeleteFile } from "./deleteFile";
 import { performConnectFileToTransaction } from "./connectFileToTransaction";
 
 /** One part: a page range, 1-based and inclusive. */
@@ -203,6 +203,10 @@ export async function performSplitFile(
   }
   const generated = await generatedInvoiceRefusal(db, userId, fileData);
   if (generated) throw new SplitRefusal("failed-precondition", generated);
+  // Splitting deletes the original: a Closed File, or one on a Closed
+  // Transaction, is refused before any part is written (#801).
+  const closed = await closedFileDeleteRefusal(db, userId, fileId, fileData);
+  if (closed) throw new SplitRefusal("failed-precondition", closed);
   if (typeof fileData.storagePath !== "string" || !fileData.storagePath) {
     throw new SplitRefusal("failed-precondition", "This File has no stored document to split.");
   }
