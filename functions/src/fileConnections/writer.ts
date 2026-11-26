@@ -27,7 +27,13 @@
 import { transactionSuggestionsActivity } from "../matching/suggestionActivity";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { HttpsError } from "../utils/createCallable";
-import { CLOSED_CONNECTION, closedRefusal, closedSettingsIn, isClosedDate } from "../fiscalYears/fiscalYears";
+import {
+  CLOSED_CONNECTION,
+  closedRefusal,
+  closedSettingsIn,
+  isClosedDate,
+  type FiscalYearSettings,
+} from "../fiscalYears/fiscalYears";
 import { deriveActivityLevel } from "../utils/activityLevel";
 import { activityEntry, type ActivityActor } from "../utils/activity";
 import {
@@ -288,6 +294,17 @@ export async function connectFileToNewTransaction(
   await afterConnects(db, userId, plan, options);
   await followReceiptLinks(db, userId, plan.connected);
   return outcome;
+}
+
+/**
+ * The refusal for a File Connection whose Transaction is Closed (#801): the
+ * message, naming Closed Through, when any of these Transaction dates is in
+ * the Closed stretch, else null. `closed` is null when nothing is closed.
+ */
+function closedConnectionRefusal(closed: FiscalYearSettings | null, transactionDates: unknown[]): string | null {
+  return closed && transactionDates.some((date) => isClosedDate(closed, date))
+    ? closedRefusal(closed, CLOSED_CONNECTION)
+    : null;
 }
 
 function refusal(
@@ -559,8 +576,9 @@ async function planConnects(
       continue;
     }
     // A row this plan creates is an insert, which the lock never refuses.
-    if (t !== freshView && isClosedDate(closed, t.data.date)) {
-      outcomes.push(refusal(fileId, transactionId, "closed", "failed-precondition", closedRefusal(closed!, CLOSED_CONNECTION)));
+    const locked = t !== freshView ? closedConnectionRefusal(closed, [t.data.date]) : null;
+    if (locked) {
+      outcomes.push(refusal(fileId, transactionId, "closed", "failed-precondition", locked));
       continue;
     }
 
@@ -684,12 +702,11 @@ async function planConnects(
         continue;
       }
       // Taking apart a connection on a Closed Transaction is an Unlink there.
-      let staleClosed = false;
-      for (const stale of onFile) {
-        if (isClosedDate(closed, (await txView(stale.data().transactionId as string))?.data.date)) staleClosed = true;
-      }
-      if (staleClosed) {
-        outcomes.push(refusal(fileId, transactionId, "closed", "failed-precondition", closedRefusal(closed!, CLOSED_CONNECTION)));
+      const staleDates: unknown[] = [];
+      for (const stale of onFile) staleDates.push((await txView(stale.data().transactionId as string))?.data.date);
+      const staleLocked = closedConnectionRefusal(closed, staleDates);
+      if (staleLocked) {
+        outcomes.push(refusal(fileId, transactionId, "closed", "failed-precondition", staleLocked));
         continue;
       }
       for (const stale of [...onTx, ...onFile]) {
@@ -1022,10 +1039,8 @@ export async function unlinkFile(db: Db, userId: string, request: UnlinkRequest)
     if (fileSnap.data()!.userId !== userId) throw new HttpsError("permission-denied", "File access denied");
     if (!txSnap.exists) throw new HttpsError("not-found", "Transaction not found");
     if (txSnap.data()!.userId !== userId) throw new HttpsError("permission-denied", "Transaction access denied");
-    const closed = await closedSettingsIn(tx, db, userId);
-    if (isClosedDate(closed, txSnap.data()!.date)) {
-      throw new HttpsError("failed-precondition", closedRefusal(closed!, CLOSED_CONNECTION));
-    }
+    const locked = closedConnectionRefusal(await closedSettingsIn(tx, db, userId), [txSnap.data()!.date]);
+    if (locked) throw new HttpsError("failed-precondition", locked);
 
     const records = await tx.get(
       db
@@ -1371,10 +1386,11 @@ export async function planCopyMove(
   );
   const ownedTx = txSnaps.filter((s) => s.exists && s.data()?.userId === userId);
   // Each connection the Copy holds is taken apart: none may be on a Closed Transaction (#801).
-  const closed = await closedSettingsIn(tx, db, userId);
-  if (ownedTx.some((s) => isClosedDate(closed, s.data()!.date))) {
-    throw new HttpsError("failed-precondition", closedRefusal(closed!, CLOSED_CONNECTION));
-  }
+  const locked = closedConnectionRefusal(
+    await closedSettingsIn(tx, db, userId),
+    ownedTx.map((s) => s.data()!.date)
+  );
+  if (locked) throw new HttpsError("failed-precondition", locked);
 
   // Which Transactions the original takes over, decided here once, so the
   // Partner revert can count the original as still connected there.
