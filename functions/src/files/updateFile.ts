@@ -15,6 +15,7 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { cancelPartnerWorkersForFile } from "../utils/cancelWorkers";
 import { applyFactChange } from "../fileFacts/applyFactChange";
 import { DESCRIPTIVE_FIELDS } from "../fileFacts/handCorrection";
+import { assertFileNotClosed } from "../fiscalYears/fiscalYears";
 
 /** The descriptive fields this callable takes by stored name, keyed back to the module's names. */
 const DETAIL_KEY_BY_STORED_FIELD: Record<string, string> = Object.fromEntries(
@@ -86,6 +87,9 @@ const WRITABLE_FIELDS = new Set([
   "extractedAddress",
 ]);
 
+/** What a Closed File still takes (#801): display metadata, no fact. */
+const UNLOCKED_FIELDS = new Set(["fileName", "thumbnailUrl"]);
+
 interface UpdateFileResponse {
   success: boolean;
 }
@@ -116,6 +120,12 @@ export async function updateFileInternal(
 
   if (fileSnap.data()!.userId !== ctx.userId) {
     throw new HttpsError("permission-denied", "Access denied");
+  }
+
+  // A File dated in the Closed stretch keeps its Partner, its invoice ruling
+  // and its facts (#801, ADR-0018); its name and thumbnail are not facts.
+  if (Object.keys(data ?? {}).some((key) => !UNLOCKED_FIELDS.has(key) && (data as Record<string, unknown>)[key] !== undefined)) {
+    await assertFileNotClosed(ctx.db, ctx.userId, fileSnap.data());
   }
 
   // Refusing loudly beats stripping silently: a silent strip is the same
@@ -206,7 +216,10 @@ export async function updateFileInternal(
       change: { origin: "ui-correction", correction, details },
     });
     if (result.refused) {
-      throw new HttpsError(result.code === "NOT_FOUND" ? "not-found" : "invalid-argument", result.message);
+      throw new HttpsError(
+        result.code === "NOT_FOUND" ? "not-found" : result.code === "CLOSED" ? "failed-precondition" : "invalid-argument",
+        result.message
+      );
     }
     factFields = Object.keys(result.update);
   }

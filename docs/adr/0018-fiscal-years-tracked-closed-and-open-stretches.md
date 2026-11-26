@@ -58,11 +58,26 @@ Account's contents, a bank disconnect, a re-sync that would replace them, and a 
 Payment's correction and delete. The orphan cleanups keep a closed orphan. The browser
 writes no Transaction at all, so the data plane refuses every write to one.
 
-Inserts are not refused. A User moving from another tool imports old years into the
-Closed stretch with the normal tools.
+A File is Closed when its extracted (or given) date lies in the Closed stretch; an undated
+File never is. A Closed File's facts cannot be changed, the currency included: the File-facts
+writer refuses a correction, a not-invoice ruling, and a correction that would date an open
+File into the Closed stretch. Its Partner and invoice direction stay too, while a rename does
+not count as a fact. It cannot be deleted or split.
 
-Locking Files and File Connections, keeping the Closed stretch out of the work lists and
-the digest, and keeping automation off it are their own tickets; they call the same check.
+A File Connection is locked when its Transaction is Closed. The File Connection writer
+refuses a connect, an Unlink, a Rejection with it and the Copy swap there, whatever the
+origin; lifting a Rejection is refused too. The File's date does not lock a connection, so a
+Closed File (an April invoice) can be connected to, and unlinked from, a Transaction in open
+time (its May payment) while its own facts stay locked. Deleting a File would take its
+connections apart, so a File on a Closed Transaction cannot be deleted either.
+
+Inserts are not refused. A User moving from another tool imports old years into the
+Closed stretch with the normal tools, and uploads Files dated there.
+
+Keeping the Closed stretch out of the work lists and the digest, and keeping automation off
+it, are their own tickets; they call the same check. Automation skips a Closed File rather
+than being refused by the File-facts writer, which refuses only what a person or a client
+starts.
 
 ## The lift
 

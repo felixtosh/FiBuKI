@@ -99,6 +99,21 @@ export function stretchOf(settings: FiscalYearSettings, date: Date | string): St
   return "open";
 }
 
+/**
+ * The date that puts a File in a stretch: its extracted (or given) date
+ * (#801). An undated File is in none, so it is never Closed.
+ */
+export function fileDateOf(file: Record<string, unknown> | undefined): Date | null {
+  const date = toDateSafe(file?.extractedDate);
+  return date instanceof Date && !isNaN(date.getTime()) ? date : null;
+}
+
+/** Which stretch a File is in, through the one check; null for an undated File. */
+export function fileStretchOf(settings: FiscalYearSettings, file: Record<string, unknown> | undefined): Stretch | null {
+  const date = fileDateOf(file);
+  return date ? stretchOf(settings, date) : null;
+}
+
 const PAGE = 50;
 
 /**
@@ -185,6 +200,27 @@ export async function readFiscalYears(db: Db, userId: string): Promise<FiscalYea
     });
     return initial;
   });
+}
+
+/**
+ * The User's settings read inside a Firestore transaction, or null when
+ * nothing is closed (#801). Reads only, so a writer can ask among its other
+ * reads: a User with nothing stored has the default, which closes nothing.
+ */
+export async function closedSettingsIn(
+  tx: FirebaseFirestore.Transaction,
+  db: Db,
+  userId: string
+): Promise<FiscalYearSettings | null> {
+  const settings = parseStored((await tx.get(settingsRef(db, userId))).data());
+  return settings && settings.closedThrough !== null ? settings : null;
+}
+
+/** Whether a stored date lies in the Closed stretch; an unknown date never does. */
+export function isClosedDate(settings: FiscalYearSettings | null, date: unknown): boolean {
+  if (!settings) return false;
+  const parsed = toDateSafe(date);
+  return parsed instanceof Date && !isNaN(parsed.getTime()) && stretchOf(settings, parsed) === "closed";
 }
 
 /** What a refusal says: Closed Through, and how to lift it. */
