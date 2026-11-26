@@ -301,7 +301,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "list_transactions_needing_files",
     annotation: "read-only",
-    description: "Find transactions without receipts (no files, no category). Returns { transactions, nextCursor, count }. `count` is the size of this page, not a total — page with nextCursor until it comes back null to see everything that still needs a receipt.",
+    description: "Find transactions without receipts (no files, no category). Returns { transactions, nextCursor, count }. `count` is the size of this page, not a total — page with nextCursor until it comes back null to see everything that still needs a receipt. Only open months are work: transactions dated in a closed month (Closed Through, see get_fiscal_years) or before Tracked From are left out; list_transactions still shows them.",
     inputSchema: {
       type: "object",
       properties: {
@@ -315,7 +315,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "list_transactions_missing_invoice",
     annotation: "read-only",
     description:
-      "Find transactions documented by a receipt only - money moved, a document is attached, but no invoice satisfying § 11 UStG was ever received, so no Vorsteuer may be claimed. These lines look complete everywhere else. Returns { transactions, nextCursor, count, acceptedCount } where each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing, so a request to the supplier can name the defect. Lines with a live Accepted Receipt ruling (accept_receipt_only) are excluded; `acceptedCount` says how many this page's scan excluded. Like `count`, both are per page, not totals - page with nextCursor until it comes back null.",
+      "Find transactions documented by a receipt only - money moved, a document is attached, but no invoice satisfying § 11 UStG was ever received, so no Vorsteuer may be claimed. These lines look complete everywhere else. Returns { transactions, nextCursor, count, acceptedCount } where each row carries the vendor, the amount, the date and the § 11 elements the attached document is missing, so a request to the supplier can name the defect. Lines with a live Accepted Receipt ruling (accept_receipt_only) are excluded; `acceptedCount` says how many this page's scan excluded. Like `count`, both are per page, not totals - page with nextCursor until it comes back null. Transactions dated in a closed month (Closed Through, see get_fiscal_years) or before Tracked From are left out.",
     inputSchema: {
       type: "object",
       properties: {
