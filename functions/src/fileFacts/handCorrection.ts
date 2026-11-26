@@ -21,6 +21,7 @@ import { reconcileLineItemsWithDocumentTotal } from "../extraction/lineItemRecon
 import { enforceLineItemVat } from "../extraction/taxFacts";
 import { isAdditionalFieldKey, normalizePaymentMethod } from "../extraction/fieldVocabulary";
 import { buildCorrectionProvenance, CORRECTABLE_FIELDS } from "./provenance";
+import { normalizeCurrency } from "../fx/currencyNormalization";
 
 /**
  * A correction. **Omitted is not null**: a key absent here is left untouched,
@@ -61,6 +62,11 @@ export interface FileExtractionCorrection {
    * Zero and null both mean "no tip"; a negative one is refused.
    */
   tipAmount?: number | null;
+  /**
+   * The document's currency as an ISO 4217 code (#795), or a symbol the
+   * extractor also understands (`$`, `€`). Null clears it.
+   */
+  currency?: string | null;
 }
 
 /** Mirrors `InvoiceDirection` on the file record. */
@@ -136,6 +142,28 @@ function normalizeLineItems(lineItems: unknown, field: string): ExtractedLineIte
       amount,
     };
   });
+}
+
+/**
+ * A currency as stored: the extractor's own normalizer (symbols to codes,
+ * upper case), then a three-letter code or nothing (#795). A person typing
+ * "dollars" is told so rather than having it stored.
+ */
+/**
+ * The ISO 4217 codes the runtime knows (Node 22's ICU: current and recently
+ * withdrawn ones such as HRK). A code with no ECB rate is still stored: it
+ * goes to the foreign-currency worklist, as an extracted one does.
+ */
+const ISO_CURRENCIES = new Set<string>(
+  (Intl as unknown as { supportedValuesOf(key: "currency"): string[] }).supportedValuesOf("currency")
+);
+
+function isoCurrency(value: unknown): string {
+  const code = typeof value === "string" ? normalizeCurrency(value) : null;
+  if (!code || !ISO_CURRENCIES.has(code)) {
+    throw new ExtractionCorrectionError("currency must be a three-letter ISO 4217 code, e.g. EUR or USD");
+  }
+  return code;
 }
 
 function parseIsoDate(value: unknown): Timestamp {
@@ -280,10 +308,15 @@ export function buildExtractionCorrection(
     changed.push("invoiceDirection");
   }
 
+  if (fields.currency !== undefined) {
+    updates.extractedCurrency = fields.currency === null ? null : isoCurrency(fields.currency);
+    changed.push("currency");
+  }
+
   if (changed.length === 0) {
     throw new ExtractionCorrectionError(
       "Nothing to correct — pass at least one of amount, vatAmount, vatPercent, date, " +
-        "lineItems, invoiceDirection, tipAmount"
+        "lineItems, invoiceDirection, tipAmount, currency"
     );
   }
 
@@ -345,6 +378,7 @@ const STORED_FIELD: Record<(typeof CORRECTABLE_FIELDS)[number], string> = {
   // a read of the document, kept on the record itself (#233).
   invoiceDirection: "invoiceDirection",
   tipAmount: "extractedTipAmount",
+  currency: "extractedCurrency",
 };
 
 /**
@@ -391,6 +425,7 @@ function matchesStored(
   if (field === "lineItems") return lineItemsMatch(proposed, stored);
   if (field === "invoiceDirection") return directionsMatch(proposed, stored);
   if (field === "tipAmount") return tipsMatch(proposed, stored);
+  if (field === "currency") return currenciesMatch(proposed, stored);
   return numbersMatch(proposed, stored, field !== "vatPercent");
 }
 
@@ -416,6 +451,13 @@ function tipsMatch(proposed: unknown, stored: unknown): boolean {
   const settled = (value: unknown) =>
     isEmpty(value) || value === 0 ? null : value;
   return numbersMatch(settled(proposed), settled(stored), true);
+}
+
+/** A currency compares as the code it would be stored as. */
+function currenciesMatch(proposed: unknown, stored: unknown): boolean {
+  if (isEmpty(proposed)) return isEmpty(stored);
+  const code = typeof proposed === "string" ? normalizeCurrency(proposed) : null;
+  return code !== null && code === stored;
 }
 
 /** Absent and null are the same answer: the record holds no value. */

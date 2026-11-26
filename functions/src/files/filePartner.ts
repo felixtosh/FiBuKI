@@ -70,7 +70,7 @@ async function loadOwnFile(db: Db, userId: string, fileId: string) {
  * Merged Partner is refused naming its survivor, so a caller holding a stale
  * id corrects itself (ADR-0005).
  */
-async function loadUsablePartner(
+export async function loadUsablePartner(
   db: Db,
   userId: string,
   partnerId: string,
@@ -92,6 +92,11 @@ async function loadUsablePartner(
       "failed-precondition",
       `Partner ${partnerId} is a Merged Partner (merged into ${mergedInto}); use ${mergedInto} instead`
     );
+  }
+  // A deleted Partner answers like a missing one (#795). After the merge
+  // check: a Merged Partner is inactive too, and its refusal names the survivor.
+  if (partnerDoc.data()!.isActive === false) {
+    throw new HttpsError("not-found", "Partner not found");
   }
   return partnerDoc;
 }

@@ -58,6 +58,8 @@ import {
 } from "../fileFacts/handCorrection";
 import { classifyFileRecord, documentTypeFields } from "../documents/adapter";
 import { applyFactChange } from "../fileFacts/applyFactChange";
+import { uploadedFileFacts } from "../fileFacts/factChange";
+import { factChangeActivity } from "../fileFacts/applyFactChange";
 import {
   CORRECTABLE_FIELDS,
   correctedFieldsOf,
@@ -285,7 +287,7 @@ export async function handleTool(
     case "auto_connect_file_suggestions":
       return autoConnectFileSuggestions(userId, args);
     case "upload_file":
-      return uploadFile(userId, args);
+      return uploadFile(userId, args, caller);
     case "score_file_transaction_match":
       return scoreFileTransactionMatch(userId, args);
     case "mark_file_as_not_invoice":
@@ -1607,6 +1609,8 @@ export async function updateFileExtraction(userId: string, args: Record<string, 
     file: {
       fileName: after.fileName ?? null,
       extractedAmount: after.extractedAmount ?? null,
+      // #795: the currency that amount is in.
+      extractedCurrency: after.extractedCurrency ?? null,
       // #217: reported beside the total precisely so a caller can see it was
       // not taken out of it.
       extractedTipAmount: after.extractedTipAmount ?? null,
@@ -3429,7 +3433,11 @@ export async function importTransactions(userId: string, args: Record<string, un
 // File Upload & Scoring
 // ============================================================================
 
-export async function uploadFile(userId: string, args: Record<string, unknown>) {
+export async function uploadFile(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller = MCP_CALLER
+) {
   const { base64, fileName, mimeType } = args;
   // A file the user attached in ChatGPT arrives as { download_url, file_id }: a short-lived public
   // https link, so it takes the same guarded download as `url`.
@@ -3438,6 +3446,10 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
   if (!fileName) throw new Error("fileName is required");
   if (!mimeType) throw new Error("mimeType is required");
   if (!url && !base64) throw new Error("Either file, url or base64 is required");
+
+  // The facts the caller already knows (#795). Checked before anything is
+  // stored, so a refused value leaves no File behind.
+  const given = await checkGivenFacts(userId, args, caller);
 
   let fileBuffer: Buffer;
 
@@ -3474,6 +3486,8 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
       storagePath: existing.storagePath ?? null,
       fileSize: existing.fileSize ?? fileBuffer.length,
       duplicate: true,
+      // The File on record keeps its own facts, deleted or not (#795).
+      ...(given.named.length > 0 ? { givenFactsIgnored: true } : {}),
     };
   }
 
@@ -3495,7 +3509,9 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
 
   const downloadUrl = buildDownloadUrl(bucket.name, storagePath, downloadToken);
 
-  // Create file record in Firestore, through the shared write point
+  // Create file record in Firestore, through the shared write point. The
+  // given facts are part of the record the creation writes (#795), so the
+  // File never exists without them and its Extraction sees them from the start.
   const now = FieldValue.serverTimestamp();
   const { fileId, duplicate } = await createFileRecord(db, {
     userId,
@@ -3516,7 +3532,10 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
     uploadedAt: now,
     createdAt: now,
     updatedAt: now,
+    ...given.fileFields,
   });
+
+  if (!duplicate) await logGivenFacts(fileId, given);
 
   return {
     success: true,
@@ -3525,7 +3544,114 @@ export async function uploadFile(userId: string, args: Record<string, unknown>) 
     storagePath,
     fileSize: fileBuffer.length,
     duplicate,
+    ...(given.named.length > 0 ? (duplicate ? { givenFactsIgnored: true } : { givenFacts: given.named }) : {}),
   };
+}
+
+/** The facts `upload_file` takes beside the bytes (#795), in the correction's own names. */
+const GIVEN_FACT_FIELDS = ["date", "amount", "currency", "vatAmount", "vatPercent"] as const;
+
+interface GivenFacts {
+  /** The fields the creating record carries for them: the facts, the Partner. */
+  fileFields: Record<string, unknown>;
+  /** What was given, by argument name, as the response reports it. */
+  named: string[];
+  /** The File's log lines for them, written after the creation. */
+  activity: Record<string, unknown>[];
+}
+
+/**
+ * Read and check the given facts, before any byte is stored. The figures
+ * pass the File facts module's own validation (the refusals
+ * `update_file_extraction` gives) and three more an upload needs because no
+ * reading backs them: whole cents, a currency beside any amount, and a VAT
+ * amount that fits inside the amount it belongs to. The Partner must be one
+ * the User may assign; it is recorded as `assign_partner_to_file` would for
+ * the same caller.
+ */
+async function checkGivenFacts(
+  userId: string,
+  args: Record<string, unknown>,
+  caller: ToolCaller
+): Promise<GivenFacts> {
+  const correction: Record<string, unknown> = {};
+  for (const key of GIVEN_FACT_FIELDS) {
+    if (args[key] !== undefined && args[key] !== null) correction[key] = args[key];
+  }
+  checkGivenFigures(correction);
+
+  const fileFields: Record<string, unknown> = {};
+  const named: string[] = [];
+  const activity: Record<string, unknown>[] = [];
+
+  if (Object.keys(correction).length > 0) {
+    const outcome = uploadedFileFacts(correction as FileExtractionCorrection);
+    if (outcome.refused) throw new Error(outcome.message);
+    Object.assign(fileFields, outcome.update);
+    named.push(...outcome.changed);
+    const entry = factChangeActivity({ origin: "upload", correction }, outcome.update, undefined);
+    if (entry) activity.push(entry);
+  }
+
+  if (args.partnerId !== undefined && args.partnerId !== null) {
+    const { loadUsablePartner } = await import("../files/filePartner");
+    const partner = await loadUsablePartner(db, userId, args.partnerId as string, "user");
+    const byAgent = caller.kind === "agent";
+    Object.assign(fileFields, {
+      partnerId: partner.id,
+      partnerType: "user",
+      partnerMatchedBy: byAgent ? "ai" : "manual",
+      ...(byAgent ? {} : { partnerMatchConfidence: 100 }),
+    });
+    named.push("partnerId");
+    const name = (partner.data()!.name as string | undefined) ?? partner.id;
+    activity.push(
+      activityEntry({
+        type: "partner_assigned",
+        actor: "ai",
+        partnerName: name,
+        forPartnerId: partner.id,
+        confidence: byAgent ? null : 100,
+        summary: `Partner "${name}" assigned`,
+      })
+    );
+  }
+
+  return { fileFields, named, activity };
+}
+
+/** The checks on given figures that a reading would otherwise back. */
+function checkGivenFigures(given: Record<string, unknown>): void {
+  for (const key of ["amount", "vatAmount"] as const) {
+    if (given[key] !== undefined && !Number.isInteger(given[key])) {
+      throw new Error(`${key} must be a whole number of cents`);
+    }
+  }
+  const amount = given.amount as number | undefined;
+  const vat = given.vatAmount as number | undefined;
+  if ((amount !== undefined || vat !== undefined) && given.currency === undefined) {
+    throw new Error("Give the currency with an amount: a given amount is never read in a guessed currency");
+  }
+  if (vat === undefined) return;
+  if (amount === undefined) {
+    throw new Error("vatAmount needs amount: give the total the VAT belongs to");
+  }
+  if (Math.abs(vat) > Math.abs(amount)) {
+    throw new Error("vatAmount is larger than the amount it belongs to");
+  }
+  if (vat !== 0 && Math.sign(vat) !== Math.sign(amount)) {
+    throw new Error("vatAmount must have the amount's sign (both negative on a credit note)");
+  }
+}
+
+/** The new File's log lines for its given facts. A log is not the facts: a failure is only logged. */
+async function logGivenFacts(fileId: string, given: GivenFacts): Promise<void> {
+  if (given.activity.length === 0) return;
+  try {
+    await db.collection("files").doc(fileId).update(logActivity(...given.activity));
+  } catch (error) {
+    console.error(`[uploadFile] Could not log the given facts of file ${fileId}:`, error);
+  }
 }
 
 export async function scoreFileTransactionMatch(userId: string, args: Record<string, unknown>) {

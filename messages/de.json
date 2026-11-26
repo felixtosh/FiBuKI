@@ -630,6 +630,7 @@
         "amount": "Betrag",
         "date": "Belegdatum",
         "tipAmount": "Trinkgeld",
+        "currency": "Währung",
         "other": "weiteren Feldern"
       }
     },

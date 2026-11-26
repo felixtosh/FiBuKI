@@ -83,8 +83,13 @@ export interface CurrentFile {
   linkedTransactions: DirectionTransactionFacts[];
 }
 
-/** Where a Hand Correction came from. The two doors take one contract. */
-export type HandCorrectionOrigin = "ui-correction" | "mcp-correction";
+/**
+ * Where a Hand Correction came from. The two doors take one contract, and so
+ * do the facts an importer gives with `upload_file` (`upload`, #795): they are
+ * hand-given, recorded the same way, and the Extraction that follows fills
+ * only the fields they leave empty (see `fillsAroundGivenFacts`).
+ */
+export type HandCorrectionOrigin = "ui-correction" | "mcp-correction" | "upload";
 
 /** A User's change to a File's extracted facts, through the panel or the MCP tool. */
 export interface HandCorrectionChange {
@@ -223,7 +228,7 @@ export type FactOutcome = FactUpdate | FactRefusal;
  */
 export const LAST_FACT_CHANGE_FIELD = "lastFactChange";
 
-const HAND_CORRECTION_ORIGINS: readonly string[] = ["ui-correction", "mcp-correction"];
+const HAND_CORRECTION_ORIGINS: readonly string[] = ["ui-correction", "mcp-correction", "upload"];
 
 /**
  * Was the write that turned `before` into `after` a Hand Correction? A
@@ -261,6 +266,7 @@ export function reExtractionRefusal(
   options: { overwriteCorrections?: boolean }
 ): FactRefusal | null {
   if (options.overwriteCorrections === true) return null;
+  if (fillsAroundGivenFacts(record)) return null;
   const fields = correctedFieldsOf(record);
   if (fields.length === 0) return null;
   return {
@@ -273,6 +279,39 @@ export function reExtractionRefusal(
   };
 }
 
+/**
+ * Set on a File created with given facts (#795) and cleared by the first
+ * reading that lands: while it stands, no reading of the document has ever
+ * been written, so the Extraction fills around the Hand Correction instead
+ * of being refused. A correction made before that reading does not end it.
+ */
+export const GIVEN_FACTS_AWAIT_READING_FIELD = "givenFactsAwaitReading";
+
+/**
+ * Does an Extraction of this File fill around facts given at upload (#795)?
+ * True until a reading lands: the Extraction then stores what it reads only
+ * in the fields the Hand Correction record leaves empty. Afterwards the given
+ * facts are an ordinary Hand Correction and a re-extraction is refused.
+ */
+export function fillsAroundGivenFacts(record: Record<string, unknown>): boolean {
+  return record[GIVEN_FACTS_AWAIT_READING_FIELD] === true && correctedFieldsOf(record).length > 0;
+}
+
+/**
+ * The fact fields of a File created with given facts (#795), for the record
+ * `upload_file` creates, so the facts and the File are one write and the
+ * Extraction the creation queues already sees them. Refused like the
+ * correction it is (`INVALID`); the caller checks before storing bytes.
+ */
+export function uploadedFileFacts(
+  correction: FileExtractionCorrection,
+  at: Timestamp = Timestamp.now()
+): FactOutcome {
+  const outcome = decideFactChange({ record: {}, linkedTransactions: [] }, { origin: "upload", correction, at });
+  if (outcome.refused) return outcome;
+  return { ...outcome, update: { ...outcome.update, [GIVEN_FACTS_AWAIT_READING_FIELD]: true } };
+}
+
 // ---------------------------------------------------------------------------
 // A Hand Correction
 // ---------------------------------------------------------------------------
@@ -283,6 +322,9 @@ export function reExtractionRefusal(
  */
 const SCORED_FIELDS = [
   "extractedAmount",
+  // #795: the scorer compares amounts across currencies, so a corrected
+  // currency changes a score as much as a corrected amount.
+  "extractedCurrency",
   "extractedDate",
   "extractedDueDate",
   "extractedDebitDate",
@@ -320,7 +362,7 @@ function decideHandCorrection(current: CurrentFile, change: HandCorrectionChange
   const details = onlyDescriptiveKeys(change.details ?? {});
 
   if (
-    change.origin === "mcp-correction" &&
+    change.origin !== "ui-correction" &&
     Object.keys(proposed).length === 0 &&
     Object.keys(details).length === 0
   ) {
@@ -473,7 +515,15 @@ function decideExtraction(current: CurrentFile, change: ExtractionChange): FactO
 
   const at = change.at ?? Timestamp.now();
   const { reading } = change;
+  const fillAround = change.forced !== true && fillsAroundGivenFacts(record);
+  // Facts given at upload say the document is one (#795): a reading that
+  // calls it not an invoice is refused, as on any hand-corrected File.
+  if (fillAround && reading.kind === "not-invoice") {
+    return givenFactsRefusal(record);
+  }
   const update = extractionFields(record, reading);
+  if (fillAround) keepGivenFacts(record, update);
+  if (record[GIVEN_FACTS_AWAIT_READING_FIELD] !== undefined) update[GIVEN_FACTS_AWAIT_READING_FIELD] = null;
 
   Object.assign(
     update,
@@ -495,6 +545,53 @@ function decideExtraction(current: CurrentFile, change: ExtractionChange): FactO
     movedDetails: [],
   };
 }
+
+/** The refusal of a not-invoice reading on a File whose facts were given at upload. */
+function givenFactsRefusal(record: Record<string, unknown>): FactRefusal {
+  const fields = correctedFieldsOf(record);
+  return {
+    refused: true,
+    code: "HAND_CORRECTED",
+    fields,
+    message: `File carries facts given at upload (${fields.join(", ")}); a reading that calls it not an invoice is not written.`,
+  };
+}
+
+/**
+ * Put the facts given at upload back over a reading (#795): every field the
+ * Hand Correction record names keeps its stored value, and what follows from
+ * those facts is derived again from the File as it is left. A given VAT
+ * figure outranks the printed block the way a correction does, so the block
+ * stays cleared and the rows are reconciled against the given figures.
+ */
+function keepGivenFacts(record: Record<string, unknown>, update: Record<string, unknown>): void {
+  const given = correctedFieldsOf(record);
+  for (const field of given) {
+    const stored = FIGURE_STORED_FIELD[field];
+    if (stored) delete update[stored];
+  }
+  if (given.some((field) => GIVEN_VAT_BEARING.includes(field))) {
+    delete update.extractedRateGroups;
+    delete update.extractedRateGroupsSource;
+    update.vatSourceDowngraded = false;
+    update.vatFieldsPreserved = false;
+    const after = { ...record, ...update };
+    const items = after.extractedLineItems as ExtractedLineItem[] | null | undefined;
+    const reconciled = reconcileLineItemsWithDocumentTotal(
+      Array.isArray(items) ? items : [],
+      (after.extractedAmount as number | null | undefined) ?? null,
+      null,
+      (after.extractedVatPercent as number | null | undefined) ?? null
+    );
+    update.lineItemsUnreconciled = reconciled.unreconciled;
+    update.lineItemsUnreconciledRates =
+      reconciled.unreconciledRates.length > 0 ? reconciled.unreconciledRates : null;
+  }
+  if (given.includes("date")) Object.assign(update, derivePaymentDates({ ...record, ...update }));
+}
+
+/** The given facts that make the person the authority on the File's VAT. */
+const GIVEN_VAT_BEARING: readonly string[] = ["amount", "vatAmount", "vatPercent", "lineItems"];
 
 /**
  * The derived fields of a File that a reading of the document, or a ruling
@@ -537,6 +634,8 @@ function readingDerivedFields(
 function decideNotInvoice(current: CurrentFile, change: NotInvoiceChange): FactOutcome {
   const { record } = current;
   const update = notInvoiceFields(record, change.reason);
+  // The given facts go with the record (#795), so nothing is left to wait for a reading.
+  if (record[GIVEN_FACTS_AWAIT_READING_FIELD] !== undefined) update[GIVEN_FACTS_AWAIT_READING_FIELD] = null;
   Object.assign(update, readingDerivedFields({ ...record, ...update }, current.linkedTransactions, []));
   return stamped(record, update, change.origin, change.at ?? Timestamp.now());
 }
@@ -713,6 +812,7 @@ const FIGURE_STORED_FIELD: Record<string, string> = {
   lineItems: "extractedLineItems",
   invoiceDirection: "invoiceDirection",
   tipAmount: "extractedTipAmount",
+  currency: "extractedCurrency",
 };
 
 function figureStoredFields(changed: string[]): string[] {

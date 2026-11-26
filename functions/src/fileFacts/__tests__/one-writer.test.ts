@@ -24,6 +24,7 @@ import { join, sep } from "path";
 /** The stored fields that are a File's extracted facts, or its Hand Correction record. */
 const FACTS = [
   "extractedAmount",
+  "extractedCurrency",
   "extractedVatAmount",
   "extractedVatPercent",
   "extractedDate",

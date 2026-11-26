@@ -662,6 +662,12 @@ describe("re-scoring the suggestions (#637 user stories 12 and 13)", () => {
       .toBe(true);
   });
 
+  it("re-scores after a moved currency (#795): the scorer compares amounts across currencies", () => {
+    expect(kinds(followUpsOf({ origin: "mcp-correction", correction: { currency: "USD" } }))).toContain(
+      "rescore-suggestions"
+    );
+  });
+
   it("re-scores after a moved date, partner, Due Date or Debit Date", () => {
     expect(kinds(followUpsOf({ origin: "mcp-correction", correction: { date: "2026-03-02" } }))).toContain(
       "rescore-suggestions"
