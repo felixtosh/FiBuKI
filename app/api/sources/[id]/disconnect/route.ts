@@ -49,12 +49,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const apiConfig = source.apiConfig;
 
-    // Filed years keep their evidence (#794): a disconnect deletes every row,
-    // so it is refused while one is dated in the Closed stretch.
-    const ownRows = await db.collection("transactions").where("userId", "==", userId).where("sourceId", "==", sourceId).get();
+    // A disconnect deletes every row of this Bank Account (both API synced and
+    // CSV imported), whatever user id a row carries. Filed years keep their
+    // evidence (#794): it is refused while one of exactly those rows is dated
+    // in the Closed stretch (#813).
+    const rows = await db.collection("transactions").where("sourceId", "==", sourceId).get();
     // Only a dated row can lie in the Closed stretch, so the settings are read
     // only when there is one.
-    const dates = ownRows.docs.map((d) => toDateSafe(d.data().date)).filter((d): d is Date => d !== null);
+    const dates = rows.docs.map((d) => toDateSafe(d.data().date)).filter((d): d is Date => d !== null);
     const fiscalYears = dates.length > 0 ? await readFiscalYears(db, userId) : null;
     if (fiscalYears && dates.some((date) => stretchOf(fiscalYears, date) === "closed")) {
       return NextResponse.json(
@@ -81,19 +83,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // Delete all transactions for this source (both API synced and CSV imported)
-    const transactionsQuery = await db
-      .collection("transactions")
-      .where("sourceId", "==", sourceId)
-      .get();
-
+    // Delete the rows just checked, no other set
     let deletedTransactions = 0;
     const BATCH_SIZE = 500;
 
     // Delete in batches
-    for (let i = 0; i < transactionsQuery.docs.length; i += BATCH_SIZE) {
+    for (let i = 0; i < rows.docs.length; i += BATCH_SIZE) {
       const batch = db.batch();
-      const slice = transactionsQuery.docs.slice(i, i + BATCH_SIZE);
+      const slice = rows.docs.slice(i, i + BATCH_SIZE);
 
       for (const txDoc of slice) {
         batch.delete(txDoc.ref);

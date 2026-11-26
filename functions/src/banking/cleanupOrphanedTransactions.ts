@@ -7,8 +7,7 @@
 
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { isAdminCaller } from "../utils/adminCaller";
-import { readFiscalYears, stretchOf } from "../fiscalYears/fiscalYears";
-import { toDateSafe } from "../utils/toDateSafe";
+import { deleteOrphanRows, orphanRows } from "./orphanTransactions";
 import type {
   CleanupOrphanedTransactionsRequest,
   CleanupOrphanedTransactionsResponse,
@@ -72,10 +71,7 @@ export const cleanupOrphanedTransactionsCallable = createCallable<
     // ========================================================================
     // Find orphaned transactions (sourceId doesn't exist)
     // ========================================================================
-    const orphanedDocs = transactionsQuery.docs.filter((d) => {
-      const sourceId = d.data().sourceId;
-      return sourceId && !validSourceIds.has(sourceId);
-    });
+    const orphanedDocs = orphanRows(transactionsQuery.docs, validSourceIds);
 
     // Group by sourceId for logging
     const orphanedBySource = new Map<string, number>();
@@ -106,28 +102,7 @@ export const cleanupOrphanedTransactionsCallable = createCallable<
     // Delete orphaned transactions
     // ========================================================================
     // Filed years keep their evidence (#794): a closed orphan stays.
-    const fiscalYears = await readFiscalYears(db, cleanupUserId);
-    const isClosed = (d: FirebaseFirestore.QueryDocumentSnapshot) => {
-      const date = toDateSafe(d.data().date);
-      return !!date && stretchOf(fiscalYears, date) === "closed";
-    };
-    const deletable = orphanedDocs.filter((d) => !isClosed(d));
-    const keptClosed = orphanedDocs.length - deletable.length;
-
-    const BATCH_SIZE = 500;
-    let deleted = 0;
-
-    for (let i = 0; i < deletable.length; i += BATCH_SIZE) {
-      const batch = db.batch();
-      const slice = deletable.slice(i, i + BATCH_SIZE);
-
-      for (const doc of slice) {
-        batch.delete(doc.ref);
-        deleted++;
-      }
-
-      await batch.commit();
-    }
+    const { deleted, keptClosed } = await deleteOrphanRows(db, cleanupUserId, orphanedDocs);
 
     console.log(
       `[cleanupOrphanedTransactions] Deleted ${deleted} orphaned transactions`
