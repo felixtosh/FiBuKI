@@ -99,6 +99,36 @@ export function stretchOf(settings: FiscalYearSettings, date: Date | string): St
   return "open";
 }
 
+/**
+ * The date that puts a File in a stretch: its extracted (or given) date
+ * (#801). An undated File is in none, so it is never Closed.
+ */
+export function fileDateOf(file: Record<string, unknown> | undefined): Date | null {
+  const date = toDateSafe(file?.extractedDate);
+  return date instanceof Date && !isNaN(date.getTime()) ? date : null;
+}
+
+/** Which stretch a File is in, through the one check; null for an undated File. */
+export function fileStretchOf(settings: FiscalYearSettings, file: Record<string, unknown> | undefined): Stretch | null {
+  const date = fileDateOf(file);
+  return date ? stretchOf(settings, date) : null;
+}
+
+/**
+ * The first month `stretchOf` calls open. The stretches always run untracked,
+ * closed, open, so a date is open exactly when it is on or after this month;
+ * a query bounds on it to read only open records (#802).
+ */
+export function openFrom(settings: FiscalYearSettings): Month {
+  const afterClosed = settings.closedThrough === null ? settings.trackedFrom : addMonths(settings.closedThrough, 1);
+  return afterClosed > settings.trackedFrom ? afterClosed : settings.trackedFrom;
+}
+
+/** `openFrom` as a stored date: UTC midnight of its first day. */
+export function openFromDate(settings: FiscalYearSettings): Date {
+  return new Date(`${openFrom(settings)}-01T00:00:00Z`);
+}
+
 /** Automation's view of the stretches, for one User and one run (#803). */
 export interface AutomationScope {
   /** Whether automation may work on a record of this date: only in the open stretch. */
@@ -133,7 +163,7 @@ export function automationScope(db: Db, userId: string): AutomationScope {
   return {
     acts,
     actsOnTransaction: (data) => acts(data?.date),
-    actsOnFile: (data) => acts(data?.extractedDate),
+    actsOnFile: (data) => acts(fileDateOf(data)),
     async openTransactions(docs) {
       const open: typeof docs = [];
       for (const doc of docs) if (await acts(doc.data()?.date)) open.push(doc);
@@ -228,6 +258,27 @@ export async function readFiscalYears(db: Db, userId: string): Promise<FiscalYea
     });
     return initial;
   });
+}
+
+/**
+ * The User's settings read inside a Firestore transaction, or null when
+ * nothing is closed (#801). Reads only, so a writer can ask among its other
+ * reads: a User with nothing stored has the default, which closes nothing.
+ */
+export async function closedSettingsIn(
+  tx: FirebaseFirestore.Transaction,
+  db: Db,
+  userId: string
+): Promise<FiscalYearSettings | null> {
+  const settings = parseStored((await tx.get(settingsRef(db, userId))).data());
+  return settings && settings.closedThrough !== null ? settings : null;
+}
+
+/** Whether a stored date lies in the Closed stretch; an unknown date never does. */
+export function isClosedDate(settings: FiscalYearSettings | null, date: unknown): boolean {
+  if (!settings) return false;
+  const parsed = toDateSafe(date);
+  return parsed instanceof Date && !isNaN(parsed.getTime()) && stretchOf(settings, parsed) === "closed";
 }
 
 /** What a refusal says: Closed Through, and how to lift it. */

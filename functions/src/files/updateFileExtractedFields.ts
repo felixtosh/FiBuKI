@@ -72,7 +72,10 @@ export const updateFileExtractedFieldsCallable = createCallable<
     });
 
     if (result.refused) {
-      throw new HttpsError(result.code === "NOT_FOUND" ? "not-found" : "invalid-argument", result.message);
+      throw new HttpsError(
+        result.code === "NOT_FOUND" ? "not-found" : result.code === "CLOSED" ? "failed-precondition" : "invalid-argument",
+        result.message
+      );
     }
 
     console.log(`[updateFileExtractedFields] Saved file ${fileId}`, {

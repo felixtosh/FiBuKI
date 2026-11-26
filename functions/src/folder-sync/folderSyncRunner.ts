@@ -9,7 +9,7 @@ import { getStorage } from "firebase-admin/storage";
 import { buildDownloadUrl } from "../utils/buildDownloadUrl";
 import { decrypt } from "../utils/encryption";
 import { createFileRecord } from "../files/createFileRecord";
-import { performDeleteFile } from "../files/deleteFile";
+import { closedFileDeleteRefusal, performDeleteFile } from "../files/deleteFile";
 import { performRestoreFile, SplitPartsLiveError } from "../files/restoreFile";
 import { isGeneratedInvoiceFile } from "../files/generatedInvoiceGuard";
 import { DropboxProvider, refreshDropboxAccessToken } from "./dropbox/DropboxProvider";
@@ -153,6 +153,8 @@ export function firestoreFileGateway(
     async softDelete(fileId) {
       const f = await ownFile(fileId);
       if (!f || isGeneratedInvoiceFile(f.data)) return;
+      // A File the Fiscal Years lock keeps is left where it is (#801).
+      if (await closedFileDeleteRefusal(db, userId, fileId, f.data)) return;
       await performDeleteFile(db, userId, fileId, f.data, {
         actor: "auto",
         summary: "Deleted because it was removed from the synced folder",

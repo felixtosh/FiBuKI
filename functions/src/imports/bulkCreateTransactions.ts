@@ -8,6 +8,7 @@ import { checkTransactionQuota, incrementTransactionCount } from "../billing/che
 import { toDateSafe } from "../utils/toDateSafe";
 import { normalizeTransactionType } from "./transactionType";
 import { computeDedupeHash, splitDuplicates } from "./dedupe";
+import { readExternalRowId } from "./externalRowId";
 import { readFiscalYears, splitUntracked, stretchOf } from "../fiscalYears/fiscalYears";
 
 interface TransactionData {
@@ -24,6 +25,11 @@ interface TransactionData {
   bankTransactionType?: string | null;
   /** Ignored. The server derives the hash itself (imports/dedupe.ts), so no client can drift from it. */
   dedupeHash?: string;
+  /**
+   * The External Row Id (#804): the row's value of the Reference / Transaction ID
+   * column, sent only when the whole file's column is one (externalRowIdsFromReferences).
+   */
+  externalRowId?: unknown;
   importJobId: string;
   csvRowIndex?: number;
   _original: {
@@ -110,15 +116,21 @@ export const bulkCreateTransactionsCallable = createCallable<
     // is the Bank Account's IBAN (or its id when it has none) with date, amount and reference.
     const sourceIdentifier = (sourceSnap.data()!.iban as string | undefined) || sourceId;
     const importJobId = transactions[0].importJobId;
-    const hashed = transactions.map((tx) => {
+    const hashed = transactions.map((tx, index) => {
       if (isNaN(new Date(tx.date).getTime())) {
         throw new HttpsError("invalid-argument", `Invalid date for transaction: ${tx.date}`);
       }
-      // The web CSV path takes no External Row Id yet (#804): a browser-sent one is
-      // dropped here, so it neither decides a skip nor reaches the stored row.
-      const { externalRowId: _ignored, ...row } = tx as TransactionData & { externalRowId?: unknown };
+      // The External Row Id from the Reference / Transaction ID column, when the browser
+      // found that column to be one (imports/externalRowId.ts, #804).
+      let externalRowId: string | null;
+      try {
+        externalRowId = readExternalRowId(tx.externalRowId, index);
+      } catch (error) {
+        throw new HttpsError("invalid-argument", (error as Error).message);
+      }
       return {
-        ...row,
+        ...tx,
+        externalRowId,
         dedupeHash: computeDedupeHash({
           date: tx.date,
           amount: tx.amount,
@@ -236,6 +248,7 @@ export const bulkCreateTransactionsCallable = createCallable<
           partnerIban: txData.partnerIban ?? null,
           transactionType: normalizeTransactionType(txData.bankTransactionType),
           dedupeHash: txData.dedupeHash,
+          ...(txData.externalRowId ? { externalRowId: txData.externalRowId } : {}),
           importJobId: txData.importJobId,
           csvRowIndex: txData.csvRowIndex,
           _original: txData._original,

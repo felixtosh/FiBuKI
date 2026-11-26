@@ -11,6 +11,7 @@ import { defineSecret } from "firebase-functions/params";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
 import { toDateSafe } from "../utils/toDateSafe";
 import { splitUntracked } from "../fiscalYears/fiscalYears";
+import { splitDuplicates } from "../imports/dedupe";
 
 // Define secrets
 const finapiClientId = defineSecret("FINAPI_CLIENT_ID");
@@ -232,16 +233,6 @@ export const syncFinapiTransactions = onCall(
       return { imported: 0, skipped: 0, total: 0 };
     }
 
-    // Check for existing transactions (deduplication)
-    const hashes = transactions.map((tx) => generateDedupeHash(tx, sourceId));
-    const existingQuery = await db
-      .collection("transactions")
-      .where("sourceId", "==", sourceId)
-      .where("dedupeHash", "in", hashes.slice(0, 30)) // Firestore limit
-      .get();
-
-    const existingHashes = new Set(existingQuery.docs.map((d) => d.data().dedupeHash));
-
     // Create new transactions
     const batch = db.batch();
     let imported = 0;
@@ -249,10 +240,17 @@ export const syncFinapiTransactions = onCall(
 
     // Rows before Tracked From are skipped without asking and counted per fiscal year (#794).
     const { tracked, ...untracked } = await splitUntracked(db, userId, transactions, (tx) => new Date(tx.bankBookingDate));
-    for (const tx of tracked) {
-      const dedupeHash = generateDedupeHash(tx, sourceId);
-      if (existingHashes.has(dedupeHash)) continue;
 
+    // finAPI's transaction id is the External Row Id (#804): the Import writer's split skips
+    // a line the Bank Account already stores by id, and holds back rows stored before ids
+    // existed by this connector's hash.
+    const { fresh, duplicates } = await splitDuplicates(
+      db,
+      userId,
+      sourceId,
+      tracked.map((tx) => ({ tx, dedupeHash: generateDedupeHash(tx, sourceId), externalRowId: String(tx.id) }))
+    );
+    for (const { tx, dedupeHash, externalRowId } of fresh) {
       const txRef = db.collection("transactions").doc();
       batch.set(txRef, {
         userId,
@@ -267,6 +265,7 @@ export const syncFinapiTransactions = onCall(
         reference: tx.endToEndReference || tx.mandateReference || null,
         description: tx.purpose || null,
         dedupeHash,
+        externalRowId,
         importJobId: syncJobId,
         fileIds: [],
         isComplete: false,
@@ -295,7 +294,7 @@ export const syncFinapiTransactions = onCall(
 
     return {
       imported,
-      skipped: existingHashes.size,
+      skipped: duplicates.length,
       total: transactions.length,
       ...untracked,
     };

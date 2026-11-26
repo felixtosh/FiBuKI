@@ -13,6 +13,7 @@ import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import { enqueueExtraction } from "../extraction/extractionQueue";
 import { reExtractionRefusal } from "../fileFacts/factChange";
 import { applyFactChange } from "../fileFacts/applyFactChange";
+import { HttpsError } from "../utils/createCallable";
 
 /**
  * Fields the transition reads. Deliberately narrow: everything else on the
@@ -40,6 +41,7 @@ export async function markFileNotInvoice(
   actor: "manual" | "ai" = "manual"
 ): Promise<void> {
   const outcome = await applyFactChange(db, { fileId, userId, change: { origin: "not-invoice", reason }, actor });
+  if (outcome.refused && outcome.code === "CLOSED") throw new HttpsError("failed-precondition", outcome.message);
   if (outcome.refused) throw new Error(outcome.message);
 }
 

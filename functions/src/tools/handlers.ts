@@ -79,6 +79,7 @@ import { getStorage } from "firebase-admin/storage";
 import { createHash, randomUUID } from "crypto";
 import { createFileRecord, findFileByContentHash } from "../files/createFileRecord";
 import { computeDedupeHash, splitDuplicates } from "../imports/dedupe";
+import { readExternalRowId } from "../imports/externalRowId";
 import { fetchPublicUrl, UnsafeUrlError } from "../utils/safeFetch";
 import { syncOnboarding, toStatus, updateOnboarding } from "../onboarding/onboardingState";
 import {
@@ -112,7 +113,13 @@ import {
   type ResolvedEffectiveCycle,
 } from "../matching/billingCycle";
 import { getPeriodStatus, listPendingMatches } from "./periodStatus";
-import { changeFiscalYears, listFiscalYearChanges, readFiscalYears, splitUntracked } from "../fiscalYears/fiscalYears";
+import {
+  changeFiscalYears,
+  listFiscalYearChanges,
+  openFromDate,
+  readFiscalYears,
+  splitUntracked,
+} from "../fiscalYears/fiscalYears";
 import { assertTransactionEditable, assertTransactionIdEditable } from "../transactions/writableFields";
 import { PLANS, resolvePlanId } from "../billing/config";
 import { KNOWN_AUSTRIAN_RATES } from "../uva/rateSet";
@@ -941,9 +948,15 @@ async function scanTransactionsPage(
   args: Record<string, unknown>,
   keep: (transaction: Record<string, unknown>) => boolean
 ): Promise<{ page: Array<Record<string, unknown>>; nextCursor: string | null }> {
+  // Work lists only (#802): a Transaction outside the open stretch is not
+  // work. The stretches run untracked, closed, open, so the open ones are
+  // exactly those on or after its first month, and a closed year never fills
+  // the scan window.
+  const settings = await readFiscalYears(db, userId);
   let query: FirebaseFirestore.Query = db
     .collection("transactions")
     .where("userId", "==", userId)
+    .where("date", ">=", Timestamp.fromDate(openFromDate(settings)))
     .orderBy("date", "desc");
 
   // Cursor pagination: cursor is the last document id from the previous page.
@@ -3276,9 +3289,6 @@ export async function deleteSource(userId: string, args: Record<string, unknown>
 // Import
 // ============================================================================
 
-/** The longest External Row Id an Import takes (#796). */
-const MAX_EXTERNAL_ROW_ID = 256;
-
 export async function importTransactions(userId: string, args: Record<string, unknown>) {
   const { sourceId, transactions: rawTxs } = args;
   if (!sourceId) throw new Error("sourceId is required");
@@ -3302,14 +3312,7 @@ export async function importTransactions(userId: string, args: Record<string, un
 
   const candidates = (rawTxs as Array<Record<string, unknown>>).map((tx, index) => {
     // The importer's own id for the line (#796): unique per Bank Account, never derived here.
-    // Trimmed and case-sensitive; empty or blank reads as none.
-    const externalRowId = tx.externalRowId;
-    if (externalRowId !== undefined && externalRowId !== null && typeof externalRowId !== "string") {
-      throw new Error(`externalRowId must be a string (row ${index})`);
-    }
-    if (typeof externalRowId === "string" && externalRowId.trim().length > MAX_EXTERNAL_ROW_ID) {
-      throw new Error(`externalRowId must be at most ${MAX_EXTERNAL_ROW_ID} characters (row ${index})`);
-    }
+    const externalRowId = readExternalRowId(tx.externalRowId, index);
     const date = tx.date as string;
     const amount = tx.amount as number;
     const name = tx.name as string;
@@ -3327,7 +3330,7 @@ export async function importTransactions(userId: string, args: Record<string, un
       reference,
       partnerIban: (tx.partnerIban as string) || null,
       dedupeHash: computeDedupeHash({ date, amount, sourceIdentifier, reference }),
-      externalRowId: typeof externalRowId === "string" && externalRowId.trim() ? externalRowId.trim() : null,
+      externalRowId,
       importJobId,
       csvRowIndex: index,
       _original: {

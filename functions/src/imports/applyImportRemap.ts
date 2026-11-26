@@ -12,9 +12,10 @@
  * updateDraftMappings, the import wizard's callable.
  */
 
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createCallable, HttpsError } from "../utils/createCallable";
 import { computeDedupeHash } from "./dedupe";
+import { readExternalRowId } from "./externalRowId";
 import { validateFieldMappings, type StoredFieldMapping } from "./fieldMappings";
 import { fiscalYearsGuard } from "../fiscalYears/fiscalYears";
 import { toDateSafe } from "../utils/toDateSafe";
@@ -29,6 +30,12 @@ export interface RemapRow {
   partner: string | null;
   reference: string | null;
   partnerIban: string | null;
+  /**
+   * The External Row Id under the new mapping (#804), as the CSV Import sends it:
+   * none unless the whole file's Reference / Transaction ID column is one. None
+   * removes a stored one, so the id always follows the mapped column.
+   */
+  externalRowId?: unknown;
   original: { date: string; amount: string; rawRow: Record<string, string> };
 }
 
@@ -59,6 +66,11 @@ function validateRow(row: RemapRow, index: number): void {
   if (typeof row.date !== "string" || isNaN(new Date(row.date).getTime())) fail("date must be an ISO date");
   if (!Number.isInteger(row.amount)) fail("amount must be an integer number of cents");
   if (typeof row.name !== "string") fail("name must be a string");
+  try {
+    readExternalRowId(row.externalRowId, index);
+  } catch (error) {
+    fail((error as Error).message);
+  }
 }
 
 export const applyImportRemapCallable = createCallable<ApplyImportRemapRequest, ApplyImportRemapResponse>(
@@ -138,6 +150,7 @@ export const applyImportRemapCallable = createCallable<ApplyImportRemapRequest, 
             sourceIdentifier,
             reference: row.reference,
           }),
+          externalRowId: readExternalRowId(row.externalRowId, i + index) ?? FieldValue.delete(),
           _original: row.original,
           updatedAt: Timestamp.now(),
         });
