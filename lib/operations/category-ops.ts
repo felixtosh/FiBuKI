@@ -284,7 +284,7 @@ export async function removeCategoryFromTransaction(
     }
   >("removeNoReceiptCategory", { transactionId });
   const { categoryId, matchedBy } = removal;
-  const txData = { partnerId: removal.partnerId ?? undefined, partner: removal.partner, name: removal.name } as Transaction;
+  const txData = { partnerId: removal.partnerId ?? undefined, partner: removal.partner, name: removal.name };
 
   if (!removal.removed || !categoryId) {
     // No category assigned, nothing to do
