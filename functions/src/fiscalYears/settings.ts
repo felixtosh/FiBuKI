@@ -100,6 +100,15 @@ export function stretchOf(settings: FiscalYearSettings, date: Date | string): St
 }
 
 /**
+ * Which stretch a stored date (a Timestamp, a Date, a string) is in, through
+ * `stretchOf`; null when the value is not a valid date.
+ */
+export function stretchOfStored(settings: FiscalYearSettings, value: unknown): Stretch | null {
+  const date = toDateSafe(value);
+  return date instanceof Date && !isNaN(date.getTime()) ? stretchOf(settings, date) : null;
+}
+
+/**
  * The date that puts a File in a stretch: its extracted (or given) date
  * (#801). An undated File is in none, so it is never Closed.
  */
