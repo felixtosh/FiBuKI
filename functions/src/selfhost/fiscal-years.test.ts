@@ -34,6 +34,11 @@ import { cleanupOrphanedTransactionsCallable } from "../banking/cleanupOrphanedT
 import { assignPartnerToTransactionCallable } from "../partners/assignPartnerToTransaction";
 import { removePartnerFromTransactionCallable } from "../partners/removePartnerFromTransaction";
 import { assignNoReceiptCategoryCallable } from "../matching/assignNoReceiptCategory";
+import {
+  assignReceiptLostCategoryCallable,
+  migrateNoReceiptCategoryRefsCallable,
+  removeNoReceiptCategoryCallable,
+} from "../matching/noReceiptCategoryWriters";
 import { acceptReceiptOnlyCallable } from "../transactions/acceptReceiptOnly";
 import { acceptPartialPaymentCallable } from "../transactions/acceptPartialPayment";
 import { dismissTransactionSuggestionCallable } from "../files/dismissTransactionSuggestion";
@@ -700,6 +705,93 @@ describe("every other writer of a closed Transaction refuses too (review round 1
     expect(res).toMatchObject({ deleted: 1, keptClosed: 1 });
     expect((await db.collection("transactions").doc("orphan-closed").get()).exists).toBe(true);
     expect((await db.collection("transactions").doc("orphan-open").get()).exists).toBe(false);
+  });
+});
+
+describe("the web's category writers go through guarded callables (review round 2)", () => {
+  const LOCK = /Closed Through is 2024-12/;
+  const call = (callable: { run: (r: never) => Promise<unknown> }, data: Record<string, unknown>) =>
+    callable.run({ data, auth: AUTH } as never);
+  const tx = async (id: string) => (await db.collection("transactions").doc(id).get()).data()!;
+  const count = async (id: string) => (await db.collection("noReceiptCategories").doc(id).get()).data()!.transactionCount;
+
+  beforeEach(async () => {
+    await change({ trackedFrom: "2023-01", closedThrough: "2024-12" });
+    await db.collection("noReceiptCategories").doc("c-lost").set({ userId: USER, name: "Eigenbeleg", templateId: "receipt-lost", transactionCount: 0 });
+    await db.collection("noReceiptCategories").doc("c-fees").set({ userId: USER, name: "Bank fees", templateId: "bank-fees", transactionCount: 1 });
+    await db.collection("noReceiptCategories").doc("c-foreign").set({ userId: OTHER, name: "Bank fees", templateId: "bank-fees", transactionCount: 0 });
+    await seedTransaction("tx-closed", "2024-06-03");
+    await seedTransaction("tx-open", "2025-03-03");
+  });
+
+  it("refuse a closed Transaction and leave it as it was", async () => {
+    await db.collection("transactions").doc("tx-closed").update({ noReceiptCategoryId: "c-fees", noReceiptCategoryMatchedBy: "manual" });
+
+    await expect(
+      call(assignReceiptLostCategoryCallable as never, { transactionId: "tx-closed", categoryId: "c-lost", reason: "lost", description: "taxi" })
+    ).rejects.toMatchObject({ message: expect.stringMatching(LOCK) });
+    await expect(call(removeNoReceiptCategoryCallable as never, { transactionId: "tx-closed" })).rejects.toMatchObject({
+      message: expect.stringMatching(LOCK),
+    });
+
+    expect(await tx("tx-closed")).toMatchObject({ noReceiptCategoryId: "c-fees" });
+    expect(await count("c-lost")).toBe(0);
+    expect(await count("c-fees")).toBe(1);
+  });
+
+  it("assign Receipt Lost to an open Transaction, with its entry and the count", async () => {
+    await call(assignReceiptLostCategoryCallable as never, { transactionId: "tx-open", categoryId: "c-lost", reason: " lost ", description: " taxi " });
+
+    expect(await tx("tx-open")).toMatchObject({
+      noReceiptCategoryId: "c-lost",
+      noReceiptCategoryTemplateId: "receipt-lost",
+      noReceiptCategoryMatchedBy: "manual",
+      noReceiptCategoryConfidence: 100,
+      receiptLostEntry: { reason: "lost", description: "taxi", confirmed: true },
+      isComplete: true,
+    });
+    expect(await count("c-lost")).toBe(1);
+  });
+
+  it("refuse Receipt Lost with another User's category or another category", async () => {
+    await expect(
+      call(assignReceiptLostCategoryCallable as never, { transactionId: "tx-open", categoryId: "c-foreign", reason: "r", description: "d" })
+    ).rejects.toThrow();
+    await expect(
+      call(assignReceiptLostCategoryCallable as never, { transactionId: "tx-open", categoryId: "c-fees", reason: "r", description: "d" })
+    ).rejects.toThrow();
+    expect((await tx("tx-open")).noReceiptCategoryId).toBeUndefined();
+  });
+
+  it("remove a category from an open Transaction, in the activity log, and say what it was", async () => {
+    await db.collection("transactions").doc("tx-open").update({
+      noReceiptCategoryId: "c-fees",
+      noReceiptCategoryMatchedBy: "auto",
+      noReceiptCategoryConfidence: 90,
+      isComplete: true,
+    });
+
+    const res = await call(removeNoReceiptCategoryCallable as never, { transactionId: "tx-open" });
+
+    expect(res).toMatchObject({ removed: true, categoryId: "c-fees", matchedBy: "auto" });
+    const row = await tx("tx-open");
+    expect(row).toMatchObject({ noReceiptCategoryId: null, noReceiptCategoryConfidence: null, receiptLostEntry: null, isComplete: false });
+    expect(row.automationHistory.at(-1)).toMatchObject({ type: "category_removed", actor: "manual" });
+    expect(await count("c-fees")).toBe(0);
+  });
+
+  it("migrate orphaned category references, but keep a closed Transaction's", async () => {
+    await seedTransaction("tx-open-2", "2025-04-01");
+    await db.collection("transactions").doc("tx-open").update({ noReceiptCategoryId: "gone-1", noReceiptCategoryTemplateId: "bank-fees" });
+    await db.collection("transactions").doc("tx-open-2").update({ noReceiptCategoryId: "gone-2", noReceiptCategoryTemplateId: "unknown", isComplete: true });
+    await db.collection("transactions").doc("tx-closed").update({ noReceiptCategoryId: "gone-1", noReceiptCategoryTemplateId: "bank-fees" });
+
+    const res = await call(migrateNoReceiptCategoryRefsCallable as never, { targets: { "bank-fees": "c-fees", unknown: "c-foreign" } });
+
+    expect(res).toMatchObject({ migrated: 1, cleared: 1, keptClosed: 1 });
+    expect((await tx("tx-open")).noReceiptCategoryId).toBe("c-fees");
+    expect(await tx("tx-open-2")).toMatchObject({ noReceiptCategoryId: null, isComplete: false });
+    expect((await tx("tx-closed")).noReceiptCategoryId).toBe("gone-1");
   });
 });
 

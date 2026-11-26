@@ -90,6 +90,7 @@ import { generatedInvoiceRefusal } from "../files/generatedInvoiceGuard";
 import { connectFiles } from "../fileConnections/writer";
 import { toDateSafe } from "../utils/toDateSafe";
 import { assignNoReceiptCategoryToTransaction } from "../matching/assignNoReceiptCategory";
+import { removeNoReceiptCategoryFromTransaction } from "../matching/noReceiptCategoryWriters";
 import { TOOL_DEFINITIONS, TOOL_NAMES } from "./definitions";
 import type { ToolName } from "./definitions";
 import type { AccountKind } from "../sources/accountKind";
@@ -2187,39 +2188,13 @@ export async function removeNoReceiptCategory(userId: string, transactionId: str
   if (!txDoc.exists || txDoc.data()?.userId !== userId) {
     throw new Error("Transaction not found");
   }
-
-  const txData = txDoc.data()!;
-  const categoryId = txData.noReceiptCategoryId;
-  if (!categoryId) {
+  if (!txDoc.data()!.noReceiptCategoryId) {
     throw new Error("Transaction has no category assigned");
   }
 
-  const hasFiles = txData.fileIds && txData.fileIds.length > 0;
-  const batch = db.batch();
-  const now = FieldValue.serverTimestamp();
-
-  const categoryName = ((await db.collection("noReceiptCategories").doc(categoryId).get()).data()?.name as string | undefined) ?? categoryId;
-  batch.update(txDoc.ref, {
-    noReceiptCategoryId: null,
-    noReceiptCategoryTemplateId: null,
-    noReceiptCategoryMatchedBy: null,
-    isComplete: hasFiles,
-    updatedAt: now,
-    ...logActivity(activityEntry({
-      type: "category_removed",
-      actor: "ai",
-      categoryName,
-      summary: `Category "${categoryName}" removed by the assistant`,
-    })),
-  });
-
-  batch.update(db.collection("noReceiptCategories").doc(categoryId), {
-    transactionCount: FieldValue.increment(-1),
-    updatedAt: now,
-  });
-
-  await batch.commit();
-  return { success: true, transactionId, isComplete: hasFiles };
+  // One writer with the web's removal (#794): the same fields, log and count.
+  const result = await removeNoReceiptCategoryFromTransaction(db, userId, transactionId, "ai");
+  return { success: true, transactionId, isComplete: result.isComplete };
 }
 
 // ============================================================================

@@ -26,6 +26,11 @@ export { onCategoryCreate } from "./matching/onCategoryCreate";
 export { onCategoryUpdate } from "./matching/onCategoryUpdate";
 export { onTransactionUpdate } from "./matching/onTransactionUpdate";
 export { assignNoReceiptCategoryCallable as assignNoReceiptCategory } from "./matching/assignNoReceiptCategory";
+export {
+  assignReceiptLostCategoryCallable as assignReceiptLostCategory,
+  migrateNoReceiptCategoryRefsCallable as migrateNoReceiptCategoryRefs,
+  removeNoReceiptCategoryCallable as removeNoReceiptCategory,
+} from "./matching/noReceiptCategoryWriters";
 
 // Export user data update/create triggers (re-calculates file counterparties & syncs identity partners)
 export { onUserDataUpdate, onUserDataCreated } from "./matching/onUserDataUpdate";

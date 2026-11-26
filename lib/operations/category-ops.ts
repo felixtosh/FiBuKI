@@ -9,16 +9,15 @@ import {
   updateDoc,
   Timestamp,
   writeBatch,
-  increment,
   arrayUnion,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase/config";
+import { callFunction } from "@/lib/firebase/callable";
 import {
   UserNoReceiptCategory,
   NoReceiptCategoryId,
   CategoryManualRemoval,
-  ReceiptLostEntry,
 } from "@/types/no-receipt-category";
 import { Transaction } from "@/types/transaction";
 import { PartnerCategoryManualRemoval } from "@/types/partner";
@@ -254,45 +253,12 @@ export async function assignReceiptLostCategory(
     return assignReceiptLostCategory(ctx, transactionId, reason, description);
   }
 
-  // Verify transaction ownership
-  const txDoc = doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId);
-  const txSnapshot = await getDoc(txDoc);
-
-  if (!txSnapshot.exists() || txSnapshot.data().userId !== ctx.userId) {
-    throw new Error(`Transaction ${transactionId} not found or access denied`);
-  }
-
-  const now = Timestamp.now();
-
-  // Create receipt lost entry (Eigenbeleg)
-  const receiptLostEntry: ReceiptLostEntry = {
-    reason: reason.trim(),
-    description: description.trim(),
-    createdAt: now,
-    confirmed: true,
-  };
-
-  const batch = writeBatch(ctx.db);
-
-  // Update transaction
-  batch.update(txDoc, {
-    noReceiptCategoryId: category.id,
-    noReceiptCategoryTemplateId: "receipt-lost",
-    noReceiptCategoryMatchedBy: "manual",
-    noReceiptCategoryConfidence: 100,
-    receiptLostEntry,
-    isComplete: true,
-    updatedAt: now,
-  });
-
-  // Increment category transaction count
-  const categoryRef = doc(ctx.db, CATEGORIES_COLLECTION, category.id);
-  batch.update(categoryRef, {
-    transactionCount: increment(1),
-    updatedAt: now,
-  });
-
-  await batch.commit();
+  // The Transaction write is server-side, behind the Closed stretch check
+  // (#794): Transactions are read-only for the browser.
+  await callFunction<
+    { transactionId: string; categoryId: string; reason: string; description: string },
+    { success: boolean }
+  >("assignReceiptLostCategory", { transactionId, categoryId: category.id, reason, description });
 }
 
 /**
@@ -304,60 +270,30 @@ export async function removeCategoryFromTransaction(
   ctx: OperationsContext,
   transactionId: string
 ): Promise<void> {
-  const txDoc = doc(ctx.db, TRANSACTIONS_COLLECTION, transactionId);
-  const txSnapshot = await getDoc(txDoc);
+  // The Transaction write (fields, activity log, count) is server-side, behind
+  // the Closed stretch check (#794): Transactions are read-only for the browser.
+  const removal = await callFunction<
+    { transactionId: string },
+    {
+      removed: boolean;
+      categoryId: string | null;
+      matchedBy: string | null;
+      partnerId: string | null;
+      partner: string | null;
+      name: string;
+    }
+  >("removeNoReceiptCategory", { transactionId });
+  const { categoryId, matchedBy } = removal;
+  const txData = { partnerId: removal.partnerId ?? undefined, partner: removal.partner, name: removal.name } as Transaction;
 
-  if (!txSnapshot.exists() || txSnapshot.data().userId !== ctx.userId) {
-    throw new Error(`Transaction ${transactionId} not found or access denied`);
-  }
-
-  const txData = txSnapshot.data();
-  const categoryId = txData.noReceiptCategoryId;
-  const matchedBy = txData.noReceiptCategoryMatchedBy;
-
-  if (!categoryId) {
+  if (!removal.removed || !categoryId) {
     // No category assigned, nothing to do
     return;
   }
 
   // Check if this was a system-recommended assignment (auto or suggestion)
   const wasSystemRecommended = matchedBy === "auto" || matchedBy === "suggestion";
-
-  const batch = writeBatch(ctx.db);
-
-  // Check if transaction has files (if so, it's still complete)
-  const hasFiles = txData.fileIds && txData.fileIds.length > 0;
-
-  // Clear category fields, and say so in the activity log (#752)
-  const categoryName = (await getUserCategory(ctx, categoryId))?.name ?? categoryId;
-  batch.update(txDoc, {
-    noReceiptCategoryId: null,
-    noReceiptCategoryTemplateId: null,
-    noReceiptCategoryMatchedBy: null,
-    noReceiptCategoryConfidence: null,
-    receiptLostEntry: null,
-    // Only mark incomplete if no files attached
-    isComplete: hasFiles,
-    updatedAt: Timestamp.now(),
-    automationHistory: arrayUnion({
-      type: "category_removed",
-      actor: "manual",
-      level: "decision",
-      status: "completed",
-      ranAt: Timestamp.now(),
-      categoryName,
-      summary: `Category "${categoryName}" removed`,
-    }),
-  });
-
-  // Decrement category transaction count
   const categoryRef = doc(ctx.db, CATEGORIES_COLLECTION, categoryId);
-  batch.update(categoryRef, {
-    transactionCount: increment(-1),
-    updatedAt: Timestamp.now(),
-  });
-
-  await batch.commit();
 
   // If this was a system-recommended assignment, track as false positive
   if (wasSystemRecommended) {
@@ -605,80 +541,18 @@ export async function retriggerUserCategories(
     categories.map((c) => [c.name.toLowerCase(), c])
   );
 
-  // 3. Find transactions with orphaned categories and migrate them
-  const orphanedQuery = query(
-    collection(ctx.db, TRANSACTIONS_COLLECTION),
-    where("userId", "==", ctx.userId),
-    where("noReceiptCategoryId", "!=", null)
-  );
-
-  const orphanedSnapshot = await getDocs(orphanedQuery);
-  let migrated = 0;
-
-  const batch = writeBatch(ctx.db);
-  let batchCount = 0;
-  const MAX_BATCH_SIZE = 450;
-
-  for (const txDoc of orphanedSnapshot.docs) {
-    const txData = txDoc.data();
-    const categoryId = txData.noReceiptCategoryId;
-
-    // Check if category still exists
-    const categoryExists = categories.some((c) => c.id === categoryId);
-
-    if (!categoryExists) {
-      // Try to migrate by template ID first, then by name
-      let newCategory: UserNoReceiptCategory | undefined;
-
-      if (txData.noReceiptCategoryTemplateId) {
-        newCategory = categoryByTemplateId.get(txData.noReceiptCategoryTemplateId);
-      }
-
-      if (!newCategory) {
-        // Try fuzzy name match - this handles renamed categories
-        const templateName = NO_RECEIPT_CATEGORY_TEMPLATES.find(
-          (t) => t.id === txData.noReceiptCategoryTemplateId
-        )?.name;
-
-        if (templateName) {
-          newCategory = categoryByName.get(templateName.toLowerCase());
-        }
-      }
-
-      if (newCategory) {
-        batch.update(txDoc.ref, {
-          noReceiptCategoryId: newCategory.id,
-          updatedAt: Timestamp.now(),
-        });
-        migrated++;
-        batchCount++;
-      } else {
-        // Can't migrate - clear the category
-        // Only mark incomplete if transaction has no files
-        const hasFiles = txData.fileIds && txData.fileIds.length > 0;
-        batch.update(txDoc.ref, {
-          noReceiptCategoryId: null,
-          noReceiptCategoryTemplateId: null,
-          noReceiptCategoryMatchedBy: null,
-          noReceiptCategoryConfidence: null,
-          isComplete: hasFiles,
-          updatedAt: Timestamp.now(),
-        });
-        batchCount++;
-      }
-
-      // Commit batch if approaching limit
-      if (batchCount >= MAX_BATCH_SIZE) {
-        await batch.commit();
-        batchCount = 0;
-      }
-    }
+  // 3. Re-point Transactions whose category no longer exists: by template id
+  // first, then by the template's name (a renamed category). The writes are
+  // server-side and keep a closed Transaction's reference (#794).
+  const targets: Record<string, string> = {};
+  for (const template of NO_RECEIPT_CATEGORY_TEMPLATES) {
+    const target = categoryByTemplateId.get(template.id) ?? categoryByName.get(template.name.toLowerCase());
+    if (target) targets[template.id] = target.id;
   }
-
-  // Commit remaining
-  if (batchCount > 0) {
-    await batch.commit();
-  }
+  const { migrated } = await callFunction<
+    { targets: Record<string, string> },
+    { migrated: number; cleared: number; keptClosed: number }
+  >("migrateNoReceiptCategoryRefs", { targets });
 
   // 4. Recalculate transaction counts for each category
   let recalculated = 0;
