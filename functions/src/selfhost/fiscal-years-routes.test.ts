@@ -4,19 +4,26 @@
  * syncs skip rows before Tracked From and count them per fiscal year.
  *
  * Routes are called in-process as the User (security/routes.ts) against the
- * self-host in-memory database. They write through the server's Admin SDK and
- * its writers (#813): the client SDK is the self-host one, which a server
- * route cannot authenticate to, so a route still using it fails here.
+ * self-host in-memory database (#813). They read and write through the
+ * server's Admin SDK, and delete Bank Accounts and Transactions through the
+ * callables, as the User whose Bearer token they forward: here those
+ * callables run in-process, the real ones. The client SDK is the self-host
+ * one, which a server route cannot authenticate to, so a route still using it
+ * fails here.
  */
+
+process.env.FIBUKI_STORAGE = "memory";
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { __resetFirestoreShim, __whenShimIdle, getFirestore, Timestamp } from "./firestore-shim";
-import { __resetTriggerShim } from "./trigger-shim";
+import { __resetTriggerShim, drainTriggers } from "./trigger-shim";
 import { asUser, enableInternalAuth } from "./security/routes";
 import { handleTool } from "../tools/handlers";
 import { createDataPlane } from "./data-plane";
 import { startTestServer, type TestServer } from "./test-helpers";
+import { connectFileToTransactionCallable } from "../files/connectFileToTransaction";
+import { computeDedupeHash } from "../imports/dedupe";
 
 // The web container's build aliases the client SDK to the self-host data-plane
 // client (next.config.ts), with NEXT_PUBLIC_FIBUKI_API_URL baked in. Loaded
@@ -29,13 +36,41 @@ vi.mock("@/lib/import/deduplication", () => ({
   generateDedupeHash: async (...parts: unknown[]) => parts.map(String).join("|"),
   normalizeIban: (iban: string) => iban.replace(/\s/g, "").toUpperCase(),
 }));
+
+// A route forwards the User's Bearer token to the callable; here the token is
+// the uid, and the real callable runs as it. An error comes back in the shape
+// the real helper throws on an HTTP error.
+vi.mock("@/lib/api/firebase-callable", () => ({
+  callFirebaseFunction: async (name: string, data: unknown, token?: string) => {
+    const callables: Record<string, () => Promise<unknown>> = {
+      deleteSource: async () => (await import("../sources/deleteSource")).deleteSourceCallable,
+      deleteTransactionsBySource: async () =>
+        (await import("../transactions/deleteTransactionsBySource")).deleteTransactionsBySourceCallable,
+      cleanupOrphanedTransactions: async () =>
+        (await import("../banking/cleanupOrphanedTransactions")).cleanupOrphanedTransactionsCallable,
+    };
+    if (!callables[name]) throw new Error(`Firebase function ${name} failed: 404 - no such callable in this test`);
+    if (!token) throw new Error(`Firebase function ${name} failed: 401 - {"error":{"message":"Unauthenticated"}}`);
+    const callable = (await callables[name]()) as { run: (r: unknown) => Promise<unknown> };
+    try {
+      return await callable.run({ data, auth: { uid: token.replace(/^Bearer /, ""), token: {} } });
+    } catch (err) {
+      throw new Error(`Firebase function ${name} failed: 400 - ${JSON.stringify({ error: { message: (err as Error).message } })}`);
+    }
+  },
+}));
+
+type Line = { transaction_id: string; timestamp: string; amount: number; currency: string; transaction_type: string; description: string };
+const DEFAULT_LINES: Line[] = [
+  { transaction_id: "tl-old", timestamp: "2023-12-30T10:00:00Z", amount: 5, currency: "EUR", transaction_type: "DEBIT", description: "Old" },
+  { transaction_id: "tl-new", timestamp: "2024-01-03T10:00:00Z", amount: 7, currency: "EUR", transaction_type: "DEBIT", description: "New" },
+];
+const truelayer = vi.hoisted(() => ({ lines: null as null | Array<Record<string, unknown>> }));
+
 vi.mock("@/lib/truelayer", () => ({
   getAccountIban: () => "AT483200000012345864",
   getTrueLayerClient: () => ({
-    getTransactions: async () => [
-      { transaction_id: "tl-old", timestamp: "2023-12-30T10:00:00Z", amount: 5, currency: "EUR", transaction_type: "DEBIT", description: "Old" },
-      { transaction_id: "tl-new", timestamp: "2024-01-03T10:00:00Z", amount: 7, currency: "EUR", transaction_type: "DEBIT", description: "New" },
-    ],
+    getTransactions: async () => truelayer.lines ?? DEFAULT_LINES,
     getAccount: async () => ({ account_id: "acc-1", currency: "EUR", account_number: { iban: "AT483200000012345864" } }),
     getAccounts: async () => [{ account_id: "acc-1" }, { account_id: "acc-2" }],
     exchangeCode: async () => ({ access_token: "fresh-access", refresh_token: "fresh-refresh", expires_in: 3600 }),
@@ -47,8 +82,14 @@ vi.mock("@/lib/truelayer", () => ({
 
 const db = getFirestore();
 const USER = "fyr-user";
+const IBAN = "AT483200000012345864";
 const day = (iso: string) => Timestamp.fromDate(new Date(`${iso}T00:00:00Z`));
 const future = () => Timestamp.fromDate(new Date(Date.now() + 3_600_000));
+
+/** A request as the User, carrying the Bearer token the route forwards to the callables. */
+function asOwner(url: string, init: { method?: string; body?: unknown } = {}) {
+  return asUser(USER, url, { ...init, headers: { Authorization: `Bearer ${USER}` } });
+}
 
 async function seedTransaction(id: string, iso: string, sourceId: string) {
   await db.collection("transactions").doc(id).set({ userId: USER, sourceId, date: day(iso), amount: -100, name: "Vendor", fileIds: [] });
@@ -61,6 +102,38 @@ async function exists(id: string) {
 async function names(sourceId: string) {
   const snap = await db.collection("transactions").where("sourceId", "==", sourceId).get();
   return snap.docs.map((d) => d.data().name).sort();
+}
+
+async function rows(sourceId: string) {
+  return (await db.collection("transactions").where("sourceId", "==", sourceId).get()).docs.map((d) => d.data());
+}
+
+/** A receipt connected to a Transaction through the File Connection writer. */
+async function connectReceipt(fileId: string, transactionId: string, iso: string) {
+  await db.collection("files").doc(fileId).set({
+    userId: USER,
+    fileName: `${fileId}.pdf`,
+    fileType: "application/pdf",
+    extractionComplete: true,
+    partnerMatchComplete: true,
+    transactionMatchComplete: true,
+    extractedAmount: 100,
+    extractedCurrency: "EUR",
+    extractedDate: day(iso),
+    extractedPartner: "Vendor",
+    invoiceDirection: "incoming",
+    transactionIds: [],
+    transactionSuggestions: [],
+    uploadedAt: day(iso),
+  });
+  await connectFileToTransactionCallable.run({ data: { fileId, transactionId }, auth: { uid: USER, token: {} } } as never);
+  await drainTriggers();
+  expect((await db.collection("files").doc(fileId).get()).data()!.transactionIds).toEqual([transactionId]);
+}
+
+async function fileTransactionIds(fileId: string) {
+  await drainTriggers();
+  return (await db.collection("files").doc(fileId).get()).data()!.transactionIds;
 }
 
 let dataPlane: TestServer;
@@ -79,6 +152,7 @@ beforeEach(async () => {
   await __whenShimIdle();
   await __resetFirestoreShim();
   __resetTriggerShim();
+  truelayer.lines = null;
 });
 
 describe("a bank disconnect keeps the Closed stretch", () => {
@@ -89,7 +163,7 @@ describe("a bank disconnect keeps the Closed stretch", () => {
     await seedTransaction("tx-open", "2025-05-01", "api-1");
 
     const { POST } = await import("@/app/api/sources/[id]/disconnect/route");
-    const res = await POST(asUser(USER, "/api/sources/api-1/disconnect", { method: "POST" }), {
+    const res = await POST(asOwner("/api/sources/api-1/disconnect", { method: "POST" }), {
       params: Promise.resolve({ id: "api-1" }),
     });
 
@@ -109,7 +183,7 @@ describe("a bank disconnect checks every row it deletes (#813)", () => {
 
   async function disconnect() {
     const { POST } = await import("@/app/api/sources/[id]/disconnect/route");
-    return POST(asUser(USER, "/api/sources/api-1/disconnect", { method: "POST" }), { params: Promise.resolve({ id: "api-1" }) });
+    return POST(asOwner("/api/sources/api-1/disconnect", { method: "POST" }), { params: Promise.resolve({ id: "api-1" }) });
   }
 
   it("is refused for a closed row without the User's id, and deletes nothing", async () => {
@@ -141,6 +215,17 @@ describe("a bank disconnect checks every row it deletes (#813)", () => {
     expect(source.type).toBe("csv");
     expect(source.apiConfig).toBeUndefined();
   });
+
+  it("takes a deleted Transaction off its File", async () => {
+    await seedTransaction("tx-receipted", "2025-05-01", "api-1");
+    await connectReceipt("f-1", "tx-receipted", "2025-05-01");
+
+    const res = await disconnect();
+
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await exists("tx-receipted")).toBe(false);
+    expect(await fileTransactionIds("f-1")).toEqual([]);
+  });
 });
 
 describe("the orphan cleanup route keeps closed orphans", () => {
@@ -150,12 +235,24 @@ describe("the orphan cleanup route keeps closed orphans", () => {
     await seedTransaction("orphan-open", "2025-05-01", "gone");
 
     const { POST } = await import("@/app/api/sources/delete-orphans/route");
-    const res = await POST(asUser(USER, "/api/sources/delete-orphans", { method: "POST" }));
+    const res = await POST(asOwner("/api/sources/delete-orphans", { method: "POST" }));
     const body = (await res.json()) as { deletedTransactions: number; keptClosedTransactions: number };
 
     expect(body).toMatchObject({ deletedTransactions: 1, keptClosedTransactions: 1 });
     expect(await exists("orphan-closed")).toBe(true);
     expect(await exists("orphan-open")).toBe(false);
+  });
+
+  it("takes a deleted orphan off its File", async () => {
+    await seedTransaction("orphan-receipted", "2025-05-01", "gone");
+    await connectReceipt("f-orphan", "orphan-receipted", "2025-05-01");
+
+    const { POST } = await import("@/app/api/sources/delete-orphans/route");
+    const res = await POST(asOwner("/api/sources/delete-orphans", { method: "POST" }));
+    expect(res.status, await res.clone().text()).toBe(200);
+
+    expect(await exists("orphan-receipted")).toBe(false);
+    expect(await fileTransactionIds("f-orphan")).toEqual([]);
   });
 
   it("deletes a Bank Account missing its required fields and a TrueLayer connection no Bank Account uses", async () => {
@@ -172,12 +269,13 @@ describe("the orphan cleanup route keeps closed orphans", () => {
     await db.doc("truelayerConnections/tl-someone-else").set({ userId: "other-user", providerId: "tl-bank" });
     await seedTransaction("on-whole", "2025-05-01", "whole");
     await seedTransaction("on-broken", "2025-05-01", "broken");
+    await connectReceipt("f-broken", "on-broken", "2025-05-01");
 
     const { POST } = await import("@/app/api/sources/delete-orphans/route");
-    const res = await POST(asUser(USER, "/api/sources/delete-orphans", { method: "POST" }));
+    const res = await POST(asOwner("/api/sources/delete-orphans", { method: "POST" }));
     expect(res.status, await res.clone().text()).toBe(200);
 
-    expect(await res.json()).toMatchObject({ deletedSources: 1, deletedConnections: 1, deletedTransactions: 1, keptClosedTransactions: 0 });
+    expect(await res.json()).toMatchObject({ deletedSources: 1, deletedConnections: 1, deletedTransactions: 1, keptClosedTransactions: 0, keptSources: [] });
     expect((await db.collection("sources").doc("broken").get()).exists).toBe(false);
     expect((await db.collection("sources").doc("whole").get()).exists).toBe(true);
     expect((await db.doc("truelayerConnections/tl-unused").get()).exists).toBe(false);
@@ -185,6 +283,25 @@ describe("the orphan cleanup route keeps closed orphans", () => {
     expect((await db.doc("truelayerConnections/tl-someone-else").get()).exists).toBe(true);
     expect(await exists("on-whole")).toBe(true);
     expect(await exists("on-broken")).toBe(false);
+    expect(await fileTransactionIds("f-broken")).toEqual([]);
+  });
+
+  it("keeps a Bank Account missing its required fields while it holds a closed Transaction, and all its rows", async () => {
+    await handleTool(USER, "set_fiscal_years", { trackedFrom: "2023-01", closedThrough: "2024-12" });
+    await db.collection("sources").doc("broken-closed").set({ userId: USER, name: "Broken" });
+    await seedTransaction("broken-closed-row", "2024-05-01", "broken-closed");
+    await seedTransaction("broken-open-row", "2025-05-01", "broken-closed");
+
+    const { POST } = await import("@/app/api/sources/delete-orphans/route");
+    const res = await POST(asOwner("/api/sources/delete-orphans", { method: "POST" }));
+    expect(res.status, await res.clone().text()).toBe(200);
+    const body = (await res.json()) as { deletedSources: number; deletedTransactions: number; keptSources: Array<{ id: string; reason: string }> };
+
+    expect(body).toMatchObject({ deletedSources: 0, deletedTransactions: 0 });
+    expect(body.keptSources).toEqual([{ id: "broken-closed", name: "Broken", reason: expect.stringMatching(/Closed Through is 2024-12/) }]);
+    expect((await db.collection("sources").doc("broken-closed").get()).exists).toBe(true);
+    expect(await exists("broken-closed-row")).toBe(true);
+    expect(await exists("broken-open-row")).toBe(true);
   });
 });
 
@@ -224,28 +341,94 @@ describe("the TrueLayer syncs skip Untracked rows", () => {
     await handleTool(USER, "set_fiscal_years", { trackedFrom: "2024-01" });
   });
 
-  it("a sync writes the tracked row and counts the other per fiscal year", async () => {
+  async function syncSource() {
     await db.collection("sources").doc("tl-src").set({
       userId: USER,
       name: "Bank",
       type: "api",
-      iban: "AT483200000012345864",
-      apiConfig: { provider: "truelayer", connectionId: "tl-1", accountId: "acc-1" },
+      iban: IBAN,
+      apiConfig: { provider: "truelayer", connectionId: "tl-1", accountId: "acc-1", lastSyncAt: day("2024-01-01") },
     });
+  }
 
+  async function sync() {
     const { POST } = await import("@/app/api/truelayer/sync/route");
-    const res = await POST(asUser(USER, "/api/truelayer/sync", { body: { sourceId: "tl-src" } }));
+    return POST(asUser(USER, "/api/truelayer/sync", { body: { sourceId: "tl-src" } }));
+  }
+
+  it("a sync writes the tracked row and counts the other per fiscal year", async () => {
+    await syncSource();
+    const start = Date.now();
+
+    const res = await sync();
     const body = (await res.json()) as { imported: number; untrackedCount: number; untrackedByFiscalYear: Record<string, number> };
 
     expect(body).toMatchObject({ imported: 1, skipped: 0, total: 2, untrackedCount: 1, untrackedByFiscalYear: { "2023": 1 } });
     expect(await names("tl-src")).toEqual(["New"]);
-    const [row] = (await db.collection("transactions").where("sourceId", "==", "tl-src").get()).docs.map((d) => d.data());
+    const [row] = await rows("tl-src");
     expect(row).toMatchObject({ userId: USER, amount: -700, externalRowId: "tl-new", fileIds: [], isComplete: false });
-    expect((await db.collection("sources").doc("tl-src").get()).data()!.apiConfig.lastSyncAt).toBeDefined();
+    const lastSyncAt = (await db.collection("sources").doc("tl-src").get()).data()!.apiConfig.lastSyncAt as Timestamp;
+    expect(lastSyncAt.toMillis()).toBeGreaterThanOrEqual(start);
 
-    const again = await POST(asUser(USER, "/api/truelayer/sync", { body: { sourceId: "tl-src" } }));
+    const again = await sync();
     expect(await again.json()).toMatchObject({ imported: 0, skipped: 1, untrackedCount: 1 });
     expect(await names("tl-src")).toEqual(["New"]);
+  });
+
+  it("stores a line on its Vienna calendar day, and judges that day against Tracked From", async () => {
+    await handleTool(USER, "set_fiscal_years", { trackedFrom: "2025-01" });
+    await syncSource();
+    truelayer.lines = [
+      { transaction_id: "tl-eve", timestamp: "2024-12-31T23:30:00Z", amount: 3, currency: "EUR", transaction_type: "DEBIT", description: "New Year's Eve" },
+    ];
+
+    const res = await sync();
+
+    expect(await res.json()).toMatchObject({ imported: 1, untrackedCount: 0 });
+    const [row] = await rows("tl-src");
+    expect((row.date as Timestamp).toDate().toISOString()).toBe("2025-01-01T00:00:00.000Z");
+  });
+
+  it("a row stored before External Row Ids, by the hash of TrueLayer's instant, still holds its line back", async () => {
+    await syncSource();
+    // Late evening UTC: the Vienna day is the next one, the hash keeps the UTC day.
+    const timestamp = "2024-03-10T23:30:00Z";
+    truelayer.lines = [{ transaction_id: "tl-late", timestamp, amount: 4, currency: "EUR", transaction_type: "DEBIT", description: "Late" }];
+    await db.collection("transactions").doc("stored-before-ids").set({
+      userId: USER,
+      sourceId: "tl-src",
+      date: Timestamp.fromDate(new Date(timestamp)),
+      amount: -400,
+      name: "Late",
+      importJobId: null,
+      dedupeHash: computeDedupeHash({ date: new Date(timestamp), amount: -400, sourceIdentifier: IBAN, reference: "tl-late" }),
+      fileIds: [],
+    });
+
+    const res = await sync();
+
+    expect(await res.json()).toMatchObject({ imported: 0, skipped: 1 });
+    expect((await rows("tl-src")).length).toBe(1);
+  });
+
+  it("counts the written rows against the plan's monthly quota and marks the ones over it", async () => {
+    await syncSource();
+    const now = new Date();
+    const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+    await db.collection("subscriptions").doc(USER).set({ plan: "free", transactionCountCurrentMonth: 49, transactionCountMonth: month });
+    truelayer.lines = [
+      { transaction_id: "tl-a", timestamp: "2024-02-01T10:00:00Z", amount: 1, currency: "EUR", transaction_type: "DEBIT", description: "A" },
+      { transaction_id: "tl-b", timestamp: "2024-02-02T10:00:00Z", amount: 2, currency: "EUR", transaction_type: "DEBIT", description: "B" },
+    ];
+
+    const res = await sync();
+
+    expect(await res.json()).toMatchObject({ imported: 2, overLimitCount: 1 });
+    const stored = await rows("tl-src");
+    expect(stored.filter((r) => r.quotaExceeded === true)).toHaveLength(1);
+    await vi.waitFor(async () =>
+      expect((await db.collection("subscriptions").doc(USER).get()).data()!.transactionCountCurrentMonth).toBe(50)
+    );
   });
 
   it("creating a Bank Account from an account stores it and runs its first sync with the same skip", async () => {
@@ -255,7 +438,7 @@ describe("the TrueLayer syncs skip Untracked rows", () => {
     const { sourceId } = (await res.json()) as { sourceId: string };
 
     const source = (await db.collection("sources").doc(sourceId).get()).data()!;
-    expect(source).toMatchObject({ userId: USER, name: "Giro", type: "api", iban: "AT483200000012345864", apiConfig: { provider: "truelayer", connectionId: "tl-1", accountId: "acc-1" } });
+    expect(source).toMatchObject({ userId: USER, name: "Giro", type: "api", iban: IBAN, apiConfig: { provider: "truelayer", connectionId: "tl-1", accountId: "acc-1" } });
     await vi.waitFor(async () => expect(await names(sourceId)).toEqual(["New"]));
   });
 

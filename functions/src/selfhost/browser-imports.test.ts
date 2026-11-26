@@ -24,6 +24,11 @@
  *    definitions are read by the OpenAPI spec, llm.txt and the chat's wrappers
  *    (#691); rules 1 and 2 would still let them reach `firebase-admin` or any
  *    other server-only module, so they are held to type-only imports.
+ * 5. **A route reaches no client Firestore SDK** (#813): every `route.ts`
+ *    under `app/`, through the local modules it imports at any depth, reaches
+ *    neither `firebase/firestore` (its subpaths included), `firebase/app` nor
+ *    `@firebase/*`, except the routes in ROUTE_CLIENT_SDK_ALLOWED. On
+ *    self-host the data plane answers such a route 401.
  *
  * Each file is parsed with the TypeScript compiler, so comments and string
  * literals (`"image/*"`) never read as code. The walk follows `import`/`export
@@ -101,6 +106,33 @@ const CALLABLE_RATCHET: Record<string, Pinned> = {
     calls: "assignNoReceiptCategory, matchCategories, learnPartnerCategoryPatterns",
   },
   "lib/operations/file-ops.ts": { uses: 4, calls: "matchFilesForPartner, retryFileExtraction" },
+};
+
+/**
+ * The client Firestore SDK in any of its module names: `firebase/firestore`,
+ * its subpaths (`/lite`, which next.config.ts leaves unaliased), `firebase/app`
+ * and the `@firebase/*` packages behind them.
+ */
+const CLIENT_SDK = /^(?:firebase\/(?:firestore|app)(?:\/|$)|@firebase\/)/;
+
+/** A Next route handler, anywhere under `app/`. */
+const ROUTE = /^app\/(?:.*\/)?route\.(?:tsx?|jsx?|mjs|cjs)$/;
+
+/**
+ * Routes that reach the client SDK at runtime, and why. On self-host a route
+ * has no signed-in User for it to take a Bearer token from, so the data plane
+ * answers 401 to whatever it sends, reads included (#813). A route reads and
+ * writes through the Admin SDK and the callables. The list only shrinks.
+ */
+const ROUTE_CLIENT_SDK_ALLOWED: Record<string, string> = {
+  "app/api/browser/log/route.ts": "browser debug log, not a domain table",
+  "app/api/banking/providers/route.ts":
+    "lists the provider registry; lib/banking is shared with the browser and builds client Timestamps there, the route reaches no table",
+  "app/api/gmail/attachment/route.ts":
+    "GmailClient is shared with the browser and loads lib/firebase/config for the browser's token refresh, a path the route never takes",
+  "app/api/gmail/email-content/route.ts": "GmailClient, as app/api/gmail/attachment/route.ts",
+  "app/api/mail/attachment/route.ts": "re-exports app/api/gmail/attachment/route.ts",
+  "app/api/mail/email-content/route.ts": "re-exports app/api/gmail/email-content/route.ts",
 };
 
 const CODE = /\.(?:tsx?|jsx?|mjs|cjs)$/;
@@ -279,17 +311,28 @@ function onePerEntry(chains: string[]): string[] {
 }
 
 /** The three rules' offenders over a tree. */
-function offenders(tree: Tree, frontend: string[], ratchet: Record<string, Pinned>) {
+function offenders(
+  tree: Tree,
+  frontend: string[],
+  ratchet: Record<string, Pinned>,
+  routeAllowed: Record<string, string> = {}
+) {
   const graph = buildGraph(tree, frontend);
   const scanOf = (f: string) => graph.get(f)!.scan;
   // Where the browser bundle starts; everything these import is browser code
   // too, which the chains follow.
   const browser = frontend.filter((f) => BROWSER_TREES.some((t) => f.startsWith(t)) || scanOf(f).useClient);
   const uses = (f: string) => scanOf(f).callableUses;
+  const routes = frontend.filter((f) => ROUTE.test(f));
   return {
     browserReachesAdmin: onePerEntry(chainsTo(graph, browser, ADMIN)),
     browserReachesFunctions: onePerEntry(chainsTo(graph, browser, FUNCTIONS)),
     serverReachesFunctions: onePerEntry(chainsTo(graph, frontend, FUNCTIONS)),
+    // Every route on its own: each one is a place the 401 surfaces.
+    routesReachClientSdk: chainsTo(graph, routes.filter((f) => !(f in routeAllowed)), CLIENT_SDK),
+    staleRouteAllowances: Object.keys(routeAllowed).filter(
+      (f) => !routes.includes(f) || chainsTo(graph, [f], CLIENT_SDK).length === 0
+    ),
     newCallableUsers: frontend.filter((f) => uses(f) > 0 && !CALLABLE_HOMES.includes(f) && !(f in ratchet)),
     ratchetMismatches: Object.entries(ratchet)
       .filter(([f, pinned]) => uses(f) !== pinned.uses)
@@ -321,6 +364,8 @@ const clean = {
   browserReachesAdmin: [],
   browserReachesFunctions: [],
   serverReachesFunctions: [],
+  routesReachClientSdk: [],
+  staleRouteAllowances: [],
   newCallableUsers: [],
   ratchetMismatches: [],
 };
@@ -397,6 +442,35 @@ describe("browser code reaches no Firebase server SDK (#688)", () => {
     ]);
   });
 
+  it("fails every route that reaches the client SDK, through local modules too (#813)", () => {
+    const files = {
+      "app/api/direct/route.ts": `import { getDoc } from "firebase/firestore";`,
+      "app/api/lite/route.ts": `import { getDoc } from "firebase/firestore/lite";`,
+      "app/api/scoped/route.ts": `import { getApp } from "@firebase/app";`,
+      "app/api/deep/route.ts": `import { providers } from "@/lib/banking";`,
+      "lib/banking/index.ts": `export * from "./providers/x";`,
+      "lib/banking/providers/x.ts": `import { Timestamp } from "firebase/firestore";`,
+      "app/(dashboard)/thing/route.ts": `import { initializeApp } from "firebase/app";`,
+      "app/api/typed/route.ts": `import type { Timestamp } from "firebase/firestore";\nimport { getAdminDb } from "@/lib/admin";`,
+      "lib/admin.ts": `import { getFirestore } from "firebase-admin/firestore";`,
+      "app/api/allowed/route.ts": `import { addDoc } from "firebase/firestore";`,
+      "app/api/no-longer/route.ts": `import { getAdminDb } from "@/lib/admin";`,
+      "app/page.tsx": `import { getDoc } from "firebase/firestore";`,
+    };
+    const result = offenders(fixture(files), Object.keys(files), {}, {
+      "app/api/allowed/route.ts": "fixture",
+      "app/api/no-longer/route.ts": "fixture",
+    });
+    expect(result.routesReachClientSdk).toEqual([
+      "app/(dashboard)/thing/route.ts -> firebase/app",
+      "app/api/deep/route.ts -> lib/banking/index.ts -> lib/banking/providers/x.ts -> firebase/firestore",
+      "app/api/direct/route.ts -> firebase/firestore",
+      "app/api/lite/route.ts -> firebase/firestore/lite",
+      "app/api/scoped/route.ts -> @firebase/app",
+    ]);
+    expect(result.staleRouteAllowances).toEqual(["app/api/no-longer/route.ts"]);
+  });
+
   it("fails a new httpsCallable user, and a pinned file whose uses moved either way", () => {
     const tree = fixture({
       "lib/firebase/callable.ts": `import { httpsCallable } from "firebase/functions";\nhttpsCallable(functions, name);`,
@@ -428,7 +502,7 @@ describe("browser code reaches no Firebase server SDK (#688)", () => {
     // would pass vacuously.
     expect(frontend.length).toBeGreaterThan(500);
     expect(buildGraph(disk, frontend).size).toBeGreaterThan(frontend.length);
-    expect(offenders(disk, frontend, CALLABLE_RATCHET)).toEqual(clean);
+    expect(offenders(disk, frontend, CALLABLE_RATCHET, ROUTE_CLIENT_SDK_ALLOWED)).toEqual(clean);
     for (const home of CALLABLE_HOMES) expect(scan(disk.read(home), home).callableUses, home).toBeGreaterThan(0);
     for (const path of IMPORT_FREE) expect(scan(disk.read(path), path).imports, path).toEqual([]);
   });

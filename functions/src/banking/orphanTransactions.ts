@@ -1,13 +1,13 @@
 /**
  * Orphaned Transactions: a User's Transactions whose Bank Account no longer
- * exists, the leftovers of a failed delete. The one delete both cleanups use,
- * the admin callable and the Bank Accounts page's route (#813): filed years
- * keep their evidence (#794), so a closed orphan stays.
- *
- * Callable-free (no `createCallable`, no `firebase-functions`), so a Next API
- * route can import it.
+ * exists, the leftovers of a failed delete, and the delete the
+ * `cleanupOrphanedTransactions` callable runs on them. Filed years keep their
+ * evidence (#794), so a closed orphan stays; every File comes off a deleted
+ * one first, through the File Connection writer (#612), so no File keeps
+ * listing it.
  */
 
+import { detachTransactions } from "../fileConnections/writer";
 import { readFiscalYears, stretchOf } from "../fiscalYears/settings";
 import { toDateSafe } from "../utils/toDateSafe";
 
@@ -24,7 +24,7 @@ export function orphanRows(rows: Row[], validSourceIds: Set<string>): Row[] {
   });
 }
 
-/** Delete the orphans dated outside the Closed stretch; keep and count the closed ones. */
+/** Delete the orphans dated outside the Closed stretch, Files detached first; keep and count the closed ones. */
 export async function deleteOrphanRows(
   db: Db,
   userId: string,
@@ -37,8 +37,15 @@ export async function deleteOrphanRows(
   });
 
   for (let i = 0; i < deletable.length; i += BATCH_SIZE) {
+    const chunk = deletable.slice(i, i + BATCH_SIZE);
+    await detachTransactions(
+      db,
+      userId,
+      chunk.map((d) => ({ id: d.id, data: d.data() })),
+      { why: "as an orphan of a deleted bank account" }
+    );
     const batch = db.batch();
-    for (const row of deletable.slice(i, i + BATCH_SIZE)) batch.delete(row.ref);
+    for (const row of chunk) batch.delete(row.ref);
     await batch.commit();
   }
 

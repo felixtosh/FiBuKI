@@ -5,7 +5,7 @@ import { getTrueLayerClient } from "@/lib/truelayer";
 import { importTrueLayerTransactions } from "@/lib/truelayer/import-transactions";
 import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { TransactionSource } from "@/types/source";
-import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, isServerUserAdmin, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 
 // Reads and writes go through the server's Admin SDK (#813): a route has no
@@ -142,6 +142,7 @@ export async function POST(request: NextRequest) {
       sourceId,
       sourceIdentifier: source.iban ?? source.id,
       transactions,
+      isAdmin: await isServerUserAdmin(request),
     });
 
     return NextResponse.json({ success: true, ...result });

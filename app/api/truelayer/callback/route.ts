@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { Timestamp } from "firebase-admin/firestore";
 import { getTrueLayerClient } from "@/lib/truelayer";
+import type { TrueLayerConnection } from "@/types/truelayer";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
 
@@ -67,8 +68,10 @@ export async function POST(request: NextRequest) {
     // Calculate token expiration
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
 
-    // Store connection in Firestore
-    const connectionDoc = {
+    // Store connection in Firestore. The type names the client SDK's
+    // Timestamp; the server stores the Admin SDK's.
+    type TimestampField = "tokenExpiresAt" | "createdAt" | "updatedAt";
+    const connectionDoc: Omit<TrueLayerConnection, "id" | TimestampField> & Record<TimestampField, Timestamp> = {
       providerId,
       providerName,
       providerLogo,

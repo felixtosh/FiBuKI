@@ -1,80 +1,8 @@
 /**
- * Transform TrueLayer transactions to our Transaction format
+ * Read a TrueLayer account. A sync's lines are stored by import-transactions.ts.
  */
 
-import { Timestamp } from "firebase/firestore";
-import { TrueLayerTransaction, TrueLayerAccount } from "@/types/truelayer";
-import { Transaction } from "@/types/transaction";
-import { computeDedupeHash } from "@/functions/src/imports/dedupe";
-
-/**
- * Transform TrueLayer transactions to our Transaction format
- */
-export async function transformTransactions(
-  transactions: TrueLayerTransaction[],
-  sourceId: string,
-  sourceIban: string,
-  userId: string,
-  importJobId: string | null
-): Promise<Omit<Transaction, "id">[]> {
-  const now = Timestamp.now();
-
-  const results: Omit<Transaction, "id">[] = [];
-
-  for (const tx of transactions) {
-    // Determine if income or expense based on transaction_type
-    const isCredit = tx.transaction_type === "CREDIT";
-    const amount = Math.abs(tx.amount);
-
-    // Build partner name from merchant or description
-    const partner = tx.merchant_name || null;
-
-    // Parse date and normalize to UTC midnight (date-only)
-    const txDateFull = new Date(tx.timestamp);
-    const txDate = new Date(Date.UTC(txDateFull.getUTCFullYear(), txDateFull.getUTCMonth(), txDateFull.getUTCDate()));
-
-    // Reference for dedupe hash
-    const reference = tx.meta?.provider_reference || tx.transaction_id;
-
-    // Generate dedupe hash
-    const dedupeHash = computeDedupeHash({
-      date: txDate,
-      amount: isCredit ? amount : -amount,
-      sourceIdentifier: sourceIban,
-      reference,
-    });
-
-    // Build original data
-    const _original = {
-      date: tx.timestamp,
-      amount: tx.amount.toString(),
-      rawRow: tx as unknown as Record<string, string>,
-    };
-
-    const transaction: Omit<Transaction, "id"> = {
-      sourceId,
-      importJobId,
-      userId,
-      date: Timestamp.fromDate(txDate),
-      amount: isCredit ? amount : -amount,
-      currency: tx.currency,
-      name: tx.description,
-      partner,
-      partnerIban: null,
-      description: null,
-      reference,
-      isComplete: false,
-      dedupeHash,
-      _original,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    results.push(transaction);
-  }
-
-  return results;
-}
+import { TrueLayerAccount } from "@/types/truelayer";
 
 /**
  * Get IBAN from TrueLayer account

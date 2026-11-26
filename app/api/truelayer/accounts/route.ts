@@ -3,10 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { Timestamp } from "firebase-admin/firestore";
 import { getTrueLayerClient, getAccountIban } from "@/lib/truelayer";
 import { importTrueLayerTransactions } from "@/lib/truelayer/import-transactions";
-import type { TrueLayerConnection } from "@/types/truelayer";
+import type { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { normalizeIban } from "@/lib/import/deduplication";
 import { getAdminDb } from "@/lib/firebase/admin";
-import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, isServerUserAdmin, unauthorizedResponse } from "@/lib/auth/get-server-user";
 
 // Strip CR/LF so request-derived values cannot forge log lines
 function sanitizeForLog(value: unknown): string {
@@ -122,16 +122,19 @@ export async function POST(request: NextRequest) {
     const account = await client.getAccount(connection.accessToken, accountId);
     const iban = getAccountIban(account);
 
-    // Build API config
-    const apiConfig = {
+    // Build API config. A bank without a logo has no providerLogo field: the
+    // SDK refuses an undefined value unless told to ignore it.
+    // The type names the client SDK's Timestamp; the server stores the Admin SDK's.
+    const apiConfig: Omit<TrueLayerApiConfig, "connectedAt" | "lastSyncAt"> & { connectedAt: Timestamp } = {
       provider: "truelayer",
       connectionId,
       accountId,
       providerId: connection.providerId,
       providerName: connection.providerName,
-      providerLogo: connection.providerLogo || undefined,
+      ...(connection.providerLogo ? { providerLogo: connection.providerLogo } : {}),
       connectedAt: Timestamp.now(),
     };
+    const isAdmin = await isServerUserAdmin(request);
 
     const now = Timestamp.now();
     const db = getAdminDb();
@@ -162,14 +165,14 @@ export async function POST(request: NextRequest) {
 
       await sourceRef.update({
         type: "api",
-        apiConfig: withoutUndefined(apiConfig),
+        apiConfig,
         bankName: connection.providerName,
         ...(iban ? { iban: sourceIban } : {}),
         updatedAt: now,
       });
 
       // Trigger initial sync in background
-      triggerInitialSync(sourceId, connection.accessToken, accountId, sourceIban, userId).catch(
+      triggerInitialSync(sourceId, connection.accessToken, accountId, sourceIban, userId, isAdmin).catch(
         (err) => console.error("Initial sync failed:", err)
       );
 
@@ -192,7 +195,7 @@ export async function POST(request: NextRequest) {
       bankName: connection.providerName,
       currency: account.currency,
       type: "api" as const,
-      apiConfig: withoutUndefined(apiConfig),
+      apiConfig,
       isActive: true,
       userId,
       createdAt: now,
@@ -205,7 +208,7 @@ export async function POST(request: NextRequest) {
     console.log("[TrueLayer Accounts POST] Source created with ID:", docRef.id);
 
     // Trigger initial sync in background (don't wait)
-    triggerInitialSync(docRef.id, connection.accessToken, accountId, sourceData.iban, userId).catch(
+    triggerInitialSync(docRef.id, connection.accessToken, accountId, sourceData.iban, userId, isAdmin).catch(
       (err) => console.error("Initial sync failed:", err)
     );
 
@@ -222,14 +225,6 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * The Admin SDK refuses an `undefined` field where the client SDK dropped it
- * silently (`providerLogo` of a bank without a logo).
- */
-function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as T;
-}
-
-/**
  * Trigger initial transaction sync for a newly created source
  */
 async function triggerInitialSync(
@@ -237,7 +232,8 @@ async function triggerInitialSync(
   accessToken: string,
   accountId: string,
   sourceIban: string,
-  userId: string
+  userId: string,
+  isAdmin: boolean
 ) {
   try {
     const client = getTrueLayerClient();
@@ -265,6 +261,7 @@ async function triggerInitialSync(
       sourceId,
       sourceIdentifier: sourceIban,
       transactions,
+      isAdmin,
     });
 
     console.log(`Imported ${imported} of ${transactions.length} transactions for source ${sanitizeForLog(sourceId)}`);

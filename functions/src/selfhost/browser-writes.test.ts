@@ -12,9 +12,8 @@
  *   the data plane with the same policy as a browser, so such a route breaks
  *   the day its table locks. It moves to the Admin SDK with its table.
  *
- * And one list: the server routes that load the client SDK at runtime at all.
- * A route has no signed-in User, so on self-host the data plane answers 401
- * to anything it sends, reads included (#813).
+ * That a route reaches no client SDK at all, reads included, is
+ * browser-imports.test.ts's rule 5 (#813).
  *
  * A new write fails the build. A file whose count drops fails too, until its
  * allowance is lowered (or its entry removed), so the lists only ever shrink.
@@ -63,20 +62,6 @@ const BROWSER_ALLOWED: Allowances = {
 const ROUTE_ALLOWED: Allowances = {
   "app/api/browser/log/route.ts": { count: 1, why: "browser debug log, not a domain table" },
 };
-
-/**
- * Server routes that load the client Firestore SDK at runtime at all, and why.
- * On self-host a route has no signed-in User for it to take a Bearer token
- * from, so the data plane answers 401 to whatever it sends (#813): a route
- * reads and writes through the Admin SDK (`getAdminDb()`) and the server's
- * writers. A type-only import is erased and not counted.
- */
-const ROUTE_CLIENT_SDK_ALLOWED: Record<string, string> = {
-  "app/api/browser/log/route.ts": "browser debug log, not a domain table",
-};
-
-/** The client SDK's modules: what a route must not load. */
-const CLIENT_SDK_MODULES = new Set(["firebase/firestore", "firebase/app"]);
 
 /** Not browser writers, never counted. */
 const SKIPPED: Record<string, string> = {
@@ -341,48 +326,6 @@ function operationsImports(source: string, path: string): string[] {
   return [...names];
 }
 
-/**
- * Whether a file loads the client SDK at runtime: a value import or
- * re-export of it, a side-effect import, `import x = require(...)`,
- * `import()` or `require()`. `import type`, and braces holding only `type`
- * names, are erased by the compiler and do not count.
- */
-function loadsClientSdk(source: string, path = "file.ts"): boolean {
-  if (![...CLIENT_SDK_MODULES].some((m) => source.includes(m))) return false;
-  const { file } = scanFile(source, path);
-  let loads = false;
-  visitAll(file, (node) => {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
-      if (!CLIENT_SDK_MODULES.has(node.moduleSpecifier.text)) return;
-      if (ts.isImportDeclaration(node)) {
-        const clause = node.importClause;
-        const named = clause?.namedBindings;
-        const typeOnly =
-          !!clause &&
-          (clause.isTypeOnly ||
-            (!clause.name && !!named && ts.isNamedImports(named) && named.elements.length > 0 && named.elements.every((el) => el.isTypeOnly)));
-        if (!typeOnly) loads = true;
-      } else if (!node.isTypeOnly) {
-        loads = true;
-      }
-    }
-    if (
-      ts.isImportEqualsDeclaration(node) &&
-      !node.isTypeOnly &&
-      ts.isExternalModuleReference(node.moduleReference) &&
-      ts.isStringLiteral(node.moduleReference.expression) &&
-      CLIENT_SDK_MODULES.has(node.moduleReference.expression.text)
-    ) {
-      loads = true;
-    }
-    if (ts.isCallExpression(node)) {
-      const loaded = loadedModule(node);
-      if (loaded && CLIENT_SDK_MODULES.has(loaded)) loads = true;
-    }
-  });
-  return loads;
-}
-
 const repoRoot = join(__dirname, "..", "..", "..");
 const rel = (path: string) => relative(repoRoot, path).split(sep).join("/");
 
@@ -637,40 +580,5 @@ describe("the browser does not gain a write", () => {
 describe("a server route does not gain a client SDK write", () => {
   it("every route holds exactly the client writes its allowance names", () => {
     expect(ratchet(routeWrites(), ROUTE_ALLOWED)).toEqual([]);
-  });
-});
-
-describe("a server route does not load the client SDK (#813)", () => {
-  it("counts a runtime load and nothing else", () => {
-    const loads = [
-      `import { getDoc } from "firebase/firestore";`,
-      `import { initializeApp } from "firebase/app";`,
-      `import "firebase/firestore";`,
-      `import * as fs from "firebase/firestore";`,
-      `import { type Timestamp, getDoc } from "firebase/firestore";`,
-      `export { Timestamp } from "firebase/firestore";`,
-      `const fs = await import("firebase/firestore");`,
-      `const fs = require("firebase/firestore");`,
-      `import fs = require("firebase/firestore");`,
-    ];
-    for (const shape of loads) expect(loadsClientSdk(shape), shape).toBe(true);
-    const ignored = [
-      `import type { Timestamp } from "firebase/firestore";`,
-      `import { type Timestamp } from "firebase/firestore";`,
-      `export type { Timestamp } from "firebase/firestore";`,
-      `import { Timestamp } from "firebase-admin/firestore";`,
-      `import { getFirestore } from "firebase/firestore/lite-not-the-sdk-we-alias";`,
-      `// import { getDoc } from "firebase/firestore";`,
-      `const hint = "never import firebase/firestore in a route";`,
-    ];
-    for (const shape of ignored) expect(loadsClientSdk(shape), shape).toBe(false);
-  });
-
-  it("only the routes on the list load it, and each of those still does", () => {
-    const loading = sourceFiles(apiDir)
-      .filter((file) => loadsClientSdk(readFileSync(file, "utf8"), rel(file)))
-      .map(rel)
-      .sort();
-    expect(loading).toEqual(Object.keys(ROUTE_CLIENT_SDK_ALLOWED).sort());
   });
 });

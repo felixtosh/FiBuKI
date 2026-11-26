@@ -1,4 +1,4 @@
-import { Timestamp } from "firebase/firestore";
+import type { Timestamp } from "firebase/firestore";
 import { EmailSearchPattern } from "./email-integration";
 import { NoReceiptCategoryId } from "./no-receipt-category";
 

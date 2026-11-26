@@ -3,4 +3,4 @@
  */
 
 export { TrueLayerClient, getTrueLayerClient, getProviders, getRedirectUrl } from "./client";
-export { transformTransactions, getAccountIban, formatAccountName } from "./transform";
+export { getAccountIban, formatAccountName } from "./transform";

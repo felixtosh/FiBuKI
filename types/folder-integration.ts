@@ -1,4 +1,4 @@
-import { Timestamp } from "firebase/firestore";
+import type { Timestamp } from "firebase/firestore";
 
 /**
  * A Folder Integration: one folder in a cloud store, kept in step with FiBuKI's

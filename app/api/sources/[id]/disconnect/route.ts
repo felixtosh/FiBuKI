@@ -6,6 +6,8 @@ import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/ge
 import { FinapiClient, FinapiEnvironment } from "@/lib/finapi/client";
 import { closedRefusal, readFiscalYears, stretchOf } from "@/functions/src/fiscalYears/settings";
 import { toDateSafe } from "@/lib/utils";
+import { callFirebaseFunction } from "@/lib/api/firebase-callable";
+import { bearerToken } from "@/lib/api/callable-as-caller";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -14,6 +16,9 @@ interface RouteParams {
 /**
  * POST /api/sources/[id]/disconnect
  * Disconnect a bank connection from a source and delete synced transactions
+ *
+ * Reads and the Bank Account's update go through the server's Admin SDK; the
+ * User's Transactions are deleted by a callable, as the User (#813).
  */
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
@@ -65,6 +70,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    // The deletes run as the User, through the callable; without a token none can.
+    const authToken = bearerToken(request);
+    if (!authToken) {
+      return NextResponse.json({ error: "A Bearer token is required: the deletes run as you." }, { status: 401 });
+    }
+
     // Delete finAPI bank connection if applicable
     if (apiConfig.provider === "finapi" && apiConfig.bankConnectionId && apiConfig.userAccessToken) {
       try {
@@ -83,20 +94,27 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // Delete the rows just checked, no other set
-    let deletedTransactions = 0;
+    // Delete the rows just checked. The User's go through the
+    // deleteTransactionsBySource callable, as the User: every File comes off
+    // them first (#612) and the month's quota count goes down with them.
+    const { deleted } = await callFirebaseFunction<{ sourceId: string }, { deleted: number }>(
+      "deleteTransactionsBySource",
+      { sourceId },
+      authToken
+    );
+    let deletedTransactions = deleted ?? 0;
+
+    // The rest carry no user id or another one. No File Connection reaches
+    // them (the writer connects only the User's own Transactions), so they go
+    // as they are.
     const BATCH_SIZE = 500;
-
-    // Delete in batches
-    for (let i = 0; i < rows.docs.length; i += BATCH_SIZE) {
+    const others = rows.docs.filter((d) => d.data().userId !== userId);
+    for (let i = 0; i < others.length; i += BATCH_SIZE) {
       const batch = db.batch();
-      const slice = rows.docs.slice(i, i + BATCH_SIZE);
-
-      for (const txDoc of slice) {
+      for (const txDoc of others.slice(i, i + BATCH_SIZE)) {
         batch.delete(txDoc.ref);
         deletedTransactions++;
       }
-
       await batch.commit();
     }
 
