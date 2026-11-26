@@ -58,11 +58,25 @@ Account's contents, a bank disconnect, a re-sync that would replace them, and a 
 Payment's correction and delete. The orphan cleanups keep a closed orphan. The browser
 writes no Transaction at all, so the data plane refuses every write to one.
 
-Inserts are not refused. A User moving from another tool imports old years into the
-Closed stretch with the normal tools.
+A File is Closed when its extracted (or given) date lies in the Closed stretch; an undated
+File never is. A Closed File's facts cannot be changed, the currency included: the File-facts
+writer refuses a correction, a not-invoice ruling, and a correction that would date an open
+File into the Closed stretch. Its Partner and invoice direction stay too, while a rename does
+not count as a fact. It cannot be deleted or split.
 
-Locking Files and File Connections, keeping the Closed stretch out of the work lists and
-the digest, and keeping automation off it are their own tickets; they call the same check.
+A File Connection is locked when its Transaction is Closed. The File Connection writer
+refuses a connect, an Unlink, a Rejection with it and the Copy swap there, whatever the
+origin; lifting a Rejection is refused too. The File's date does not lock a connection, so a
+Closed File (an April invoice) can be connected to, and unlinked from, a Transaction in open
+time (its May payment) while its own facts stay locked. Deleting a File would take its
+connections apart, so a File on a Closed Transaction cannot be deleted either.
+
+Inserts are not refused. A User moving from another tool imports old years into the
+Closed stretch with the normal tools, and uploads Files dated there.
+
+Keeping the Closed stretch out of the work lists and the digest calls the same check.
+Automation (below) skips a Closed File rather than being refused by the File-facts writer,
+which refuses only what a person or a client starts.
 
 ## The lift
 
@@ -103,6 +117,26 @@ them, so a User whose stored default already reaches back keeps it.
 A File dated before Tracked From is kept and left out of the work lists, and named once in one
 hint ("3 documents from 2021, a year you don't track"). Dismissing the hint stores what it
 showed; it comes back only for documents that arrive later.
+
+## Automation
+
+Automation works on the open stretch only. Receipt search, Partner and Category matching,
+the company lookups an Import triggers, auto-connect and extraction's fact writes leave a
+Transaction or File dated Closed or Untracked as it is, and a record added into a Closed
+stretch triggers none of them; an Import's completion filters its rows by date. A File's
+date is its extracted or given one; an undated File is open until extraction dates it. A
+File that lands outside the open stretch still has its stages marked done, so it never
+reads as waiting.
+
+Auto-connect needs both sides open. A User may still connect a Closed File to an open
+Transaction by hand.
+
+Learning is not gated. Partner learning, aliases, resolution learning and billing cycles
+read closed years, so a User's history improves matching today; what learning then
+applies to Transactions is matching, and skips closed ones.
+
+One test lists every trigger, schedule and registered automation as gated or exempt, and
+fails on a new one until it is placed.
 
 ## Considered options
 

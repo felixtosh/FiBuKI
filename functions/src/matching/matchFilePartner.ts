@@ -39,6 +39,7 @@ import { isPassiveMode } from "../utils/checkAutomationMode";
 import { printedNameEquals } from "../utils/identity-matcher";
 import { payeeFillForTransaction } from "../partners/payeeSync";
 import { activityEntry, logActivity, type ActivityActor } from "../utils/activity";
+import { automationScope } from "../fiscalYears/settings";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -613,6 +614,8 @@ async function syncPartnerToConnectedTransactions(
   if (transactionIds.size === 0) return;
 
   const now = Timestamp.now();
+  // #803: the File's Partner is not carried onto a Transaction outside the open stretch.
+  const scope = automationScope(db, fileData.userId);
 
   for (const transactionId of transactionIds) {
     if (!transactionId) continue;
@@ -623,6 +626,7 @@ async function syncPartnerToConnectedTransactions(
 
     const txData = txDoc.data()!;
     if (txData.userId !== fileData.userId) continue;
+    if (!(await scope.actsOnTransaction(txData))) continue;
 
     // The payee rule (#550, ADR-0011): the File's Partner never overwrites
     // the Transaction's; it fills an empty one only when every File on the
@@ -972,6 +976,19 @@ export async function runPartnerMatching(
   fileData: FirebaseFirestore.DocumentData
 ): Promise<void> {
   const userId = fileData.userId;
+
+  // #803: a File dated outside the open stretch gets no Partner from
+  // matching. The stage is marked done, so the File does not read "Matching".
+  if (!(await automationScope(db, userId).actsOnFile(fileData))) {
+    console.log(`[PartnerMatch] File ${fileId} is dated outside the open stretch, matching nothing`);
+    await db.collection("files").doc(fileId).update({
+      partnerMatchComplete: true,
+      partnerMatchedAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    return;
+  }
+
   const extractedPartner = fileData.extractedPartner;
   // Never learned as an alias, never matched on: see learnPartnerAlias (#156).
   const invoicingAgentName: string | null = fileData.extractedInvoicingAgent?.name ?? null;

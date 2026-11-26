@@ -90,6 +90,18 @@ account or import, the Copy swap) all go through it, and no other code writes a
 `fileConnections` record, a File's `transactionIds` or a Transaction's `fileIds`. Its
 rules key on the Connection Origin (`rules.ts`). A guard test fails on a new writer; a
 Next API route connects through the callable as the user (`lib/api/connect-file.ts`).
+It refuses a connect (reason `closed`), an Unlink, a Rejection with it and the Copy swap
+when the Transaction is in the Closed stretch (#801, ADR-0018), reading the settings inside
+its Firestore transaction; a row the same plan creates is an insert and passes.
+
+A File dated in the Closed stretch (#801) keeps its facts: the File-facts applier
+(`fileFacts/applyFactChange.ts`) refuses the panel's and MCP's corrections and the
+not-invoice ruling (`CLOSED`, `LOCKED_FACT_ORIGINS`), and a correction that would date a File
+there. Automation does not go through that refusal; it skips a Closed File with
+`fileStretchOf` (#803). `updateFile` refuses everything but a rename or thumbnail, which covers
+both File Partner callables and tools. Deleting or splitting a Closed File, or a File on a
+Closed Transaction, is refused (`closedFileDeleteRefusal`); the folder sync leaves such a File.
+`unrejectFileFromTransactionCallable` refuses a Closed Transaction.
 - `updateFileCallable` - Update file metadata
 - `assignPartnerToFileCallable` / `removePartnerFromFileCallable` - A File's Partner, through `functions/src/files/filePartner.ts`, the path MCP's `assign_partner_to_file` / `remove_partner_from_file` use too: the User's own or a Global Partner, the Partner worker cancelled on a manual assign, a removed automatic assignment recorded on the Partner (#627)
 - `deleteFileCallable` - Delete a file: hides it, undone by `restoreFile`, never touches the stored bytes. Refuses a FiBuKI-generated invoice document (ADR-0006)

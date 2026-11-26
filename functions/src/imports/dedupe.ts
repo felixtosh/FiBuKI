@@ -5,7 +5,9 @@
  * MCP/REST import_transactions tool) computes the hash and asks the question
  * here, so the formula cannot drift between surfaces and no client has to know
  * it. The formula is the one the web import has always used, so rows already
- * stored keep matching.
+ * stored keep matching. The bank syncs (finAPI, TrueLayer) ask `splitDuplicates`
+ * too, with their own connector hash and the provider's transaction id as the
+ * External Row Id (#804).
  *
  * What counts as a duplicate: a row whose hash was already stored for the same
  * Bank Account by an EARLIER import. Rows of the same import (same importJobId)

@@ -37,6 +37,8 @@ export type SweepOutcome =
   | "not-an-invoice"
   /** Extraction read neither an issuer nor a recipient — nothing to compare. */
   | "no-entities"
+  /** Dated in a Closed stretch or before Tracked From (#803): automation leaves it alone. */
+  | "outside-open-stretch"
   /** Re-derived, differs from what is stored, and the write landed. */
   | "written"
   /** Re-derived, and every field already holds the derived value. */
@@ -51,6 +53,7 @@ export const NEVER_EVALUATED: ReadonlySet<SweepOutcome> = new Set<SweepOutcome>(
   "extraction-incomplete",
   "not-an-invoice",
   "no-entities",
+  "outside-open-stretch",
 ]);
 
 /** The outcomes that mean the run did not do its job for that File. */
@@ -140,6 +143,7 @@ export function emptyOutcomeCounts(): Record<SweepOutcome, number> {
     "extraction-incomplete": 0,
     "not-an-invoice": 0,
     "no-entities": 0,
+    "outside-open-stretch": 0,
     written: 0,
     "already-correct": 0,
     "evaluation-failed": 0,

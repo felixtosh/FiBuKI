@@ -8,6 +8,7 @@ import {
 import { createLocalPartnerFromGlobal } from "./createLocalPartnerFromGlobal";
 import { CLEAR_TX_PROVENANCE } from "./partnerProvenance";
 import { activityEntry } from "../utils/activity";
+import { automationScope } from "../fiscalYears/settings";
 
 const db = getFirestore();
 const MAX_BATCH_SIZE = 500;
@@ -200,12 +201,15 @@ export async function processPartnerMatchesForTransactions(
   const autoMatchedPartnerIds = new Set<string>();
   const noAutoMatchTransactions: NoAutoMatchTransaction[] = [];
   const writeOperations: PartnerMatchWriteOperation[] = [];
+  // #803: Partner matching leaves Transactions outside the open stretch alone.
+  const scope = automationScope(db, userId);
 
   for (const txDoc of transactions) {
     if (txDoc.exists === false) continue;
 
     const txData = txDoc.data();
     if (!txData) continue;
+    if (!(await scope.actsOnTransaction(txData))) continue;
 
     if (txData.partnerId) {
       continue;

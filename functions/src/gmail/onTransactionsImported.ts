@@ -16,6 +16,7 @@ import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/fire
 import { getFirestore } from "firebase-admin/firestore";
 import { isSearchableMailIntegration } from "../mail/searchable";
 import { queueIncompleteTransactionSearch } from "../precision-search/queueIncompleteSearch";
+import { automationScope } from "../fiscalYears/settings";
 
 interface ImportRecord {
   userId: string;
@@ -43,6 +44,14 @@ export async function handleTransactionsImported(
   const userId = importData.userId;
   if (!(await hasConnectedMailbox(db, userId))) {
     console.log(`[MailSearchAfterImport] No connected mailbox for user ${userId}`);
+    return;
+  }
+
+  // #803: an Import into a Closed stretch triggers no search. One mixing
+  // closed and open rows does; the search skips the closed ones itself.
+  const rows = await db.collection("transactions").where("userId", "==", userId).where("importJobId", "==", importId).get();
+  if (!rows.empty && (await automationScope(db, userId).openTransactions(rows.docs)).length === 0) {
+    console.log(`[MailSearchAfterImport] Import ${importId} holds no row in the open stretch, skipping`);
     return;
   }
 

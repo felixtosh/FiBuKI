@@ -16,6 +16,7 @@ import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/fire
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { isValidCompanyName, extractLegalSuffix } from "../utils/companyNameValidator";
 import { AutomationMeta } from "../automation/types";
+import { automationScope } from "../fiscalYears/settings";
 import {
   applyPartnerMatchUpdates,
   loadPartnerMatchingContext,
@@ -257,7 +258,10 @@ export async function handleImportCompanyCheck(
     legalSuffix: string | null;
   }> = [];
 
-  for (const doc of unmatchedSnapshot.docs) {
+  // #803: no company lookup for a row dated outside the open stretch.
+  const openUnmatched = await automationScope(db, userId).openTransactions(unmatchedSnapshot.docs);
+
+  for (const doc of openUnmatched) {
     const data = doc.data();
     const automationHistory = data.automationHistory as AutomationHistoryEntry[] | undefined;
 

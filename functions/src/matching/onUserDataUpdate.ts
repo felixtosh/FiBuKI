@@ -50,6 +50,7 @@ import {
 } from "./invoiceDirectionSweepReport";
 import { factChangeActivity } from "../fileFacts/applyFactChange";
 import { logActivity } from "../utils/activity";
+import { automationScope } from "../fiscalYears/settings";
 
 const db = getFirestore();
 
@@ -586,6 +587,7 @@ export const onUserDataUpdate = onDocumentUpdated(
     // One stamp for every write of the run, so a File replayed after a
     // refused batch is written the same twice (#158).
     const runAt = Timestamp.now();
+    const scope = automationScope(db, userId);
 
     let scanned = 0;
     let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
@@ -604,6 +606,11 @@ export const onUserDataUpdate = onDocumentUpdated(
       for (const fileDoc of snapshot.docs) {
         scanned++;
         ledger.candidate();
+        // #803: a File dated outside the open stretch keeps its derived facts.
+        if (!(await scope.actsOnFile(fileDoc.data()))) {
+          ledger.record(fileDoc.id, "outside-open-stretch");
+          continue;
+        }
         await planFileSweep(fileDoc, userData, sourceIbans, ledger, planned, runAt);
       }
 

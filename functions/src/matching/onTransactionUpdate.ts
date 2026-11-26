@@ -18,6 +18,7 @@ import {
 import { deriveForTransaction } from "../documents/syncDocumentationState";
 import { syncDirectionReviewForFiles } from "../documents/syncDirectionReview";
 import { categoryMatchActivity } from "./categoryActivity";
+import { automationScope } from "../fiscalYears/settings";
 
 // =============================================================================
 // AUTOMATION METADATA
@@ -202,6 +203,12 @@ export const onTransactionUpdate = onDocumentUpdated(
     const partnerChanged = before.partnerId !== after.partnerId && after.partnerId;
 
     if (!partnerWasAssigned && !partnerChanged) {
+      return;
+    }
+
+    // #803: no receipt search, reconciliation or Category matching for a
+    // Transaction outside the open stretch. The learning above still ran.
+    if (!(await automationScope(db, after.userId).actsOnTransaction(after))) {
       return;
     }
 
