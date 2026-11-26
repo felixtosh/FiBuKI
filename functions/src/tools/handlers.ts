@@ -114,6 +114,7 @@ import {
 } from "../matching/billingCycle";
 import { getPeriodStatus, listPendingMatches } from "./periodStatus";
 import {
+  assertFileNotClosed,
   changeFiscalYears,
   listFiscalYearChanges,
   openFromDate,
@@ -1811,6 +1812,8 @@ export async function confirmFileRecipientIsUser(userId: string, args: Record<st
   if (!fileSnap.exists || fileSnap.data()?.userId !== userId) {
     throw new Error("File not found");
   }
+  // The ruling decides whether the File's VAT is in the UVA: locked on a Closed File (#801).
+  await assertFileNotClosed(db, userId, fileSnap.data());
 
   const updates = buildConfirmRecipientIsUserUpdates();
   const confirmed = { ...fileSnap.data()!, ...updates };
@@ -1857,6 +1860,8 @@ export async function unconfirmFileRecipientIsUser(userId: string, args: Record<
   if (!fileSnap.exists || fileSnap.data()?.userId !== userId) {
     throw new Error("File not found");
   }
+  // The ruling decides whether the File's VAT is in the UVA: locked on a Closed File (#801).
+  await assertFileNotClosed(db, userId, fileSnap.data());
 
   const updates = buildClearRecipientConfirmationUpdates();
   Object.assign(

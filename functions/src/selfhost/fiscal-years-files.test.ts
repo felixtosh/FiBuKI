@@ -149,6 +149,37 @@ describe("a Closed File's Partner and invoice ruling stay too", () => {
     expect((await stored("files", "f-closed")).partnerId).toBeUndefined();
   });
 
+  it("the recipient ruling stays: it decides whether the File's VAT is in the UVA", async () => {
+    await seedFile("f-foreign", "2024-05-02", { foreignRecipient: true });
+    await seedFile("f-confirmed", "2024-05-03", { recipientConfirmedAsUser: true });
+
+    await expect(handleTool(USER, "confirm_file_recipient_is_user", { fileId: "f-foreign" })).rejects.toThrow(LOCK);
+    await expect(handleTool(USER, "unconfirm_file_recipient_is_user", { fileId: "f-confirmed" })).rejects.toThrow(LOCK);
+
+    expect(await stored("files", "f-foreign")).toMatchObject({ foreignRecipient: true });
+    expect((await stored("files", "f-foreign")).recipientConfirmedAsUser).toBeUndefined();
+    expect((await stored("files", "f-confirmed")).recipientConfirmedAsUser).toBe(true);
+  });
+
+  it("a Closed File is not marked as a Copy, by the tool or the callable", async () => {
+    await seedFile("f-orig", "2025-01-09");
+
+    await expect(handleTool(USER, "mark_file_as_copy", { fileId: "f-closed", originalFileId: "f-orig" })).rejects.toThrow(LOCK);
+    await expect(call(markFileAsCopyCallable, { fileId: "f-closed", originalFileId: "f-orig" })).rejects.toMatchObject({
+      code: "failed-precondition",
+      message: expect.stringMatching(LOCK),
+    });
+    expect((await stored("files", "f-closed")).copyOfFileId).toBeUndefined();
+  });
+
+  it("an open File is still marked as a Copy of a Closed one", async () => {
+    await seedFile("f-open", "2025-01-09");
+
+    await handleTool(USER, "mark_file_as_copy", { fileId: "f-open", originalFileId: "f-closed" });
+
+    expect((await stored("files", "f-open")).copyOfFileId).toBe("f-closed");
+  });
+
   it("a rename is not a fact: it still goes through", async () => {
     await call(updateFileCallable, { fileId: "f-closed", data: { fileName: "renamed.pdf" } });
     expect((await stored("files", "f-closed")).fileName).toBe("renamed.pdf");

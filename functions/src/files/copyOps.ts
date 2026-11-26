@@ -25,6 +25,7 @@ import { rematchRevertedTransactions } from "../matching/partnerProvenance";
 import { planCopyMove } from "../fileConnections/writer";
 import { pairedForCopyCheck } from "../receiptPairs/pairMatcher";
 import { activityEntry, logActivity } from "../utils/activity";
+import { CLOSED_FILE, closedRefusal, closedSettingsIn, fileDateOf, isClosedDate } from "../fiscalYears/fiscalYears";
 
 type Data = FirebaseFirestore.DocumentData;
 type Db = FirebaseFirestore.Firestore;
@@ -415,6 +416,11 @@ export async function markFileAsCopy(
 
     if (copy.data.deletedAt || named.data.deletedAt) {
       throw new HttpsError("failed-precondition", "A deleted File cannot be marked as a Copy or be an original. Restore it first.");
+    }
+    // A Copy leaves the UVA: a File dated in the Closed stretch keeps its place (#801).
+    const closed = await closedSettingsIn(tx, db, userId);
+    if (isClosedDate(closed, fileDateOf(copy.data))) {
+      throw new HttpsError("failed-precondition", closedRefusal(closed!, CLOSED_FILE));
     }
     if (isGeneratedInvoiceFile(copy.data)) {
       throw new HttpsError(
