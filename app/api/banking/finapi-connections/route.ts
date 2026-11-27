@@ -23,6 +23,7 @@ import {
   DeleteBankingConnectionRequest,
   DeleteBankingConnectionResponse,
 } from "@/types/banking-sync";
+import { isBankConnectionStillUsed, isBankConnectionUsedBy } from "@/functions/src/banking/bankConnectionUse";
 
 // Strip CR/LF so request-derived values cannot forge log lines
 function sanitizeForLog(value: unknown): string {
@@ -64,16 +65,20 @@ export async function GET(request: NextRequest) {
 
     const db = getAdminDb();
 
-    // Get all finAPI sources for this user
+    // All of the User's Bank Accounts: a connection is linked while one of
+    // them names it, through the same check the deletes make (#815). The
+    // connected finAPI ones also hold the credentials.
     const sourcesQuery = await db
       .collection("sources")
       .where("userId", "==", userId)
-      .where("type", "==", "api")
       .get();
 
     const finapiSources = sourcesQuery.docs
       .map((doc) => ({ id: doc.id, ...doc.data() }))
-      .filter((s: Record<string, unknown>) => (s.apiConfig as Record<string, unknown>)?.provider === "finapi");
+      .filter(
+        (s: Record<string, unknown>) =>
+          s.type === "api" && (s.apiConfig as Record<string, unknown>)?.provider === "finapi"
+      );
 
     // Try to get credentials from sources first, then from bankingConnections
     let userAccessToken: string | null = null;
@@ -215,16 +220,6 @@ export async function GET(request: NextRequest) {
 
     console.log(`[finAPI Connections] Found ${finapiConnections.connections.length} connections in finAPI`);
 
-    // Get bank connection IDs that are linked to our sources
-    const linkedBankConnectionIds = new Set<number>();
-    for (const source of finapiSources) {
-      const sourceConfig = (source as Record<string, unknown>).apiConfig as Record<string, unknown>;
-      const bankConnectionId = sourceConfig?.bankConnectionId as number | undefined;
-      if (bankConnectionId) {
-        linkedBankConnectionIds.add(bankConnectionId);
-      }
-    }
-
     // Identify orphaned connections
     const orphanedConnections: FinapiConnectionInfo[] = [];
     const linkedConnections: FinapiConnectionInfo[] = [];
@@ -292,7 +287,7 @@ export async function GET(request: NextRequest) {
         updateStatus: conn.updateStatus,
       };
 
-      if (linkedBankConnectionIds.has(conn.id)) {
+      if (isBankConnectionUsedBy(sourcesQuery.docs, { provider: "finapi", bankConnectionId: String(conn.id) })) {
         linkedConnections.push(connectionInfo);
       } else {
         orphanedConnections.push(connectionInfo);
@@ -345,6 +340,16 @@ export async function DELETE(request: NextRequest) {
     }
 
     const db = getAdminDb();
+
+    // Only an orphan: while one of the User's Bank Accounts still syncs
+    // through the connection, deleting it at finAPI would cut them all off
+    // (#815). The list marks these linked; this holds without the list.
+    if (await isBankConnectionStillUsed(db, userId, { provider: "finapi", bankConnectionId: String(bankConnectionId) })) {
+      return NextResponse.json(
+        { error: "A Bank Account still uses this bank connection. Delete or disconnect the Bank Account instead." },
+        { status: 409 }
+      );
+    }
 
     // Try to get credentials from sources first, then from bankingConnections
     let userAccessToken: string | null = null;

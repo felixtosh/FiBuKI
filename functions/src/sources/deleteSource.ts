@@ -7,6 +7,7 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { detachTransactions } from "../fileConnections/writer";
 import { assertNotClosed } from "../fiscalYears/fiscalYears";
 import { toDateSafe } from "../utils/toDateSafe";
+import { bankConnectionOf, isBankConnectionStillUsed, ownTrueLayerConnection } from "../banking/bankConnectionUse";
 
 interface DeleteSourceRequest {
   sourceId: string;
@@ -162,8 +163,15 @@ export async function deleteSourceInternal(
     }
   }
 
-  // 4. Clean up API provider connections if this was an API source
-  if (sourceData.type === "api" && sourceData.apiConfig) {
+  // 4. Clean up API provider connections if this was an API source, unless
+  // another of the User's Bank Accounts still syncs through it (#815): then
+  // only this Bank Account goes, below, and the connection stays.
+  const connection = sourceData.type === "api" ? bankConnectionOf(sourceData) : null;
+  const connectionStillUsed = connection !== null && (await isBankConnectionStillUsed(dbRef, userId, connection, sourceId));
+  if (connectionStillUsed) {
+    console.log(`[deleteSource] Kept the ${connection.provider} connection: another Bank Account still uses it`);
+  }
+  if (sourceData.type === "api" && sourceData.apiConfig && !connectionStillUsed) {
     const apiConfig = sourceData.apiConfig as {
       provider?: string;
       connectionId?: string;
@@ -173,8 +181,10 @@ export async function deleteSourceInternal(
 
     if (apiConfig.provider === "truelayer" && apiConfig.connectionId) {
       try {
-        const connectionRef = dbRef.collection("truelayerConnections").doc(apiConfig.connectionId);
-        await connectionRef.delete();
+        // Only the User's own: the Bank Account may name another User's (#815).
+        const connectionRef = await ownTrueLayerConnection(dbRef, userId, apiConfig.connectionId);
+        if (connectionRef) await connectionRef.delete();
+        else console.warn(`[deleteSource] Left a TrueLayer connection that is not the User's`);
       } catch (err) {
         console.warn(`[deleteSource] Failed to delete TrueLayer connection:`, err);
       }
