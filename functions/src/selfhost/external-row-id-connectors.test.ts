@@ -10,8 +10,8 @@
  *
  * Driven through the sync callables, the TrueLayer routes and the CSV callable
  * against the self-host in-memory database; asserted on the stored rows. The
- * TrueLayer routes' client Firestore SDK points at the same shim database, as
- * in fiscal-years-routes.test.ts.
+ * TrueLayer routes write through the Admin SDK (#813); the client SDK is the
+ * self-host one, unconfigured, as in fiscal-years-routes.test.ts.
  */
 
 process.env.FIBUKI_STORAGE = "memory";
@@ -31,32 +31,8 @@ import { externalRowIdsFromReferences } from "../imports/externalRowId";
 
 const truelayer = vi.hoisted(() => ({ lines: [] as Array<Record<string, unknown>> }));
 
-vi.mock("firebase/app", () => ({ initializeApp: () => ({}), getApps: () => [] }));
-vi.mock("firebase/firestore", async () => {
-  const shim = await import("./firestore-shim");
-  const db = () => shim.getFirestore();
-  const wrap = (snap: { id: string; exists: boolean; data: () => Record<string, unknown> | undefined; ref?: unknown }) => ({
-    id: snap.id,
-    exists: () => snap.exists,
-    data: () => snap.data(),
-    ref: snap.ref,
-  });
-  return {
-    getFirestore: () => ({}),
-    connectFirestoreEmulator: () => {},
-    Timestamp: shim.Timestamp,
-    doc: (_db: unknown, coll: string, id: string) => db().collection(coll).doc(id),
-    collection: (_db: unknown, coll: string) => db().collection(coll),
-    getDoc: async (ref: { get: () => Promise<never> }) => wrap(await ref.get()),
-    updateDoc: (ref: { update: (d: unknown) => Promise<unknown> }, d: unknown) => ref.update(d),
-    addDoc: (coll: { add: (d: unknown) => Promise<unknown> }, d: unknown) => coll.add(d),
-    deleteDoc: (ref: { delete: () => Promise<unknown> }) => ref.delete(),
-    where: (f: string, op: string, v: unknown) => ({ f, op, v }),
-    query: (coll: { where: (...a: unknown[]) => unknown }, ...ws: Array<{ f: string; op: string; v: unknown }>) =>
-      ws.reduce((q: { where: (...a: unknown[]) => unknown }, w) => q.where(w.f, w.op, w.v) as never, coll),
-    getDocs: async (q: { get: () => Promise<{ docs: unknown[] }> }) => q.get(),
-  };
-});
+vi.mock("firebase/app", () => import("@/lib/selfhost/app-shim"));
+vi.mock("firebase/firestore", () => import("@/lib/selfhost/firestore-client"));
 vi.mock("@/lib/import/deduplication", () => ({
   generateDedupeHash: async (...parts: unknown[]) => parts.map(String).join("|"),
   normalizeIban: (iban: string) => iban.replace(/\s/g, "").toUpperCase(),

@@ -5,7 +5,7 @@
  * orchestrates searches, analyzes results, and decides what to download.
  */
 
-import { Timestamp } from "firebase/firestore";
+import type { Timestamp } from "firebase/firestore";
 
 /**
  * Email classification result from classifyEmail()

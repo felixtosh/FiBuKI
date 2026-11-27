@@ -1,4 +1,4 @@
-import { Timestamp } from "firebase/firestore";
+import type { Timestamp } from "firebase/firestore";
 // Type-only, so the app never pulls functions/ runtime code into its bundle.
 // One definition of the five codes, shared by the worker that writes them and
 // the UI that branches on them.

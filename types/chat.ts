@@ -1,4 +1,4 @@
-import { Timestamp } from "firebase/firestore";
+import type { Timestamp } from "firebase/firestore";
 import { AutoActionNotification } from "./notification";
 
 export type ChatTab = "notifications" | "chat" | "history";

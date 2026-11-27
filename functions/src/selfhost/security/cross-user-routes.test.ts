@@ -95,34 +95,12 @@ vi.mock("@/lib/agent/worker-graph", () => ({
   },
 }));
 
-// The TrueLayer routes use the client Firestore SDK server-side. Here it is
-// pointed at the same shim database, with no rules in between, so what is
-// tested is the routes' own checks rather than the indirect protection a
-// rules engine happens to give them today.
-vi.mock("firebase/app", () => ({ initializeApp: () => ({}), getApps: () => [] }));
-vi.mock("firebase/firestore", async () => {
-  const shim = await import("../firestore-shim");
-  const db = () => shim.getFirestore();
-  const wrap = (snap: { id: string; exists: boolean; data: () => Record<string, unknown> | undefined }) => ({
-    id: snap.id,
-    exists: () => snap.exists,
-    data: () => snap.data(),
-  });
-  return {
-    getFirestore: () => ({}),
-    connectFirestoreEmulator: () => {},
-    Timestamp: shim.Timestamp,
-    doc: (_db: unknown, coll: string, id: string) => db().collection(coll).doc(id),
-    collection: (_db: unknown, coll: string) => db().collection(coll),
-    getDoc: async (ref: { get: () => Promise<never> }) => wrap(await ref.get()),
-    updateDoc: (ref: { update: (d: unknown) => Promise<unknown> }, d: unknown) => ref.update(d),
-    addDoc: (coll: { add: (d: unknown) => Promise<unknown> }, d: unknown) => coll.add(d),
-    where: (f: string, op: string, v: unknown) => ({ f, op, v }),
-    query: (coll: { where: (...a: unknown[]) => unknown }, ...ws: Array<{ f: string; op: string; v: unknown }>) =>
-      ws.reduce((q: { where: (...a: unknown[]) => unknown }, w) => q.where(w.f, w.op, w.v) as never, coll),
-    getDocs: async (q: { get: () => Promise<{ docs: unknown[] }> }) => q.get(),
-  };
-});
+// The TrueLayer routes read and write through the Admin SDK (#813), so what is
+// tested is the routes' own checks, with no data-plane policy in between. The
+// client SDK is the self-host one the web build aliases, never configured
+// here: a route that went back to it would fail rather than pass by a mock.
+vi.mock("firebase/app", () => import("@/lib/selfhost/app-shim"));
+vi.mock("firebase/firestore", () => import("@/lib/selfhost/firestore-client"));
 
 // The real module pulls in the browser Firebase config; only the hash is used.
 vi.mock("@/lib/import/deduplication", () => ({

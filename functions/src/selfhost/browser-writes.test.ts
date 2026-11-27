@@ -12,6 +12,9 @@
  *   the data plane with the same policy as a browser, so such a route breaks
  *   the day its table locks. It moves to the Admin SDK with its table.
  *
+ * That a route reaches no client SDK at all, reads included, is
+ * browser-imports.test.ts's rule 5 (#813).
+ *
  * A new write fails the build. A file whose count drops fails too, until its
  * allowance is lowered (or its entry removed), so the lists only ever shrink.
  * Never raise a number: a new write is a callable built with `createCallable()`.
@@ -58,10 +61,6 @@ const BROWSER_ALLOWED: Allowances = {
 /** Server routes: path -> client write calls plus operations-layer writers imported. */
 const ROUTE_ALLOWED: Allowances = {
   "app/api/browser/log/route.ts": { count: 1, why: "browser debug log, not a domain table" },
-  "app/api/sources/delete-orphans/route.ts": { count: 3, why: "sources (#634)" },
-  "app/api/truelayer/accounts/route.ts": { count: 4, why: "sources (#634)" },
-  "app/api/truelayer/callback/route.ts": { count: 1, why: "bank connections (#634)" },
-  "app/api/truelayer/sync/route.ts": { count: 3, why: "sources (#634)" },
 };
 
 /** Not browser writers, never counted. */

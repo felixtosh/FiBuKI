@@ -1,56 +1,52 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { initializeApp, getApps } from "firebase/app";
-import {
-  getFirestore,
-  collection,
-  query,
-  where,
-  getDocs,
-  deleteDoc,
-  doc,
-} from "firebase/firestore";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
-import { readFiscalYears, stretchOf } from "@/functions/src/fiscalYears/settings";
-import { toDateSafe } from "@/lib/utils";
-
-// Initialize Firebase for server-side
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyDhxXMbHgaD1z9n0bkuVaSRmmiCrbNL-l4",
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "taxstudio-f12fb.firebaseapp.com",
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb",
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "taxstudio-f12fb.firebasestorage.app",
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "534848611676",
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:534848611676:web:8a3d1ede57c65b7e884d99",
-};
-
-const appName = "delete-orphans";
-const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
-const db = getFirestore(app);
+import { callFirebaseFunction } from "@/lib/api/firebase-callable";
+import { bearerToken, callableErrorMessage } from "@/lib/api/callable-as-caller";
 
 const TRUELAYER_CONNECTIONS_COLLECTION = "truelayerConnections";
+const BATCH_SIZE = 500;
+
+interface DeleteSourceResult {
+  deletedTransactions: number;
+}
+
+interface CleanupResult {
+  orphanedBySource: Record<string, number>;
+  deleted?: number;
+  keptClosed?: number;
+}
 
 /**
  * POST /api/sources/delete-orphans
  * Delete sources missing required fields, orphaned TrueLayer connections, and orphaned transactions
+ *
+ * Reads go through the server's Admin SDK (#813). A Bank Account and its
+ * Transactions are deleted by the callables, as the caller: `deleteSource`
+ * (refused whole while one of its Transactions lies in the Closed stretch,
+ * Files detached, Imports and linked cards cleaned up) and
+ * `cleanupOrphanedTransactions` (a closed orphan stays, Files detached).
+ * TrueLayer connections are no domain table; the route deletes them.
  */
 export async function POST(request: NextRequest) {
   try {
     const userId = await getServerUserIdWithFallback(request);
+    const authToken = bearerToken(request);
+    if (!authToken) {
+      return NextResponse.json({ error: "A Bearer token is required: the deletes run as you." }, { status: 401 });
+    }
+    const db = getAdminDb();
+
     // === 1. Find and delete orphan sources ===
-    const sourcesQuery = query(
-      collection(db, "sources"),
-      where("userId", "==", userId)
-    );
+    const snapshot = await db.collection("sources").where("userId", "==", userId).get();
 
-    const snapshot = await getDocs(sourcesQuery);
+    const brokenSources: { id: string; name: string; reason: string }[] = [];
 
-    const orphanSources: { id: string; name: string; reason: string }[] = [];
-
-    // Collect valid source IDs and their TrueLayer connection IDs for reference
-    const validSourceIds = new Set<string>();
+    // TrueLayer connection IDs still in use, by a Bank Account that stays
     const sourceConnectionIds = new Set<string>();
+    const connectionOf = (data: FirebaseFirestore.DocumentData) =>
+      data.type === "api" && data.apiConfig?.provider === "truelayer" ? (data.apiConfig?.connectionId as string | undefined) : undefined;
 
     for (const docSnap of snapshot.docs) {
       const data = docSnap.data();
@@ -68,35 +64,46 @@ export async function POST(request: NextRequest) {
       }
 
       if (reasons.length > 0) {
-        orphanSources.push({
+        brokenSources.push({
           id: docSnap.id,
           name: data.name || "(unnamed)",
           reason: reasons.join(", "),
         });
       } else {
-        validSourceIds.add(docSnap.id);
-        // Track TrueLayer connection IDs that are still in use
-        if (data.type === "api" && data.apiConfig?.provider === "truelayer" && data.apiConfig?.connectionId) {
-          sourceConnectionIds.add(data.apiConfig.connectionId);
-        }
+        const connectionId = connectionOf(data);
+        if (connectionId) sourceConnectionIds.add(connectionId);
       }
     }
 
-    console.log(`Found ${orphanSources.length} orphan sources`);
+    console.log(`Found ${brokenSources.length} orphan sources`);
 
-    // Delete orphan sources
-    for (const orphan of orphanSources) {
-      console.log(`Deleting orphan source: ${orphan.id} (${orphan.name}) - ${orphan.reason}`);
-      await deleteDoc(doc(db, "sources", orphan.id));
+    // Each through the deleteSource callable; one it refuses stays, with why.
+    const orphanSources: typeof brokenSources = [];
+    const keptSources: { id: string; name: string; reason: string }[] = [];
+    let deletedWithSources = 0;
+    for (const broken of brokenSources) {
+      console.log(`Deleting orphan source: ${broken.id} (${broken.name}) - ${broken.reason}`);
+      try {
+        const result = await callFirebaseFunction<{ sourceId: string }, DeleteSourceResult>(
+          "deleteSource",
+          { sourceId: broken.id },
+          authToken
+        );
+        deletedWithSources += result.deletedTransactions ?? 0;
+        orphanSources.push(broken);
+      } catch (error) {
+        keptSources.push({ id: broken.id, name: broken.name, reason: callableErrorMessage(error) });
+        const kept = snapshot.docs.find((d) => d.id === broken.id)!.data();
+        const connectionId = connectionOf(kept);
+        if (connectionId) sourceConnectionIds.add(connectionId);
+      }
     }
 
     // === 2. Find and delete orphan TrueLayer connections ===
-    const connectionsQuery = query(
-      collection(db, TRUELAYER_CONNECTIONS_COLLECTION),
-      where("userId", "==", userId)
-    );
-
-    const connectionsSnap = await getDocs(connectionsQuery);
+    const connectionsSnap = await db
+      .collection(TRUELAYER_CONNECTIONS_COLLECTION)
+      .where("userId", "==", userId)
+      .get();
 
     const orphanConnections: { id: string; providerId: string; reason: string }[] = [];
 
@@ -104,7 +111,7 @@ export async function POST(request: NextRequest) {
       const connData = connDoc.data();
       const connectionId = connDoc.id;
 
-      // A connection is orphaned if no valid source references it
+      // A connection is orphaned if no remaining source references it
       if (!sourceConnectionIds.has(connectionId)) {
         orphanConnections.push({
           id: connectionId,
@@ -116,55 +123,60 @@ export async function POST(request: NextRequest) {
 
     console.log(`Found ${orphanConnections.length} orphan TrueLayer connections`);
 
-    // Delete orphan connections
     for (const orphan of orphanConnections) {
       console.log(`Deleting orphan TrueLayer connection: ${orphan.id} - ${orphan.reason}`);
-      await deleteDoc(doc(db, TRUELAYER_CONNECTIONS_COLLECTION, orphan.id));
+    }
+    const refs = orphanConnections.map((o) => db.collection(TRUELAYER_CONNECTIONS_COLLECTION).doc(o.id));
+    for (let i = 0; i < refs.length; i += BATCH_SIZE) {
+      const batch = db.batch();
+      for (const ref of refs.slice(i, i + BATCH_SIZE)) batch.delete(ref);
+      await batch.commit();
     }
 
-    // === 3. Find and delete orphan transactions (referencing non-existent sources) ===
-    const transactionsQuery = query(
-      collection(db, "transactions"),
-      where("userId", "==", userId)
+    // === 3. Orphan transactions (referencing non-existent sources), through the cleanup callable ===
+    let cleanup: CleanupResult;
+    try {
+      cleanup = await callFirebaseFunction<{ dryRun: boolean }, CleanupResult>(
+        "cleanupOrphanedTransactions",
+        { dryRun: false },
+        authToken
+      );
+    } catch (error) {
+      // Bank Accounts and connections are gone by now: say so, and which step failed.
+      console.error("Error deleting orphan transactions:", error);
+      return NextResponse.json(
+        {
+          success: false,
+          failedStep: "orphanTransactions",
+          error: callableErrorMessage(error),
+          deletedSources: orphanSources.length,
+          deletedConnections: orphanConnections.length,
+          deletedTransactions: deletedWithSources,
+          sources: orphanSources,
+          keptSources,
+          connections: orphanConnections,
+        },
+        { status: 500 }
+      );
+    }
+    const orphanSourceIds = Object.keys(cleanup.orphanedBySource ?? {});
+    const deletedTransactions = deletedWithSources + (cleanup.deleted ?? 0);
+    const keptClosedTransactions = cleanup.keptClosed ?? 0;
+
+    console.log(
+      `Successfully deleted ${orphanSources.length} orphan sources (${keptSources.length} kept), ` +
+        `${orphanConnections.length} orphan connections, and ${deletedTransactions} transactions`
     );
-
-    const transactionsSnap = await getDocs(transactionsQuery);
-
-    let orphanTransactionCount = 0;
-    let keptClosedTransactions = 0;
-    const orphanSourceIds = new Set<string>();
-    // Filed years keep their evidence (#794): a closed orphan stays.
-    const fiscalYears = await readFiscalYears(getAdminDb(), userId);
-
-    for (const txDoc of transactionsSnap.docs) {
-      const txData = txDoc.data();
-      const sourceId = txData.sourceId;
-
-      // A transaction is orphaned if its sourceId doesn't match any valid source
-      if (sourceId && !validSourceIds.has(sourceId)) {
-        orphanSourceIds.add(sourceId);
-        const date = toDateSafe(txData.date);
-        if (date && stretchOf(fiscalYears, date) === "closed") {
-          keptClosedTransactions++;
-          continue;
-        }
-        await deleteDoc(txDoc.ref);
-        orphanTransactionCount++;
-      }
-    }
-
-    console.log(`Found and deleted ${orphanTransactionCount} orphan transactions from ${orphanSourceIds.size} missing sources`);
-
-    console.log(`Successfully deleted ${orphanSources.length} orphan sources, ${orphanConnections.length} orphan connections, and ${orphanTransactionCount} orphan transactions`);
 
     return NextResponse.json({
       success: true,
       deletedSources: orphanSources.length,
       deletedConnections: orphanConnections.length,
-      deletedTransactions: orphanTransactionCount,
+      deletedTransactions,
       keptClosedTransactions,
-      orphanSourceIds: Array.from(orphanSourceIds),
+      orphanSourceIds,
       sources: orphanSources,
+      keptSources,
       connections: orphanConnections,
     });
   } catch (error) {

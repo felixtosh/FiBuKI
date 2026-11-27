@@ -22,13 +22,27 @@
  * wiring, and the constraints behind it, live in ./route-harness.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setupRouteHarness } from "./route-harness";
+
+// A route that writes through a callable forwards the caller's token to it
+// (#813), as the gmail and reports routes do; the callable is stubbed at that
+// seam, as in the other smoke tests. What is under test is the route: which
+// callable it calls, as whom, and what it answers.
+const callables = vi.hoisted(() => ({ callFirebaseFunction: vi.fn() }));
+vi.mock("@/lib/api/firebase-callable", () => ({
+  callFirebaseFunction: (...args: unknown[]) => callables.callFirebaseFunction(...args),
+}));
 
 const USER_A = "user-A";
 const USER_B = "user-B";
 
 const { store, authed } = setupRouteHarness();
+
+beforeEach(() => {
+  // Braces matter: a function beforeEach returns runs as its teardown.
+  callables.callFirebaseFunction.mockReset();
+});
 
 // ---------------------------------------------------------------------------
 // GET /api/gmail/sync?integrationId=
@@ -115,6 +129,16 @@ describe("POST /api/sources/[id]/disconnect", () => {
       apiConfig: { provider: "gocardless", bankConnectionId: "bc-1" },
     });
 
+  // deleteTransactionsBySource as the caller: their rows of the Bank Account go.
+  beforeEach(() => {
+    callables.callFirebaseFunction.mockImplementation(async (name: string, data: { sourceId: string }, token?: string) => {
+      if (name !== "deleteTransactionsBySource") throw new Error(`Firebase function ${name} failed: 404 - no such callable`);
+      const rows = await store.collection("transactions").where("userId", "==", token).where("sourceId", "==", data.sourceId).get();
+      for (const row of rows.docs) await store.collection("transactions").doc(row.id).delete();
+      return { success: true, deleted: rows.docs.length };
+    });
+  });
+
   it("disconnects the owner's source and removes its transactions (happy path)", async () => {
     seedApiSource(USER_A);
     store.seed("transactions", "t1", { userId: USER_A, sourceId: "src-1" });
@@ -130,8 +154,10 @@ describe("POST /api/sources/[id]/disconnect", () => {
     // The bank config was cleared (whether the FieldValue.delete sentinel is
     // interpreted or stored opaquely, it is no longer the gocardless config).
     expect((after.apiConfig as { provider?: string } | undefined)?.provider).not.toBe("gocardless");
-    // The source's transactions were removed as part of the disconnect.
+    // The source's transactions were removed as part of the disconnect, by the
+    // callable, as the owner.
     expect((await store.collection("transactions").where("sourceId", "==", "src-1").get()).empty).toBe(true);
+    expect(callables.callFirebaseFunction).toHaveBeenCalledWith("deleteTransactionsBySource", { sourceId: "src-1" }, USER_A);
   });
 
   it("does not disconnect another user's source (owner-scoping → 404)", async () => {
@@ -148,7 +174,8 @@ describe("POST /api/sources/[id]/disconnect", () => {
     const after = (await store.collection("sources").doc("src-1").get()).data()!;
     expect(after.type).toBe("api");
     expect((after.apiConfig as { provider?: string }).provider).toBe("gocardless");
-    // …and its transaction was not deleted.
+    // …and its transaction was not deleted, nor any callable called.
     expect((await store.collection("transactions").where("sourceId", "==", "src-1").get()).empty).toBe(false);
+    expect(callables.callFirebaseFunction).not.toHaveBeenCalled();
   });
 });

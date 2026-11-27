@@ -1,4 +1,4 @@
-import { Timestamp } from "firebase/firestore";
+import type { Timestamp } from "firebase/firestore";
 import type { Timestamp as AdminTimestamp } from "firebase-admin/firestore";
 import { MessagePart } from "./chat";
 

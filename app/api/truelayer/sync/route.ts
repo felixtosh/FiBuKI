@@ -1,38 +1,15 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { transactionTypeFromRawRow } from "@/functions/src/imports/transactionType";
-import { initializeApp, getApps } from "firebase/app";
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  updateDoc,
-  collection,
-  addDoc,
-  Timestamp,
-} from "firebase/firestore";
+import { Timestamp } from "firebase-admin/firestore";
 import { getTrueLayerClient } from "@/lib/truelayer";
+import { importTrueLayerTransactions } from "@/lib/truelayer/import-transactions";
 import { TrueLayerConnection, TrueLayerApiConfig } from "@/types/truelayer";
 import { TransactionSource } from "@/types/source";
-import { computeDedupeHash, splitDuplicates } from "@/functions/src/imports/dedupe";
-import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
+import { getServerUserIdWithFallback, isServerUserAdmin, unauthorizedResponse } from "@/lib/auth/get-server-user";
 import { getAdminDb } from "@/lib/firebase/admin";
-import { splitUntracked } from "@/functions/src/fiscalYears/settings";
 
-// Initialize Firebase for server-side
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyDhxXMbHgaD1z9n0bkuVaSRmmiCrbNL-l4",
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "taxstudio-f12fb.firebaseapp.com",
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb",
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "taxstudio-f12fb.firebasestorage.app",
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "534848611676",
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:534848611676:web:8a3d1ede57c65b7e884d99",
-};
-
-const appName = "truelayer-sync";
-const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
-const db = getFirestore(app);
-
+// Reads and writes go through the server's Admin SDK (#813): a route has no
+// signed-in User for the client SDK to authenticate as.
 const CONNECTIONS_COLLECTION = "truelayerConnections";
 
 /**
@@ -54,11 +31,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get source
-    const sourceRef = doc(db, "sources", sourceId);
-    const sourceSnap = await getDoc(sourceRef);
+    const db = getAdminDb();
 
-    if (!sourceSnap.exists()) {
+    // Get source
+    const sourceSnap = await db.collection("sources").doc(sourceId).get();
+
+    if (!sourceSnap.exists) {
       return NextResponse.json(
         { error: "Source not found" },
         { status: 404 }
@@ -93,17 +71,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Get connection
-    const connectionRef = doc(db, CONNECTIONS_COLLECTION, apiConfig.connectionId);
-    const connectionSnap = await getDoc(connectionRef);
+    const connectionRef = db.collection(CONNECTIONS_COLLECTION).doc(apiConfig.connectionId);
+    const connectionSnap = await connectionRef.get();
 
-    if (!connectionSnap.exists()) {
+    if (!connectionSnap.exists) {
       return NextResponse.json(
         { error: "TrueLayer connection not found" },
         { status: 404 }
       );
     }
 
-    const connection = connectionSnap.data() as TrueLayerConnection;
+    const connection = connectionSnap.data() as unknown as TrueLayerConnection;
 
     // The connection id comes from the source's config; check it anyway, so
     // a source pointing at someone else's connection cannot use its tokens.
@@ -129,7 +107,7 @@ export async function POST(request: NextRequest) {
 
         // Update connection with new tokens
         const newExpiresAt = new Date(Date.now() + tokens.expires_in * 1000);
-        await updateDoc(connectionRef, {
+        await connectionRef.update({
           accessToken: tokens.access_token,
           refreshToken: tokens.refresh_token,
           tokenExpiresAt: Timestamp.fromDate(newExpiresAt),
@@ -158,76 +136,16 @@ export async function POST(request: NextRequest) {
       toDate.toISOString().split("T")[0]
     );
 
-    // Transform and import transactions
-    const nowTs = Timestamp.now();
-
-    // Rows before Tracked From are skipped without asking and counted per fiscal year (#794).
-    const { tracked, ...untracked } = await splitUntracked(getAdminDb(), userId, transactions, (tx) => new Date(tx.timestamp));
-
-    const candidates = tracked.map((tx) => {
-      // TrueLayer returns amounts in whole currency units (e.g., 42.50)
-      // We store amounts in cents (e.g., 4250)
-      const isCredit = tx.transaction_type === "CREDIT";
-      const amountCents = Math.round(Math.abs(tx.amount) * 100);
-      const amount = isCredit ? amountCents : -amountCents;
-      const txDate = new Date(tx.timestamp);
-      const reference = tx.meta?.provider_reference || tx.transaction_id;
-      // Use sourceId as fallback for sources without IBAN
-      const dedupeHash = computeDedupeHash({ date: txDate, amount, sourceIdentifier: source.iban ?? source.id, reference });
-      return { tx, amount, txDate, reference, dedupeHash, externalRowId: tx.transaction_id };
+    // A Bank Account without an IBAN is named by its id in the dedupe hash.
+    const result = await importTrueLayerTransactions(db, {
+      userId,
+      sourceId,
+      sourceIdentifier: source.iban ?? source.id,
+      transactions,
+      isAdmin: await isServerUserAdmin(request),
     });
 
-    // TrueLayer's transaction id is the External Row Id (#804): the Import writer's split
-    // skips a line the Bank Account already stores by id, and holds back rows stored
-    // before ids existed by their hash.
-    const { fresh, duplicates } = await splitDuplicates(getAdminDb(), userId, sourceId, candidates);
-    let imported = 0;
-    const skipped = duplicates.length;
-
-    for (const { tx, amount, txDate, reference, dedupeHash, externalRowId } of fresh) {
-      // Build transaction document
-      const transactionDoc = {
-        sourceId,
-        importJobId: null,
-        userId,
-        date: Timestamp.fromDate(txDate),
-        amount,
-        currency: tx.currency,
-        name: tx.description,
-        partner: tx.merchant_name || null,
-        partnerIban: null,
-        transactionType: transactionTypeFromRawRow(tx as unknown as Record<string, unknown>),
-        description: null,
-        reference,
-        isComplete: false,
-        dedupeHash,
-        externalRowId,
-        _original: {
-          date: tx.timestamp,
-          amount: tx.amount.toString(),
-          rawRow: tx as unknown as Record<string, string>,
-        },
-        createdAt: nowTs,
-        updatedAt: nowTs,
-      };
-
-      await addDoc(collection(db, "transactions"), transactionDoc);
-      imported++;
-    }
-
-    // Update source with last sync time
-    await updateDoc(sourceRef, {
-      "apiConfig.lastSyncAt": nowTs,
-      updatedAt: nowTs,
-    });
-
-    return NextResponse.json({
-      success: true,
-      imported,
-      skipped,
-      total: transactions.length,
-      ...untracked,
-    });
+    return NextResponse.json({ success: true, ...result });
   } catch (error) {
     const unauthorized = unauthorizedResponse(error);
     if (unauthorized) return unauthorized;

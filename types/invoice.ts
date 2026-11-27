@@ -1,4 +1,4 @@
-import { Timestamp } from "firebase/firestore";
+import type { Timestamp } from "firebase/firestore";
 import { PartnerAddress } from "./partner";
 
 export type InvoiceStatus = "draft" | "issued" | "sent" | "paid" | "cancelled";

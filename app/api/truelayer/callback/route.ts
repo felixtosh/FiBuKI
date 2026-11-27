@@ -1,25 +1,13 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, collection, addDoc, Timestamp } from "firebase/firestore";
+import { Timestamp } from "firebase-admin/firestore";
 import { getTrueLayerClient } from "@/lib/truelayer";
-import { TrueLayerConnection } from "@/types/truelayer";
+import type { TrueLayerConnection } from "@/types/truelayer";
 import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/get-server-user";
+import { getAdminDb } from "@/lib/firebase/admin";
 
-// Initialize Firebase for server-side
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyDhxXMbHgaD1z9n0bkuVaSRmmiCrbNL-l4",
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "taxstudio-f12fb.firebaseapp.com",
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "taxstudio-f12fb",
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "taxstudio-f12fb.firebasestorage.app",
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "534848611676",
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:534848611676:web:8a3d1ede57c65b7e884d99",
-};
-
-const appName = "truelayer-callback";
-const app = getApps().find(a => a.name === appName) || initializeApp(firebaseConfig, appName);
-const db = getFirestore(app);
-
+// Written through the server's Admin SDK (#813): a route has no signed-in
+// User for the client SDK to authenticate as.
 const CONNECTIONS_COLLECTION = "truelayerConnections";
 
 /**
@@ -80,8 +68,10 @@ export async function POST(request: NextRequest) {
     // Calculate token expiration
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
 
-    // Store connection in Firestore
-    const connectionDoc: Omit<TrueLayerConnection, "id"> = {
+    // Store connection in Firestore. The type names the client SDK's
+    // Timestamp; the server stores the Admin SDK's.
+    type TimestampField = "tokenExpiresAt" | "createdAt" | "updatedAt";
+    const connectionDoc: Omit<TrueLayerConnection, "id" | TimestampField> & Record<TimestampField, Timestamp> = {
       providerId,
       providerName,
       providerLogo,
@@ -95,7 +85,7 @@ export async function POST(request: NextRequest) {
       ...(sourceId && { linkToSourceId: sourceId }),
     };
 
-    const docRef = await addDoc(collection(db, CONNECTIONS_COLLECTION), connectionDoc);
+    const docRef = await getAdminDb().collection(CONNECTIONS_COLLECTION).add(connectionDoc);
 
     // Redirect to account selection
     const params = new URLSearchParams({ connectionId: docRef.id });

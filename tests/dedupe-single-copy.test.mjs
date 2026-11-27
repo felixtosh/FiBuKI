@@ -46,8 +46,23 @@ test("the formula is defined once in the functions", () => {
   assert.deepEqual(definers, [join("functions", "src", "imports", "dedupe.ts")]);
 });
 
-test("the TrueLayer routes use that one formula", () => {
-  for (const f of ["app/api/truelayer/sync/route.ts", "app/api/truelayer/accounts/route.ts", "lib/truelayer/transform.ts"]) {
-    assert.match(readFileSync(f, "utf8"), /from "@\/functions\/src\/imports\/dedupe"/, f);
+test("the TrueLayer routes use that one formula, through the one importer", () => {
+  // Both TrueLayer syncs store their lines through lib/truelayer/import-transactions.ts (#813),
+  // which hashes with the functions' formula.
+  const importer = join("lib", "truelayer", "import-transactions.ts");
+  const importerSrc = readFileSync(importer, "utf8");
+  assert.match(importerSrc, /import \{[^}]*\bcomputeDedupeHash\b[^}]*\} from "@\/functions\/src\/imports\/dedupe"/, importer);
+  assert.match(importerSrc, /computeDedupeHash\(/, importer);
+
+  for (const f of ["app/api/truelayer/sync/route.ts", "app/api/truelayer/accounts/route.ts"]) {
+    const src = readFileSync(f, "utf8");
+    assert.match(src, /import \{[^}]*\bimportTrueLayerTransactions\b[^}]*\} from "@\/lib\/truelayer\/import-transactions"/, f);
+    assert.match(src, /importTrueLayerTransactions\(/, f);
   }
+
+  // No other TrueLayer file builds a hash of its own.
+  const own = [...sourceFiles("app/api/truelayer"), ...sourceFiles("lib/truelayer")]
+    .filter((f) => f !== importer)
+    .filter((f) => /computeDedupeHash|createHash|crypto\.subtle|\bdedupeHash\s*:/.test(readFileSync(f, "utf8")));
+  assert.deepEqual(own, []);
 });
