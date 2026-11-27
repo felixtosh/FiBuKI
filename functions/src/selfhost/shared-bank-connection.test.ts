@@ -288,13 +288,14 @@ function recordFinapiDeletes() {
   process.env.FINAPI_CLIENT_SECRET = "secret";
   const realFetch = globalThis.fetch;
   vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
-    const url = String(input instanceof Request ? input.url : input);
-    const match = url.match(/finapi\.io\/api\/v2\/bankConnections\/([^/?]+)$/);
-    if (match && init?.method === "DELETE") {
+    const url = new URL(String(input instanceof Request ? input.url : input));
+    const isFinapi = url.hostname === "finapi.io" || url.hostname.endsWith(".finapi.io");
+    const match = url.pathname.match(/^\/api\/v2\/bankConnections\/([^/]+)$/);
+    if (isFinapi && match && init?.method === "DELETE") {
       finapi.deleted.push(match[1]);
       return new Response(null, { status: 200 });
     }
-    if (/finapi\.io\//.test(url)) return new Response(null, { status: 503 });
+    if (isFinapi) return new Response(null, { status: 503 });
     return realFetch(input, init);
   });
 }
