@@ -7,6 +7,7 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { detachTransactions } from "../fileConnections/writer";
 import { assertNotClosed } from "../fiscalYears/fiscalYears";
 import { toDateSafe } from "../utils/toDateSafe";
+import { bankConnectionOf, isBankConnectionStillUsed } from "../banking/bankConnectionUse";
 
 interface DeleteSourceRequest {
   sourceId: string;
@@ -162,8 +163,15 @@ export async function deleteSourceInternal(
     }
   }
 
-  // 4. Clean up API provider connections if this was an API source
-  if (sourceData.type === "api" && sourceData.apiConfig) {
+  // 4. Clean up API provider connections if this was an API source, unless
+  // another of the User's Bank Accounts still syncs through it (#815): then
+  // only this Bank Account goes, below, and the connection stays.
+  const connection = sourceData.type === "api" ? bankConnectionOf(sourceData) : null;
+  const connectionStillUsed = connection !== null && (await isBankConnectionStillUsed(dbRef, userId, connection, sourceId));
+  if (connectionStillUsed) {
+    console.log(`[deleteSource] Kept the ${connection.provider} connection: another Bank Account still uses it`);
+  }
+  if (sourceData.type === "api" && sourceData.apiConfig && !connectionStillUsed) {
     const apiConfig = sourceData.apiConfig as {
       provider?: string;
       connectionId?: string;

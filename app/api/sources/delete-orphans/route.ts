@@ -4,6 +4,7 @@ import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/ge
 import { getAdminDb } from "@/lib/firebase/admin";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 import { bearerToken, callableErrorMessage } from "@/lib/api/callable-as-caller";
+import { isBankConnectionStillUsed } from "@/functions/src/banking/bankConnectionUse";
 
 const TRUELAYER_CONNECTIONS_COLLECTION = "truelayerConnections";
 const BATCH_SIZE = 500;
@@ -43,11 +44,6 @@ export async function POST(request: NextRequest) {
 
     const brokenSources: { id: string; name: string; reason: string }[] = [];
 
-    // TrueLayer connection IDs still in use, by a Bank Account that stays
-    const sourceConnectionIds = new Set<string>();
-    const connectionOf = (data: FirebaseFirestore.DocumentData) =>
-      data.type === "api" && data.apiConfig?.provider === "truelayer" ? (data.apiConfig?.connectionId as string | undefined) : undefined;
-
     for (const docSnap of snapshot.docs) {
       const data = docSnap.data();
       const reasons: string[] = [];
@@ -69,9 +65,6 @@ export async function POST(request: NextRequest) {
           name: data.name || "(unnamed)",
           reason: reasons.join(", "),
         });
-      } else {
-        const connectionId = connectionOf(data);
-        if (connectionId) sourceConnectionIds.add(connectionId);
       }
     }
 
@@ -93,9 +86,6 @@ export async function POST(request: NextRequest) {
         orphanSources.push(broken);
       } catch (error) {
         keptSources.push({ id: broken.id, name: broken.name, reason: callableErrorMessage(error) });
-        const kept = snapshot.docs.find((d) => d.id === broken.id)!.data();
-        const connectionId = connectionOf(kept);
-        if (connectionId) sourceConnectionIds.add(connectionId);
       }
     }
 
@@ -111,8 +101,10 @@ export async function POST(request: NextRequest) {
       const connData = connDoc.data();
       const connectionId = connDoc.id;
 
-      // A connection is orphaned if no remaining source references it
-      if (!sourceConnectionIds.has(connectionId)) {
+      // A connection is orphaned if no remaining Bank Account references it:
+      // the same check the Bank Account delete makes (#815), now that the
+      // broken ones are deleted.
+      if (!(await isBankConnectionStillUsed(db, userId, { provider: "truelayer", connectionId }))) {
         orphanConnections.push({
           id: connectionId,
           providerId: connData.providerId || "(unknown)",

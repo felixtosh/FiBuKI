@@ -8,6 +8,7 @@ import { closedRefusal, readFiscalYears, stretchOf } from "@/functions/src/fisca
 import { toDateSafe } from "@/lib/utils";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 import { bearerToken } from "@/lib/api/callable-as-caller";
+import { bankConnectionOf, isBankConnectionStillUsed } from "@/functions/src/banking/bankConnectionUse";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -104,7 +105,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Only now the provider's bank connection: a step above that fails leaves
     // the Bank Account connected, with its connection still there to sync.
-    if (apiConfig.provider === "finapi" && apiConfig.bankConnectionId && apiConfig.userAccessToken) {
+    // While another of the User's Bank Accounts syncs through it, it stays
+    // and only this Bank Account is detached (#815).
+    const connection = bankConnectionOf(source);
+    const connectionStillUsed = connection !== null && (await isBankConnectionStillUsed(db, userId, connection, sourceId));
+    if (connectionStillUsed) {
+      console.log(`[Source Disconnect] Kept the ${connection.provider} connection: another Bank Account still uses it`);
+    }
+    if (apiConfig.provider === "finapi" && apiConfig.bankConnectionId && apiConfig.userAccessToken && !connectionStillUsed) {
       try {
         const clientId = process.env.FINAPI_CLIENT_ID;
         const clientSecret = process.env.FINAPI_CLIENT_SECRET;
