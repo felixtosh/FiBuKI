@@ -7,7 +7,7 @@ import { createCallable, HttpsError } from "../utils/createCallable";
 import { detachTransactions } from "../fileConnections/writer";
 import { assertNotClosed } from "../fiscalYears/fiscalYears";
 import { toDateSafe } from "../utils/toDateSafe";
-import { bankConnectionOf, isBankConnectionStillUsed } from "../banking/bankConnectionUse";
+import { bankConnectionOf, isBankConnectionStillUsed, ownTrueLayerConnection } from "../banking/bankConnectionUse";
 
 interface DeleteSourceRequest {
   sourceId: string;
@@ -181,8 +181,10 @@ export async function deleteSourceInternal(
 
     if (apiConfig.provider === "truelayer" && apiConfig.connectionId) {
       try {
-        const connectionRef = dbRef.collection("truelayerConnections").doc(apiConfig.connectionId);
-        await connectionRef.delete();
+        // Only the User's own: the Bank Account may name another User's (#815).
+        const connectionRef = await ownTrueLayerConnection(dbRef, userId, apiConfig.connectionId);
+        if (connectionRef) await connectionRef.delete();
+        else console.warn(`[deleteSource] Left a TrueLayer connection that is not the User's`);
       } catch (err) {
         console.warn(`[deleteSource] Failed to delete TrueLayer connection:`, err);
       }

@@ -4,7 +4,7 @@ import { getServerUserIdWithFallback, unauthorizedResponse } from "@/lib/auth/ge
 import { getAdminDb } from "@/lib/firebase/admin";
 import { callFirebaseFunction } from "@/lib/api/firebase-callable";
 import { bearerToken, callableErrorMessage } from "@/lib/api/callable-as-caller";
-import { isBankConnectionStillUsed } from "@/functions/src/banking/bankConnectionUse";
+import { isBankConnectionUsedBy, readUserSources } from "@/functions/src/banking/bankConnectionUse";
 
 const TRUELAYER_CONNECTIONS_COLLECTION = "truelayerConnections";
 const BATCH_SIZE = 500;
@@ -90,6 +90,9 @@ export async function POST(request: NextRequest) {
     }
 
     // === 2. Find and delete orphan TrueLayer connections ===
+    // Only the User's own (by userId), checked against the User's Bank
+    // Accounts as they are now that the broken ones are deleted, read once.
+    const remainingSources = await readUserSources(db, userId);
     const connectionsSnap = await db
       .collection(TRUELAYER_CONNECTIONS_COLLECTION)
       .where("userId", "==", userId)
@@ -102,9 +105,8 @@ export async function POST(request: NextRequest) {
       const connectionId = connDoc.id;
 
       // A connection is orphaned if no remaining Bank Account references it:
-      // the same check the Bank Account delete makes (#815), now that the
-      // broken ones are deleted.
-      if (!(await isBankConnectionStillUsed(db, userId, { provider: "truelayer", connectionId }))) {
+      // the same check the Bank Account delete makes (#815).
+      if (!isBankConnectionUsedBy(remainingSources, { provider: "truelayer", connectionId })) {
         orphanConnections.push({
           id: connectionId,
           providerId: connData.providerId || "(unknown)",

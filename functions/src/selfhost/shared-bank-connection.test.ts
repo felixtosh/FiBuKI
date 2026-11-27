@@ -26,13 +26,26 @@ vi.mock("@/lib/import/deduplication", () => ({
   normalizeIban: (iban: string) => iban.replace(/\s/g, "").toUpperCase(),
 }));
 
-/** The finAPI bank connections deleted, by whichever path deleted them. */
-const finapi = vi.hoisted(() => ({ deleted: [] as unknown[] }));
+/**
+ * The finAPI bank connections deleted, by whichever path deleted them, and
+ * the ones finAPI lists for the User. A token refresh fails, so the routes
+ * go on with the stored token and write nothing back.
+ */
+const finapi = vi.hoisted(() => ({ deleted: [] as unknown[], listed: [] as number[] }));
 
 vi.mock("@/lib/finapi/client", () => ({
   FinapiClient: class {
     async deleteBankConnection(id: unknown) {
       finapi.deleted.push(id);
+    }
+    async refreshUserToken() {
+      throw new Error("no refresh in tests");
+    }
+    async getBankConnections() {
+      return { connections: finapi.listed.map((id) => ({ id, bankId: 1, accountIds: [], updateStatus: "READY" })) };
+    }
+    async getAccounts() {
+      return { accounts: [] };
     }
   },
 }));
@@ -134,6 +147,7 @@ beforeEach(async () => {
   await __resetFirestoreShim();
   __resetTriggerShim();
   finapi.deleted.length = 0;
+  finapi.listed = [];
   // A synced line is written only in a Tracked year.
   await handleTool(USER, "set_fiscal_years", { trackedFrom: "2024-01" });
 });
@@ -182,23 +196,91 @@ describe("deleting a Bank Account on a shared TrueLayer connection", () => {
     expect(await exists("truelayerConnections/tl-mine")).toBe(false);
     expect(await exists("sources/tl-theirs")).toBe(true);
   });
+
+  it("leaves another User's connection that the User's Bank Account names", async () => {
+    await seedTrueLayerConnection("tl-theirs", OTHER);
+    await seedTrueLayerAccount("tl-a", "tl-theirs");
+
+    await deleteSource("tl-a");
+
+    expect(await exists("sources/tl-a")).toBe(false);
+    expect(await exists("truelayerConnections/tl-theirs")).toBe(true);
+  });
+
+  it("the orphan cleanup leaves another User's connection that a broken Bank Account names", async () => {
+    await seedTrueLayerConnection("tl-theirs", OTHER);
+    await db.collection("sources").doc("tl-broken").set({ userId: USER, name: "Broken", type: "api", apiConfig: { provider: "truelayer", connectionId: "tl-theirs" } });
+
+    const res = await deleteOrphans();
+
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toMatchObject({ deletedSources: 1, deletedConnections: 0 });
+    expect(await exists("truelayerConnections/tl-theirs")).toBe(true);
+  });
 });
 
-/** A finAPI Bank Account on bank connection 42; `bankConnectionId` as the linking path stored it. */
-async function seedFinapiAccount(id: string, bankConnectionId: number | string, userId = USER, extra: Record<string, unknown> = {}) {
+describe("deleting a finAPI bank connection from the connections list", () => {
+  async function deleteConnection(bankConnectionId: number) {
+    const { DELETE } = await import("@/app/api/banking/finapi-connections/route");
+    return DELETE(asOwner("/api/banking/finapi-connections", { method: "DELETE", body: { bankConnectionId } }));
+  }
+
+  beforeEach(() => {
+    process.env.FINAPI_CLIENT_ID = "id";
+    process.env.FINAPI_CLIENT_SECRET = "secret";
+  });
+
+  it.each([
+    ["a number", 42],
+    ["text", "42"],
+  ])("is refused while a Bank Account uses it, its id stored as %s, and makes no finAPI call", async (_, stored) => {
+    await seedFinapiAccount("fa-a", stored);
+
+    const res = await deleteConnection(42);
+
+    expect(res.status).toBe(409);
+    expect(await res.text()).toMatch(/still uses/);
+    expect(finapi.deleted).toEqual([]);
+  });
+
+  it("deletes it when no Bank Account of the User uses it", async () => {
+    await seedFinapiAccount("fa-other-bank", 7);
+    await seedFinapiAccount("fa-theirs", 42, OTHER);
+
+    const res = await deleteConnection(42);
+
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(finapi.deleted).toEqual([42]);
+  });
+
+  it("the list does not mark a connection orphaned that a Bank Account names by text", async () => {
+    await seedFinapiAccount("fa-a", "42");
+    finapi.listed = [42, 7];
+
+    const { GET } = await import("@/app/api/banking/finapi-connections/route");
+    const res = await GET(asOwner("/api/banking/finapi-connections"));
+    const body = (await res.json()) as { linkedConnections: Array<{ bankConnectionId: number }>; orphanedConnections: Array<{ bankConnectionId: number }> };
+
+    expect(body.linkedConnections.map((c) => c.bankConnectionId)).toEqual([42]);
+    expect(body.orphanedConnections.map((c) => c.bankConnectionId)).toEqual([7]);
+  });
+});
+
+/** A finAPI Bank Account on a bank connection, its `bankConnectionId` as the linking path stored it. */
+async function seedFinapiAccount(id: string, bankConnectionId: number | string, userId = USER) {
   await db.collection("sources").doc(id).set({
     userId,
     name: `Bank ${id}`,
     accountKind: "bank_account",
     type: "api",
-    apiConfig: { provider: "finapi", bankConnectionId, accountId: id.length, userAccessToken: "finapi-token" },
-    ...extra,
+    apiConfig: { provider: "finapi", bankConnectionId, accountId: id.length, userAccessToken: "finapi-token", userRefreshToken: "finapi-refresh" },
   });
 }
 
 /**
  * The Bank Account delete calls finAPI's HTTP API itself: its bank connection
- * deletes are recorded (by the id in the URL, so as text) and answered OK.
+ * deletes are recorded (by the id in the URL, so as text) and answered OK;
+ * its token refresh is answered 503, so it goes on with the stored token.
  * Every other request goes out as it would.
  */
 function recordFinapiDeletes() {
@@ -212,6 +294,7 @@ function recordFinapiDeletes() {
       finapi.deleted.push(match[1]);
       return new Response(null, { status: 200 });
     }
+    if (/finapi\.io\//.test(url)) return new Response(null, { status: 503 });
     return realFetch(input, init);
   });
 }
